@@ -112,7 +112,18 @@ export const processUserIntent = async (
 ): Promise<AIProcessingResult> => {
   const localTimeContext = formatLocalTime(new Date());
 
-  const plansContext = currentPlans.map(p => ({
+  // OPTIMIZATION: Filter plans to reduce token usage and prevent payload errors (XHR 500).
+  // Only send plans from 30 days ago to 60 days in the future.
+  const now = new Date();
+  const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+  const sixtyDaysLater = new Date(now.getTime() + 60 * 24 * 60 * 60 * 1000);
+
+  const relevantPlans = currentPlans.filter(p => {
+    const d = new Date(p.startDate);
+    return d >= thirtyDaysAgo && d <= sixtyDaysLater;
+  }).slice(0, 80); // Hard limit item count to avoid large payloads
+
+  const plansContext = relevantPlans.map(p => ({
     title: p.title,
     start: p.startDate,
     end: p.endDate,
@@ -126,13 +137,17 @@ export const processUserIntent = async (
     请返回严格的 JSON 格式。
 
     1. 如果是周报请求或分析请求 (ANALYZE)：
-       - 根据 'Current Plans' 生成详细内容。
-       - 返回格式: { "intent": "ANALYZE", "analysisContent": "Markdown格式的内容..." }
-       - Markdown 内容需包含: ### 1. 本周完成工作, ### 2. 本周工作总结, ### 3. 下周工作计划, ### 4. 需协调与帮助
+       - 必须根据 'Current Plans' 生成内容。
+       - 返回格式: { "intent": "ANALYZE", "analysisContent": "Markdown..." }
+       - Markdown 内容**必须**包含以下4个严格标题 (请保持完全一致，不要修改标点):
+         ### 1. 本周完成工作
+         ### 2. 本周工作总结
+         ### 3. 下周工作计划
+         ### 4. 需协调与帮助
 
     2. 如果是创建日程 (CREATE)：
        - 基于当前时间(${localTimeContext})推算准确的 ISO 时间。
-       - tags 数组: 请务必非常精简，只生成 1-2 个核心词（例如 "会议", "开发", "Bug"）。不要生成超过 2 个标签。
+       - tags 数组: 请务必非常精简，只生成 1-2 个核心词（例如 "会议", "开发", "Bug"）。
        - 返回格式: { "intent": "CREATE", "planData": { "title": "...", "description": "...", "startDate": "YYYY-MM-DDTHH:mm:ss", "endDate": "...", "tags": [] } }
   `;
 
@@ -203,7 +218,7 @@ export const processUserIntent = async (
     const endISO = parseDate(data.planData.endDate);
 
     if (!startISO || !endISO) {
-      console.error("Invalid dates returned by AI");
+      console.error("Invalid dates returned by AI", data.planData);
       return null;
     }
 
@@ -216,7 +231,7 @@ export const processUserIntent = async (
         startDate: startISO,
         endDate: endISO,
         status: PlanStatus.TODO,
-        tags: (data.planData.tags || []).slice(0, 3), // Strictly limit tags to 3 max to avoid UI clutter
+        tags: (data.planData.tags || []).slice(0, 3), // Strictly limit tags to 3 max
         color: getRandomColor(),
         links: []
       }
@@ -232,8 +247,9 @@ export const generateSmartSuggestions = async (
 ): Promise<SmartSuggestion[]> => {
   const localTimeContext = formatLocalTime(new Date());
   
+  // Also limit history for suggestions
   const plansSummary = currentPlans
-    .slice(0, 10) 
+    .slice(0, 15) 
     .map(p => `${p.startDate.slice(0, 16)}: ${p.title}`)
     .join('; ');
 

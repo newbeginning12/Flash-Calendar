@@ -133,8 +133,9 @@ interface ReportSection {
 
 const parseWeeklyReport = (text: string): ReportSection[] | null => {
   // Regex to detect if this looks like our structured weekly report
-  // Checks for "### 1." followed by content
-  if (!/###\s*1\./.test(text)) return null;
+  // Checks for "### 1." or "## 1." or "### 1、" followed by keywords
+  // A looser check to enable parsing even if AI hallucinates slight format changes
+  if (!/(?:###|##)\s*1[.\、]/.test(text) && !/本周完成工作/.test(text)) return null;
 
   const sections = [
     { id: '1', title: '本周完成工作' },
@@ -143,20 +144,45 @@ const parseWeeklyReport = (text: string): ReportSection[] | null => {
     { id: '4', title: '需协调与帮助' }
   ];
 
-  return sections.map((section, index) => {
-    const nextId = index < sections.length - 1 ? sections[index + 1].id : null;
-    const stopPattern = nextId ? `###\\s*${nextId}\\.` : '$';
-    const regex = new RegExp(`###\\s*${section.id}\\.\\s*${section.title}([\\s\S]*?)(?=${stopPattern})`, 'i');
+  const results: ReportSection[] = [];
+
+  for (let i = 0; i < sections.length; i++) {
+    const currentSection = sections[i];
+    const nextSection = sections[i + 1];
+
+    // Construct regex to find content between current title and next title (or end of string)
+    // Matches: (### or ##) (number) (. or 、) (optional whitespace) (Title)
+    const startPattern = `(?:###|##)\\s*${currentSection.id}[.\\、]?\\s*${currentSection.title}`;
+    
+    // Look ahead for the next section number, e.g. "### 2." or "## 2、"
+    const nextId = nextSection ? nextSection.id : null;
+    const stopPattern = nextId ? `(?:###|##)\\s*${nextId}[.\\、]` : '$';
+
+    const regex = new RegExp(`${startPattern}([\\s\\S]*?)(?=${stopPattern})`, 'i');
     const match = text.match(regex);
 
     let content = match ? match[1].trim() : '';
-    if (!content) content = '（暂无内容）';
+    
+    // Fallback: If regex failed but we are confident the section should exist (because text contains the title)
+    // We try to find the title index manually. 
+    if (!content && text.includes(currentSection.title)) {
+       content = '（内容解析可能有误，请查看原文）';
+    } else if (!content) {
+       content = '（暂无内容）';
+    }
 
-    return {
-      title: `${section.id}. ${section.title}`,
+    results.push({
+      title: `${currentSection.id}. ${currentSection.title}`,
       content: content
-    };
-  });
+    });
+  }
+  
+  // If we found nothing useful, fallback to null to render full markdown
+  if (results.every(r => r.content === '（暂无内容）' || r.content === '（内容解析可能有误，请查看原文）')) {
+      return null;
+  }
+
+  return results;
 };
 
 function App() {
