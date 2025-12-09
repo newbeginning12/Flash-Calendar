@@ -1,3 +1,4 @@
+
 import { GoogleGenAI, Type } from "@google/genai";
 import { WorkPlan, PlanStatus } from "../types";
 
@@ -148,6 +149,7 @@ export const processUserIntent = async (userInput: string, currentPlans: WorkPla
           status: PlanStatus.TODO,
           tags: data.planData.tags || [],
           color: getRandomColor(),
+          links: []
         }
       };
     }

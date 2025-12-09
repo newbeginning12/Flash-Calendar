@@ -5,6 +5,12 @@ export enum PlanStatus {
   DONE = 'DONE'
 }
 
+export interface LinkResource {
+  id: string;
+  title: string;
+  url: string;
+}
+
 export interface WorkPlan {
   id: string;
   title: string;
@@ -14,6 +20,7 @@ export interface WorkPlan {
   status: PlanStatus;
   tags: string[];
   color: string; // Tailwind color class helper
+  links: LinkResource[];
 }
 
 export interface CalendarEventPosition {

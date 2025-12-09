@@ -1,7 +1,8 @@
-import React, { useState, useRef, useEffect } from 'react';
+
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { WorkPlan, PlanStatus } from '../types';
 import { format, addDays, isSameDay, getHours, getMinutes, differenceInMinutes, addMinutes, startOfWeek } from 'date-fns';
-import { Edit2, Trash2, CheckCircle2, Circle, Plus, Zap, PlayCircle } from 'lucide-react';
+import { Edit2, Trash2, CheckCircle2, Circle, Plus, PlayCircle } from 'lucide-react';
 
 interface WeeklyCalendarProps {
   currentDate: Date;
@@ -11,6 +12,7 @@ interface WeeklyCalendarProps {
   onPlanUpdate: (plan: WorkPlan) => void;
   onDeletePlan: (id: string) => void;
   onDateSelect: (date: Date) => void;
+  onDragCreate: (startDate: Date, durationMinutes: number) => void;
 }
 
 const HOURS = Array.from({ length: 24 }, (_, i) => i);
@@ -49,7 +51,8 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
   onSlotClick, 
   onPlanUpdate, 
   onDeletePlan,
-  onDateSelect 
+  onDateSelect,
+  onDragCreate
 }) => {
   const [dragState, setDragState] = useState<DragState | null>(null);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
@@ -70,6 +73,73 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
     if (h > 0 && m > 0) return `${h}小时${m}分`;
     if (h > 0) return `${h}小时`;
     return `${m}分钟`;
+  };
+
+  // --- Layout Algorithm for Overlapping Events ---
+  const calculateLayout = (dayPlans: WorkPlan[]) => {
+    // 1. Sort by start time, then duration (longer first for better packing)
+    const sorted = [...dayPlans].sort((a, b) => {
+        const startDiff = new Date(a.startDate).getTime() - new Date(b.startDate).getTime();
+        if (startDiff !== 0) return startDiff;
+        const durA = new Date(a.endDate).getTime() - new Date(a.startDate).getTime();
+        const durB = new Date(b.endDate).getTime() - new Date(b.startDate).getTime();
+        return durB - durA;
+    });
+
+    const layoutMap = new Map<string, { left: string; width: string }>();
+    if (sorted.length === 0) return layoutMap;
+
+    // 2. Group into connected clusters
+    const clusters: WorkPlan[][] = [];
+    let currentCluster: WorkPlan[] = [sorted[0]];
+    let clusterEnd = new Date(sorted[0].endDate).getTime();
+
+    for (let i = 1; i < sorted.length; i++) {
+        const plan = sorted[i];
+        const start = new Date(plan.startDate).getTime();
+        const end = new Date(plan.endDate).getTime();
+
+        if (start < clusterEnd) {
+            currentCluster.push(plan);
+            clusterEnd = Math.max(clusterEnd, end);
+        } else {
+            clusters.push(currentCluster);
+            currentCluster = [plan];
+            clusterEnd = end;
+        }
+    }
+    clusters.push(currentCluster);
+
+    // 3. Layout each cluster
+    clusters.forEach(cluster => {
+        const columns: WorkPlan[][] = [];
+        cluster.forEach(plan => {
+            let placed = false;
+            for (let i = 0; i < columns.length; i++) {
+                const lastPlanInCol = columns[i][columns[i].length - 1];
+                if (new Date(lastPlanInCol.endDate).getTime() <= new Date(plan.startDate).getTime()) {
+                    columns[i].push(plan);
+                    placed = true;
+                    break;
+                }
+            }
+            if (!placed) {
+                columns.push([plan]);
+            }
+        });
+
+        const count = columns.length;
+        columns.forEach((col, colIndex) => {
+            col.forEach(plan => {
+                layoutMap.set(plan.id, {
+                    left: `${(colIndex / count) * 100}%`,
+                    width: `${(1 / count) * 100}%`
+                });
+            });
+        });
+    });
+
+    return layoutMap;
   };
 
   // --- Auto Scroll Logic ---
@@ -119,9 +189,8 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
 
   }, [currentDate, plans]);
 
-  // --- Drag & Drop Logic ---
+  // --- Drag & Drop (Internal Moving) Logic ---
   const handleMouseDown = (e: React.MouseEvent, plan: WorkPlan) => {
-    // IMPORTANT: Only allow left click (button 0) to start drag
     if (e.button !== 0) return;
 
     e.stopPropagation();
@@ -151,7 +220,6 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
       isDragging: false
     });
     
-    // Close context menu if open
     setContextMenu(null);
   };
 
@@ -218,6 +286,40 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
     snapDate.setMinutes(snappedMinutes);
 
     return { snapDate, snapDay, colIndex, snappedMinutes };
+  };
+
+  // --- External Drag & Drop Logic (Smart Create) ---
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault(); // Necessary to allow dropping
+    e.dataTransfer.dropEffect = 'copy';
+  };
+
+  const handleDrop = (e: React.DragEvent, day: Date) => {
+      e.preventDefault();
+      try {
+          const data = e.dataTransfer.getData('application/json');
+          if (!data) return;
+          
+          const { type, minutes } = JSON.parse(data);
+          
+          if (type === 'PRESET_DURATION' && minutes) {
+             const rect = e.currentTarget.getBoundingClientRect();
+             const y = e.clientY - rect.top; // Relative to the column
+             
+             // Convert Y to minutes (approximate)
+             const rawMinutes = (y / ROW_HEIGHT) * 60;
+             // Snap to nearest 15 mins
+             const snappedMinutes = Math.floor(rawMinutes / 15) * 15;
+             
+             const startDate = new Date(day);
+             startDate.setHours(0, 0, 0, 0);
+             startDate.setMinutes(snappedMinutes);
+             
+             onDragCreate(startDate, minutes);
+          }
+      } catch (err) {
+          console.error("Drop failed", err);
+      }
   };
 
   // --- Context Menu Logic ---
@@ -305,7 +407,7 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
     return {
       top: `${top}px`,
       height: `${Math.max(height, 24)}px`, 
-      className: `absolute inset-x-1 rounded-lg border px-2 py-1 text-xs font-medium cursor-grab active:cursor-grabbing select-none overflow-hidden transition-all shadow-sm hover:z-20 hover:shadow-md ${colors[plan.color] || colors.blue}`
+      className: `absolute rounded-lg border px-2 py-1 text-xs font-medium cursor-grab active:cursor-grabbing select-none overflow-hidden transition-all shadow-sm hover:z-20 hover:shadow-md ${colors[plan.color] || colors.blue}`
     };
   };
 
@@ -432,6 +534,9 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
                   return planDateStr === dayStr && p.id !== dragState?.plan.id;
               });
 
+              // Calculate layout for overlaps
+              const layoutMap = calculateLayout(dayPlans);
+
               const isGhostCol = ghostData && ghostData.colIndex === idx;
               const isSelectedDay = isSameDay(day, currentDate);
 
@@ -443,6 +548,8 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
                   }`}
                   onClick={(e) => handleColumnClick(e, day)}
                   onContextMenu={(e) => handleSlotContextMenu(e, day)}
+                  onDragOver={handleDragOver}
+                  onDrop={(e) => handleDrop(e, day)}
                 >
                   {isGhostCol && (
                       <div 
@@ -457,28 +564,39 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
 
                   {dayPlans.map(plan => {
                     const style = getEventStyle(plan);
+                    const layout = layoutMap.get(plan.id) || { left: '0%', width: '100%' };
                     const icon = renderStatusIcon(plan.status);
                     const durationStr = getDurationString(plan.startDate, plan.endDate);
+                    
+                    // Add tiny gaps for visual separation if sharing a column
+                    const isFullWidth = layout.width === '100%';
                     
                     return (
                       <div
                         key={plan.id}
-                        style={{ top: style.top, height: style.height }}
-                        className={style.className}
+                        style={{ 
+                            ...style, 
+                            left: layout.left, 
+                            width: layout.width 
+                        }}
+                        className={`${style.className} ${isFullWidth ? 'mx-1' : 'px-1'}`}
                         onMouseDown={(e) => handleMouseDown(e, plan)}
                         onContextMenu={(e) => handlePlanContextMenu(e, plan)}
                       >
-                         <div className="flex items-center gap-1.5 h-full items-start pt-0.5">
-                            {icon && <div className="mt-[1px]">{icon}</div>}
-                            <div className="flex-1 min-w-0">
-                                <div className={`font-semibold truncate leading-tight`}>{plan.title}</div>
-                                {parseInt(style.height) > 40 && (
-                                    <div className="text-[10px] opacity-80 truncate mt-0.5">
-                                        {format(new Date(plan.startDate), 'HH:mm')} - {format(new Date(plan.endDate), 'HH:mm')}
-                                        <span className="ml-1 font-medium">· {durationStr}</span>
-                                    </div>
-                                )}
-                            </div>
+                         {/* Inner container to handle spacing if width is tight */}
+                         <div className={`w-full h-full ${!isFullWidth ? 'border-l-0 border-r-0 rounded-none' : ''}`}>
+                             <div className="flex items-center gap-1.5 h-full items-start pt-0.5">
+                                {icon && <div className="mt-[1px]">{icon}</div>}
+                                <div className="flex-1 min-w-0">
+                                    <div className={`font-semibold truncate leading-tight`}>{plan.title}</div>
+                                    {parseInt(style.height) > 40 && (
+                                        <div className="text-[10px] opacity-80 truncate mt-0.5">
+                                            {format(new Date(plan.startDate), 'HH:mm')} - {format(new Date(plan.endDate), 'HH:mm')}
+                                            <span className="ml-1 font-medium">· {durationStr}</span>
+                                        </div>
+                                    )}
+                                </div>
+                             </div>
                          </div>
                       </div>
                     );

@@ -1,29 +1,21 @@
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { WeeklyCalendar } from './components/WeeklyCalendar';
 import { SmartInput } from './components/SmartInput';
 import { PlanModal } from './components/PlanModal';
 import { SettingsModal } from './components/SettingsModal';
+import { TaskSidebar } from './components/TaskSidebar';
+import { DatePicker } from './components/DatePicker';
+import { AppIcon } from './components/AppIcon';
+import { FlashCommand } from './components/FlashCommand';
 import { WorkPlan, PlanStatus, AISettings } from './types';
 import { processUserIntent, generateSmartSuggestions, SmartSuggestion, DEFAULT_MODEL } from './services/aiService';
-import { Calendar as CalendarIcon, Settings, Bell, Search, Plus, User, ChevronLeft, ChevronRight, ChevronDown, X, Sparkles, ClipboardList, Check, Copy, AlertCircle, Clock, Hash } from 'lucide-react';
-import { addHours, format, addDays, startOfDay, isSameDay } from 'date-fns';
+import { Calendar as CalendarIcon, Settings, Bell, Search, Plus, User, ChevronLeft, ChevronRight, ChevronDown, X, Sparkles, ClipboardList, Check, Copy, AlertCircle, Clock, Hash, PanelLeft } from 'lucide-react';
+import { addHours, format, addDays, startOfDay, isSameDay, addMinutes } from 'date-fns';
 
 // Helper to generate fresh mock data on init
 const generateMockPlans = (): WorkPlan[] => {
-  const today = new Date();
-  const tomorrow = addDays(new Date(), 1);
-
-  // Helper to set time without mutating original date object
-  const setTime = (date: Date, hours: number, minutes: number) => {
-    const d = new Date(date);
-    d.setHours(hours, minutes, 0, 0);
-    return d;
-  };
-
-  return [
-   
-  ];
+  return [];
 };
 
 const COLORS = ['blue', 'indigo', 'purple', 'rose', 'orange', 'emerald'];
@@ -201,9 +193,14 @@ function App() {
   });
 
   const [currentDate, setCurrentDate] = useState(new Date());
+  // Lock "Today" to the actual current date, independent of navigation
+  const [today] = useState(() => new Date());
+
   const [selectedPlan, setSelectedPlan] = useState<WorkPlan | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isDatePickerOpen, setIsDatePickerOpen] = useState(false); // NEW: DatePicker state
+
   const [isProcessingAI, setIsProcessingAI] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   
@@ -216,6 +213,11 @@ function App() {
   
   // AI Analysis Result State
   const [analysisResult, setAnalysisResult] = useState<string | null>(null);
+
+  // Sidebar Resizable State
+  const [sidebarWidth, setSidebarWidth] = useState(320);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const isResizingRef = useRef(false);
 
   // CHANGED: Save to localStorage whenever plans change
   useEffect(() => {
@@ -255,6 +257,55 @@ function App() {
     }
   }, [errorMessage]);
 
+  // Responsive Sidebar: Auto collapse on small screens
+  useEffect(() => {
+    const handleResize = () => {
+      if (window.innerWidth < 1024) {
+        setIsSidebarOpen(false);
+      } else {
+        setIsSidebarOpen(true);
+      }
+    };
+    // Initial check
+    handleResize();
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  // Resizing Logic
+  const startResizing = useCallback(() => {
+    isResizingRef.current = true;
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  }, []);
+
+  const stopResizing = useCallback(() => {
+    isResizingRef.current = false;
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+  }, []);
+
+  const resize = useCallback((mouseMoveEvent: MouseEvent) => {
+    if (isResizingRef.current) {
+        const newWidth = mouseMoveEvent.clientX;
+        const minWidth = 240;
+        const maxWidth = window.innerWidth * 0.4;
+        
+        if (newWidth >= minWidth && newWidth <= maxWidth) {
+            setSidebarWidth(newWidth);
+        }
+    }
+  }, []);
+
+  useEffect(() => {
+    window.addEventListener('mousemove', resize);
+    window.addEventListener('mouseup', stopResizing);
+    return () => {
+      window.removeEventListener('mousemove', resize);
+      window.removeEventListener('mouseup', stopResizing);
+    };
+  }, [resize, stopResizing]);
+
   // Handle Natural Language Input
   const handleAIInput = async (input: string) => {
     setIsProcessingAI(true);
@@ -293,7 +344,8 @@ function App() {
       endDate: suggestion.planData.endDate,
       tags: suggestion.planData.tags || [],
       status: PlanStatus.TODO,
-      color: getRandomColor()
+      color: getRandomColor(),
+      links: []
     };
 
     setPlans(prev => [...prev, newPlan]);
@@ -313,10 +365,27 @@ function App() {
       endDate: addHours(date, 1).toISOString(),
       status: PlanStatus.TODO,
       tags: [],
-      color: 'blue'
+      color: 'blue',
+      links: []
     };
     setSelectedPlan(newPlan);
     setIsModalOpen(true);
+  };
+
+  const handleDragCreate = (startDate: Date, durationMinutes: number) => {
+     // Create new plan immediately upon drop
+     const newPlan: WorkPlan = {
+        id: crypto.randomUUID(),
+        title: '新建日程',
+        startDate: startDate.toISOString(),
+        endDate: addMinutes(startDate, durationMinutes).toISOString(),
+        status: PlanStatus.TODO,
+        tags: [],
+        color: getRandomColor(),
+        links: []
+     };
+     setSelectedPlan(newPlan);
+     setIsModalOpen(true); // Open modal to let user edit title immediately
   };
 
   const handleSavePlan = (updatedPlan: WorkPlan) => {
@@ -380,16 +449,38 @@ function App() {
   return (
     <div className="flex flex-col h-screen w-full bg-[#F5F5F7] text-slate-900 font-sans selection:bg-blue-100 overflow-hidden relative">
       
+      {/* GLOBAL COMMAND PALETTE */}
+      <FlashCommand 
+         plans={plans}
+         modelName={aiSettings.model}
+         onPlanCreated={(newPlan) => {
+             setPlans(prev => [...prev, newPlan]);
+         }}
+      />
+
       {/* Unified Header */}
       <header className="flex-none h-16 px-6 flex items-center justify-between bg-white/60 backdrop-blur-xl border-b border-slate-200/60 z-30 relative">
         
         {/* Left: Brand & Date Nav */}
         <div className="flex items-center space-x-6">
-          <div className="flex items-center gap-2 text-slate-900">
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-slate-900 to-slate-700 flex items-center justify-center text-white shadow-md shadow-slate-900/20">
-               <CalendarIcon size={16} />
+          <div className="flex items-center gap-4 text-slate-900">
+            {/* Sidebar Toggle */}
+            <button 
+                onClick={() => setIsSidebarOpen(!isSidebarOpen)} 
+                className={`p-2 rounded-lg transition-colors ${isSidebarOpen ? 'bg-slate-200/50 text-slate-900' : 'text-slate-500 hover:bg-slate-100'}`}
+                title="切换侧边栏"
+            >
+                <PanelLeft size={20} />
+            </button>
+
+            <div className="flex items-center gap-2">
+                {/* NEW APP ICON */}
+                <AppIcon size={32} />
+                <div className="hidden sm:flex flex-col justify-center">
+                    <span className="text-lg font-bold tracking-tight leading-none text-slate-900">闪历</span>
+                    <span className="text-[10px] text-slate-500 font-medium leading-none tracking-wide mt-0.5">AI 智能日程</span>
+                </div>
             </div>
-            <span className="text-lg font-bold tracking-tight hidden sm:block">智汇计划</span>
           </div>
 
           <div className="h-6 w-px bg-slate-300 mx-2 hidden sm:block"></div>
@@ -399,24 +490,31 @@ function App() {
                 <ChevronLeft size={16} />
              </button>
              
-             {/* Date Picker Overlay */}
-             <div className="relative group px-1">
-                 <div className="flex items-center gap-1 px-3 py-1 rounded-md cursor-pointer hover:bg-white/60 transition-colors">
-                     <span className="text-sm font-semibold text-slate-700 tabular-nums min-w-[80px] text-center">
+             {/* New Date Picker Trigger */}
+             <div className="relative">
+                 <button 
+                    onClick={() => setIsDatePickerOpen(!isDatePickerOpen)}
+                    className={`flex items-center gap-1 px-3 py-1 rounded-md cursor-pointer transition-colors ${
+                        isDatePickerOpen ? 'bg-white shadow-sm text-slate-900' : 'hover:bg-white/60 text-slate-700'
+                    }`}
+                 >
+                     <span className="text-sm font-semibold tabular-nums min-w-[80px] text-center">
                         {format(currentDate, 'yyyy年 M月')}
                      </span>
-                     <ChevronDown size={14} className="text-slate-400 group-hover:text-slate-600 transition-colors" />
-                 </div>
-                 {/* Hidden Native Input */}
-                 <input 
-                    type="date" 
-                    value={format(currentDate, 'yyyy-MM-dd')}
-                    className="absolute inset-0 opacity-0 cursor-pointer w-full h-full z-10"
-                    onChange={(e) => {
-                        const d = e.target.valueAsDate;
-                        if(d) setCurrentDate(d);
-                    }}
-                 />
+                     <ChevronDown size={14} className={`text-slate-400 transition-transform ${isDatePickerOpen ? 'rotate-180' : ''}`} />
+                 </button>
+
+                 {/* Dropdown Calendar */}
+                 {isDatePickerOpen && (
+                    <DatePicker 
+                        currentDate={currentDate}
+                        onDateSelect={(d) => {
+                            setCurrentDate(d);
+                            setIsDatePickerOpen(false);
+                        }}
+                        onClose={() => setIsDatePickerOpen(false)}
+                    />
+                 )}
              </div>
 
              <button onClick={() => setCurrentDate(d => addDays(d, 7))} className="p-1.5 hover:bg-white rounded-md transition-all text-slate-500 hover:text-slate-800 hover:shadow-sm">
@@ -491,9 +589,24 @@ function App() {
                          ))}
                       </div>
                    ) : (
-                      <div className="p-8 text-center text-slate-400">
-                         <Search size={24} className="mx-auto mb-2 opacity-50" />
-                         <p className="text-sm">未找到相关日程</p>
+                      <div className="p-8 text-center text-slate-400 flex flex-col items-center animate-in fade-in zoom-in duration-200">
+                         <div className="w-12 h-12 bg-slate-50 rounded-full flex items-center justify-center mb-3">
+                            <Search size={20} className="text-slate-300" />
+                         </div>
+                         <p className="text-sm font-medium text-slate-600 mb-1">未找到相关日程</p>
+                         <p className="text-xs text-slate-400 mb-4">可以尝试新建一个日程</p>
+                         
+                         <button 
+                            onClick={() => {
+                                handleSlotClick(startOfDay(currentDate));
+                                setSearchQuery('');
+                                setIsSearchFocused(false);
+                            }}
+                            className="flex items-center gap-2 px-4 py-2 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 rounded-lg text-sm font-medium transition-colors active:scale-95"
+                         >
+                            <Plus size={16} />
+                            新建日程
+                         </button>
                       </div>
                    )}
                 </div>
@@ -543,7 +656,34 @@ function App() {
       </header>
 
       {/* Main Content */}
-      <main className="flex-1 flex flex-col relative overflow-hidden">
+      <main className="flex-1 flex overflow-hidden">
+        {/* Resizable Sidebar Wrapper */}
+        <div 
+          style={{ width: isSidebarOpen ? sidebarWidth : 0 }}
+          className="relative transition-all duration-300 ease-in-out flex-shrink-0"
+        >
+          <div className="w-full h-full overflow-hidden">
+             <TaskSidebar 
+                currentDate={today}
+                plans={plans}
+                onPlanClick={handlePlanClick}
+                onPlanUpdate={handlePlanUpdate}
+                onDeletePlan={handleDeletePlan}
+                onCreateNew={() => handleSlotClick(startOfDay(today))}
+            />
+          </div>
+
+          {/* Drag Handle */}
+          {isSidebarOpen && (
+              <div
+                onMouseDown={startResizing}
+                className="absolute top-0 right-0 w-1 h-full cursor-col-resize hover:bg-blue-500/50 z-30 transition-colors"
+              >
+                  {/* Invisible Hit Area */}
+                  <div className="absolute top-0 -left-2 w-4 h-full bg-transparent"></div>
+              </div>
+          )}
+        </div>
         
         {/* Error Toast */}
         {errorMessage && (
@@ -558,17 +698,20 @@ function App() {
           </div>
         )}
 
-        {/* Calendar Grid */}
-        <div className="flex-1 h-full overflow-hidden p-4 sm:p-6 pb-24">
-            <WeeklyCalendar 
-                currentDate={currentDate} 
-                plans={plans} 
-                onPlanClick={handlePlanClick} 
-                onSlotClick={handleSlotClick}
-                onPlanUpdate={handlePlanUpdate}
-                onDeletePlan={handleDeletePlan}
-                onDateSelect={setCurrentDate}
-            />
+        {/* Right Content: Calendar Grid */}
+        <div className="flex-1 h-full overflow-hidden p-0 sm:p-4 pb-24 relative flex flex-col min-w-0">
+            <div className="flex-1 h-full overflow-hidden sm:rounded-3xl sm:shadow-[0_2px_20px_rgb(0,0,0,0.02)] sm:border sm:border-slate-100 bg-white">
+                <WeeklyCalendar 
+                    currentDate={currentDate} 
+                    plans={plans} 
+                    onPlanClick={handlePlanClick} 
+                    onSlotClick={handleSlotClick}
+                    onPlanUpdate={handlePlanUpdate}
+                    onDeletePlan={handleDeletePlan}
+                    onDateSelect={setCurrentDate}
+                    onDragCreate={handleDragCreate}
+                />
+            </div>
         </div>
 
         {/* Floating AI Input with Suggestions */}
