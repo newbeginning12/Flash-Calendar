@@ -1,0 +1,5 @@
+{
+  "name": "智汇计划 AI",
+  "description": "一个灵感源自 Apple 设计的智能工作计划工具，利用 Gemini 将自然语言转化为日程安排，拥有类似飞书的流畅日历界面。",
+  "requestFramePermissions": []
+}
