@@ -235,6 +235,9 @@ function App() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const isResizingRef = useRef(false);
 
+  // Abort Controller Ref
+  const abortControllerRef = useRef<AbortController | null>(null);
+
   useEffect(() => {
     try {
       localStorage.setItem('zhihui_plans', JSON.stringify(plans));
@@ -316,28 +319,64 @@ function App() {
   }, [resize, stopResizing]);
 
   const handleAIInput = async (input: string) => {
+    // 1. Abort any previous pending request
+    if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+    }
+    
+    // 2. Create new controller
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
     setIsProcessingAI(true);
     setAnalysisResult(null); 
     setErrorMessage(null);
     setSuggestions([]);
 
-    // Pass settings to support custom providers
-    const result = await processUserIntent(input, plans, aiSettings);
-    
-    if (result) {
-      if (result.type === 'CREATE_PLAN') {
-        const newPlan = result.data;
-        if (newPlan.title) {
-          setPlans(prev => [...prev, newPlan as WorkPlan]);
+    try {
+        // Pass settings to support custom providers AND the abort signal
+        const result = await processUserIntent(input, plans, aiSettings, controller.signal);
+        
+        // 3. Check if aborted after promise resolves (ignore result if so)
+        if (controller.signal.aborted) {
+            console.log('Request aborted, ignoring result.');
+            return;
         }
-      } else if (result.type === 'ANALYSIS') {
-        setAnalysisResult(result.content);
-      }
-    } else {
-        setErrorMessage("AI 服务响应异常，请检查网络或配置。");
+
+        if (result) {
+          if (result.type === 'CREATE_PLAN') {
+            const newPlan = result.data;
+            if (newPlan.title) {
+              setPlans(prev => [...prev, newPlan as WorkPlan]);
+            }
+          } else if (result.type === 'ANALYSIS') {
+            setAnalysisResult(result.content);
+          }
+        } else {
+            setErrorMessage("AI 服务响应异常，请检查网络或配置。");
+        }
+    } catch (error: any) {
+        if (error.name === 'AbortError') {
+            console.log('Fetch aborted by user');
+        } else {
+            console.error(error);
+            setErrorMessage("请求发生错误");
+        }
+    } finally {
+        // Only turn off loading if this is still the active request
+        if (abortControllerRef.current === controller) {
+            setIsProcessingAI(false);
+            abortControllerRef.current = null;
+        }
     }
-    
-    setIsProcessingAI(false);
+  };
+
+  const handleStopAI = () => {
+      if (abortControllerRef.current) {
+          abortControllerRef.current.abort();
+          abortControllerRef.current = null;
+          setIsProcessingAI(false);
+      }
   };
 
   const handleSuggestionClick = async (suggestion: SmartSuggestion) => {
@@ -690,6 +729,7 @@ function App() {
 
         <SmartInput 
           onSubmit={handleAIInput} 
+          onStop={handleStopAI}
           onSuggestionClick={handleSuggestionClick}
           isProcessing={isProcessingAI} 
           suggestions={suggestions}

@@ -64,7 +64,8 @@ interface OpenAICompatibleMessage {
 const callOpenAICompatible = async (
   settings: AISettings, 
   messages: OpenAICompatibleMessage[],
-  jsonMode: boolean = true
+  jsonMode: boolean = true,
+  signal?: AbortSignal
 ): Promise<string | null> => {
   if (!settings.apiKey || !settings.baseUrl) {
     console.error("Missing API Key or Base URL for custom provider");
@@ -86,7 +87,8 @@ const callOpenAICompatible = async (
         // Some providers support response_format: { type: "json_object" }, but not all. 
         // We rely on system prompt for JSON structure.
         response_format: jsonMode ? { type: "json_object" } : undefined
-      })
+      }),
+      signal: signal
     });
 
     if (!response.ok) {
@@ -97,7 +99,10 @@ const callOpenAICompatible = async (
 
     const data = await response.json();
     return data.choices?.[0]?.message?.content || null;
-  } catch (e) {
+  } catch (e: any) {
+    if (e.name === 'AbortError') {
+        throw e; // Re-throw abort error to be handled by caller
+    }
     console.error(`Network Error (${settings.provider}):`, e);
     return null;
   }
@@ -108,7 +113,8 @@ const callOpenAICompatible = async (
 export const processUserIntent = async (
   userInput: string, 
   currentPlans: WorkPlan[], 
-  settings: AISettings
+  settings: AISettings,
+  signal?: AbortSignal
 ): Promise<AIProcessingResult> => {
   const localTimeContext = formatLocalTime(new Date());
 
@@ -162,6 +168,8 @@ export const processUserIntent = async (
   if (settings.provider === AIProvider.GOOGLE) {
     // --- Google Implementation ---
     try {
+      // Note: @google/genai SDK generateContent currently relies on the promise resolution.
+      // AbortSignal support depends on SDK internals, but we handle logic cancellation in App.tsx as well.
       const response = await googleAI.models.generateContent({
         model: settings.model,
         contents: promptContent,
@@ -189,8 +197,17 @@ export const processUserIntent = async (
           systemInstruction: systemInstructionText
         }
       });
+      
+      // Manual check if aborted during await
+      if (signal?.aborted) {
+          throw new DOMException('Aborted', 'AbortError');
+      }
+
       rawResponseText = response.text;
-    } catch (e) {
+    } catch (e: any) {
+      if (signal?.aborted || e.name === 'AbortError') {
+          throw e;
+      }
       console.error("Google AI Error:", e);
       return null;
     }
@@ -200,7 +217,7 @@ export const processUserIntent = async (
       { role: 'system', content: systemInstructionText + " IMPORTANT: Only return the JSON object, no markdown code fences." },
       { role: 'user', content: promptContent }
     ];
-    rawResponseText = await callOpenAICompatible(settings, messages, true);
+    rawResponseText = await callOpenAICompatible(settings, messages, true, signal);
   }
 
   // --- Common Processing ---
@@ -310,6 +327,7 @@ export const generateSmartSuggestions = async (
       { role: 'system', content: systemPrompt + " IMPORTANT: Return only the JSON array." },
       { role: 'user', content: "生成建议" }
     ];
+    // Suggestions usually don't need abort signal as they run in background
     rawResponseText = await callOpenAICompatible(settings, messages, true);
   }
 

@@ -1,10 +1,11 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Sparkles, ArrowRight, Loader2, Mic, Square } from 'lucide-react';
+import { Sparkles, ArrowRight, Loader2, Mic, Square, AudioLines } from 'lucide-react';
 import { SmartSuggestion } from '../services/aiService';
 
 interface SmartInputProps {
   onSubmit: (input: string) => Promise<void>;
+  onStop: () => void;
   onSuggestionClick: (suggestion: SmartSuggestion) => Promise<void>;
   isProcessing: boolean;
   suggestions?: SmartSuggestion[];
@@ -27,7 +28,7 @@ declare global {
   }
 }
 
-export const SmartInput: React.FC<SmartInputProps> = ({ onSubmit, onSuggestionClick, isProcessing, suggestions = [] }) => {
+export const SmartInput: React.FC<SmartInputProps> = ({ onSubmit, onStop, onSuggestionClick, isProcessing, suggestions = [] }) => {
   const [value, setValue] = useState('');
   const [hintIndex, setHintIndex] = useState(0);
   const [isFocused, setIsFocused] = useState(false);
@@ -35,8 +36,10 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onSubmit, onSuggestionCl
   // Speech Recognition State
   const [isListening, setIsListening] = useState(false);
   const recognitionRef = useRef<any>(null);
-  // Store the text that existed before recording started to append correctly
+  // Store the text that existed before recording started
   const valueBeforeRecording = useRef(''); 
+  // Timer for auto-submit
+  const silenceTimer = useRef<number | null>(null);
 
   // Rotate hints every 5 seconds
   useEffect(() => {
@@ -46,27 +49,32 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onSubmit, onSuggestionCl
     return () => clearInterval(interval);
   }, []);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!value.trim() || isProcessing) return;
+  const handleSubmit = async (e?: React.FormEvent) => {
+    e?.preventDefault();
+    
+    // If processing, treating click as Stop
+    if (isProcessing) {
+        onStop();
+        return;
+    }
+
+    if (!value.trim()) return;
+    
+    // Ensure listening is stopped and timers cleared
+    stopListening();
+
     await onSubmit(value);
     setValue('');
   };
 
   const handleClick = async (suggestion: SmartSuggestion) => {
     if (isProcessing) return;
+    stopListening();
     await onSuggestionClick(suggestion);
   };
 
   // --- Speech Recognition Logic ---
-  const toggleListening = () => {
-    if (isListening) {
-      stopListening();
-    } else {
-      startListening();
-    }
-  };
-
+  
   const startListening = () => {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     
@@ -75,44 +83,59 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onSubmit, onSuggestionCl
       return;
     }
 
-    // Save current text so we can append speech to it
+    // Capture current text so we append to it, not replace it
     valueBeforeRecording.current = value;
     
     const recognition = new SpeechRecognition();
     recognition.lang = 'zh-CN';
-    recognition.continuous = true; // Keep listening even if user pauses
-    recognition.interimResults = true; // Crucial for "millisecond" feel (shows text as you speak)
+    recognition.continuous = true; // Keep listening
+    recognition.interimResults = true; // Real-time results
 
     recognition.onstart = () => {
       setIsListening(true);
-      setIsFocused(true); // Focus input to show visual active state
+      setIsFocused(true);
     };
 
     recognition.onresult = (event: any) => {
-      let finalTranscript = '';
-      let interimTranscript = '';
-
-      for (let i = event.resultIndex; i < event.results.length; ++i) {
-        if (event.results[i].isFinal) {
-          finalTranscript += event.results[i][0].transcript;
-          // Update the baseline for the next segment
-          valueBeforeRecording.current += event.results[i][0].transcript;
-        } else {
-          interimTranscript += event.results[i][0].transcript;
-        }
+      // Reconstruct the full text from the session
+      // For continuous recognition, event.results contains the history
+      let sessionTranscript = '';
+      for (let i = 0; i < event.results.length; ++i) {
+        sessionTranscript += event.results[i][0].transcript;
       }
 
-      // Update UI immediately with what we have so far
-      setValue(valueBeforeRecording.current + interimTranscript);
+      // Combine previous text + new spoken text
+      const newValue = valueBeforeRecording.current + sessionTranscript;
+      setValue(newValue);
+
+      // --- Auto-Submit Logic ---
+      // 1. Clear existing timer
+      if (silenceTimer.current) {
+          clearTimeout(silenceTimer.current);
+      }
+
+      // 2. Set new timer if we have content
+      if (newValue.trim()) {
+          silenceTimer.current = window.setTimeout(() => {
+              // User has been silent for 1.5s -> Auto Submit
+              recognition.stop();
+              setIsListening(false);
+              onSubmit(newValue);
+              setValue(''); // Clear input after submit
+          }, 1500); // 1.5s silence threshold
+      }
     };
 
     recognition.onerror = (event: any) => {
       console.error('Speech recognition error', event.error);
       setIsListening(false);
+      if (silenceTimer.current) clearTimeout(silenceTimer.current);
     };
 
     recognition.onend = () => {
       setIsListening(false);
+      // We don't clear the timer here because if the user manually stopped, 
+      // we handle it in toggleListening/stopListening.
     };
 
     recognitionRef.current = recognition;
@@ -123,6 +146,19 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onSubmit, onSuggestionCl
     if (recognitionRef.current) {
       recognitionRef.current.stop();
       setIsListening(false);
+    }
+    if (silenceTimer.current) {
+      clearTimeout(silenceTimer.current);
+      silenceTimer.current = null;
+    }
+  };
+
+  const toggleListening = () => {
+    if (isListening) {
+      // If user manually clicks stop, treat it as "I'm done, send it now"
+      handleSubmit(); 
+    } else {
+      startListening();
     }
   };
 
@@ -153,15 +189,11 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onSubmit, onSuggestionCl
           ${isListening ? 'ring-2 ring-indigo-500/20' : ''}
         `}>
           
-          <div className="flex items-center justify-center w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-50 to-blue-50 text-indigo-500 ml-1 flex-shrink-0 z-10 transition-colors duration-300">
+          <div className={`flex items-center justify-center w-10 h-10 rounded-xl ml-1 flex-shrink-0 z-10 transition-all duration-300 ${isListening ? 'bg-indigo-500 text-white' : 'bg-gradient-to-br from-indigo-50 to-blue-50 text-indigo-500'}`}>
             {isProcessing ? (
               <Loader2 className="animate-spin" size={20} />
             ) : isListening ? (
-               <div className="flex gap-0.5 items-end justify-center h-4 pb-0.5">
-                   <span className="w-1 h-3 bg-indigo-500 rounded-full animate-[bounce_1s_infinite_0ms]"></span>
-                   <span className="w-1 h-5 bg-indigo-500 rounded-full animate-[bounce_1s_infinite_200ms]"></span>
-                   <span className="w-1 h-3 bg-indigo-500 rounded-full animate-[bounce_1s_infinite_400ms]"></span>
-               </div>
+               <AudioLines size={20} className="animate-pulse" />
             ) : (
               <Sparkles size={20} />
             )}
@@ -182,7 +214,9 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onSubmit, onSuggestionCl
              
              {isListening && !value && (
                 <div className="absolute inset-0 flex items-center pointer-events-none">
-                    <span className="text-indigo-500/60 text-base animate-pulse">正在聆听...</span>
+                    <span className="text-indigo-500/60 text-base animate-pulse font-medium">
+                        正在聆听... (停顿发送)
+                    </span>
                 </div>
              )}
 
@@ -194,7 +228,7 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onSubmit, onSuggestionCl
                 onFocus={() => setIsFocused(true)}
                 onBlur={() => setIsFocused(false)}
                 disabled={isProcessing}
-                className="w-full h-full bg-transparent border-none outline-none text-slate-800 text-base relative z-10 placeholder-transparent"
+                className="w-full h-full bg-transparent border-none outline-none text-slate-800 text-base relative z-10 placeholder-transparent disabled:cursor-not-allowed disabled:opacity-50"
              />
           </div>
 
@@ -205,18 +239,26 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onSubmit, onSuggestionCl
              disabled={isProcessing}
              className={`p-2 mr-1 rounded-xl transition-all flex-shrink-0 z-10 hover:bg-slate-100 ${
                  isListening ? 'text-rose-500 bg-rose-50 hover:bg-rose-100' : 'text-slate-400 hover:text-indigo-500'
-             }`}
-             title={isListening ? "停止录音" : "语音输入"}
+             } disabled:opacity-30 disabled:cursor-not-allowed`}
+             title={isListening ? "点击停止并发送" : "语音输入"}
           >
               {isListening ? <Square size={18} fill="currentColor" /> : <Mic size={20} />}
           </button>
 
           <button 
-            type="submit"
-            disabled={!value.trim() || isProcessing}
-            className={`p-2 bg-slate-900 text-white rounded-xl hover:bg-black disabled:opacity-50 disabled:cursor-not-allowed transition-all active:scale-95 shadow-md flex-shrink-0 z-10`}
+            type={isProcessing ? 'button' : 'submit'}
+            onClick={isProcessing ? onStop : undefined}
+            disabled={!isProcessing && !value.trim()}
+            className={`
+                p-2 rounded-xl text-white transition-all active:scale-95 shadow-md flex-shrink-0 z-10
+                ${isProcessing 
+                    ? 'bg-slate-800 hover:bg-slate-700' 
+                    : 'bg-slate-900 hover:bg-black disabled:opacity-50 disabled:cursor-not-allowed'
+                }
+            `}
+            title={isProcessing ? "停止生成" : "发送"}
           >
-            <ArrowRight size={18} />
+            {isProcessing ? <Square size={16} fill="currentColor" /> : <ArrowRight size={18} />}
           </button>
         </div>
       </form>
