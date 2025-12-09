@@ -1,26 +1,24 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { Command, CornerDownLeft, Sparkles, Loader2, X, Calendar, Clock } from 'lucide-react';
-import { WorkPlan } from '../types';
+import { WorkPlan, AISettings } from '../types';
 import { processUserIntent } from '../services/aiService';
 
 interface FlashCommandProps {
   plans: WorkPlan[];
-  modelName: string;
+  settings: AISettings;
   onPlanCreated: (plan: WorkPlan) => void;
 }
 
-export const FlashCommand: React.FC<FlashCommandProps> = ({ plans, modelName, onPlanCreated }) => {
+export const FlashCommand: React.FC<FlashCommandProps> = ({ plans, settings, onPlanCreated }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [input, setInput] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
-  const [showSuccess, setShowSuccess] = useState<string | null>(null); // Stores the title of created plan
+  const [showSuccess, setShowSuccess] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Toggle with Cmd+K or Ctrl+K
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Check for both 'k' and 'K' to handle CapsLock or Shift scenarios
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault();
         setIsOpen(prev => !prev);
@@ -35,10 +33,8 @@ export const FlashCommand: React.FC<FlashCommandProps> = ({ plans, modelName, on
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  // Auto-focus input when opened
   useEffect(() => {
     if (isOpen && inputRef.current) {
-      // Small timeout to ensure DOM is rendered
       setTimeout(() => inputRef.current?.focus(), 50);
     } else {
         setInput('');
@@ -52,17 +48,11 @@ export const FlashCommand: React.FC<FlashCommandProps> = ({ plans, modelName, on
 
     setIsProcessing(true);
 
-    // Call AI Service
-    const result = await processUserIntent(input, plans, modelName);
+    const result = await processUserIntent(input, plans, settings);
 
     if (result && result.type === 'CREATE_PLAN' && result.data) {
-        // Complete the partial plan
         const newPlan = result.data as WorkPlan;
-        
-        // Pass to parent
         onPlanCreated(newPlan);
-
-        // Show success state briefly then close
         setShowSuccess(newPlan.title);
         setInput('');
         
@@ -71,7 +61,6 @@ export const FlashCommand: React.FC<FlashCommandProps> = ({ plans, modelName, on
             setShowSuccess(null);
         }, 1500);
     } else {
-        // Handle error (shake animation or error toast could be added here)
         console.error("Failed to parse intent or not a creation intent");
     }
 
@@ -82,16 +71,13 @@ export const FlashCommand: React.FC<FlashCommandProps> = ({ plans, modelName, on
 
   return (
     <div className="fixed inset-0 z-[100] flex items-start justify-center pt-[20vh] px-4">
-      {/* Backdrop */}
       <div 
         className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm transition-opacity duration-200"
         onClick={() => setIsOpen(false)}
       />
 
-      {/* Command Window */}
       <div className="relative w-full max-w-2xl bg-[#1a1a1a] rounded-2xl shadow-2xl border border-white/10 overflow-hidden transform transition-all animate-in fade-in zoom-in-95 duration-200">
         
-        {/* Input Area */}
         <div className="flex items-center px-4 py-4 md:py-5 border-b border-white/5">
             <div className={`w-8 h-8 rounded-lg flex items-center justify-center mr-4 transition-colors ${isProcessing ? 'bg-indigo-500/20 text-indigo-400' : 'bg-white/10 text-white'}`}>
                 {isProcessing ? (
@@ -122,7 +108,6 @@ export const FlashCommand: React.FC<FlashCommandProps> = ({ plans, modelName, on
             )}
         </div>
 
-        {/* Footer / Status Bar */}
         <div className="bg-[#141414] px-4 py-2.5 flex justify-between items-center text-xs text-white/40 font-medium">
             <div className="flex items-center gap-4">
                 <span className="flex items-center gap-1.5">
@@ -138,9 +123,11 @@ export const FlashCommand: React.FC<FlashCommandProps> = ({ plans, modelName, on
             </div>
 
             <div className="flex items-center gap-3">
-                <div className="flex items-center gap-1">
-                    <span>切换模型</span>
-                    <span className="px-1.5 py-0.5 rounded bg-white/10 font-mono text-[10px] text-white/60">Coming Soon</span>
+                <div className="flex items-center gap-1 opacity-60">
+                    <span>当前模型:</span>
+                    <span className="px-1.5 py-0.5 rounded bg-white/10 font-mono text-[10px] text-white">
+                        {settings.model}
+                    </span>
                 </div>
                 <div className="w-px h-3 bg-white/10"></div>
                 <div className="flex items-center gap-1 cursor-pointer hover:text-white transition-colors" onClick={() => handleSubmit()}>
@@ -152,7 +139,6 @@ export const FlashCommand: React.FC<FlashCommandProps> = ({ plans, modelName, on
             </div>
         </div>
 
-        {/* Success Overlay Effect */}
         {showSuccess && (
             <div className="absolute inset-0 pointer-events-none flex items-center justify-center bg-emerald-500/5 mix-blend-overlay">
                 <div className="absolute top-0 w-full h-1 bg-gradient-to-r from-emerald-500 via-teal-400 to-emerald-500"></div>

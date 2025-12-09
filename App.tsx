@@ -8,7 +8,7 @@ import { TaskSidebar } from './components/TaskSidebar';
 import { DatePicker } from './components/DatePicker';
 import { AppIcon } from './components/AppIcon';
 import { FlashCommand } from './components/FlashCommand';
-import { WorkPlan, PlanStatus, AISettings } from './types';
+import { WorkPlan, PlanStatus, AISettings, AIProvider } from './types';
 import { processUserIntent, generateSmartSuggestions, SmartSuggestion, DEFAULT_MODEL } from './services/aiService';
 import { Calendar as CalendarIcon, Settings, Bell, Search, Plus, User, ChevronLeft, ChevronRight, ChevronDown, X, Sparkles, ClipboardList, Check, Copy, AlertCircle, Clock, Hash, PanelLeft } from 'lucide-react';
 import { addHours, format, addDays, startOfDay, isSameDay, addMinutes } from 'date-fns';
@@ -144,21 +144,12 @@ const parseWeeklyReport = (text: string): ReportSection[] | null => {
   ];
 
   return sections.map((section, index) => {
-    // Regex explanation:
-    // ###\s*1\.\s*Title : Matches the header, allowing flexible spaces
-    // ([\s\S]*?) : Captures any character (including newlines) non-greedily
-    // (?=###\s*2\.|$): Lookahead stop condition. Stop at the NEXT header number OR end of string ($)
-    
     const nextId = index < sections.length - 1 ? sections[index + 1].id : null;
     const stopPattern = nextId ? `###\\s*${nextId}\\.` : '$';
-    
-    // Create dynamic regex
-    const regex = new RegExp(`###\\s*${section.id}\\.\\s*${section.title}([\\s\\S]*?)(?=${stopPattern})`, 'i');
+    const regex = new RegExp(`###\\s*${section.id}\\.\\s*${section.title}([\\s\S]*?)(?=${stopPattern})`, 'i');
     const match = text.match(regex);
 
     let content = match ? match[1].trim() : '';
-    
-    // Fallback: if content is empty or undefined, show placeholder
     if (!content) content = '（暂无内容）';
 
     return {
@@ -169,7 +160,6 @@ const parseWeeklyReport = (text: string): ReportSection[] | null => {
 };
 
 function App() {
-  // CHANGED: Initialize from localStorage or fallback to mock
   const [plans, setPlans] = useState<WorkPlan[]>(() => {
     try {
       const savedPlans = localStorage.getItem('zhihui_plans');
@@ -186,40 +176,39 @@ function App() {
   const [aiSettings, setAiSettings] = useState<AISettings>(() => {
     try {
         const saved = localStorage.getItem('zhihui_ai_settings');
-        return saved ? JSON.parse(saved) : { model: DEFAULT_MODEL };
+        if (saved) {
+            const parsed = JSON.parse(saved);
+            // Ensure provider exists (migration support)
+            return { provider: AIProvider.GOOGLE, model: DEFAULT_MODEL, ...parsed };
+        }
+        return { provider: AIProvider.GOOGLE, model: DEFAULT_MODEL };
     } catch (e) {
-        return { model: DEFAULT_MODEL };
+        return { provider: AIProvider.GOOGLE, model: DEFAULT_MODEL };
     }
   });
 
   const [currentDate, setCurrentDate] = useState(new Date());
-  // Lock "Today" to the actual current date, independent of navigation
   const [today] = useState(() => new Date());
 
   const [selectedPlan, setSelectedPlan] = useState<WorkPlan | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [isDatePickerOpen, setIsDatePickerOpen] = useState(false); // NEW: DatePicker state
+  const [isDatePickerOpen, setIsDatePickerOpen] = useState(false);
 
   const [isProcessingAI, setIsProcessingAI] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   
-  // Search State
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearchFocused, setIsSearchFocused] = useState(false);
   
-  // AI Suggestions - Store full objects for immediate action
   const [suggestions, setSuggestions] = useState<SmartSuggestion[]>([]);
   
-  // AI Analysis Result State
   const [analysisResult, setAnalysisResult] = useState<string | null>(null);
 
-  // Sidebar Resizable State
   const [sidebarWidth, setSidebarWidth] = useState(320);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const isResizingRef = useRef(false);
 
-  // CHANGED: Save to localStorage whenever plans change
   useEffect(() => {
     try {
       localStorage.setItem('zhihui_plans', JSON.stringify(plans));
@@ -228,7 +217,6 @@ function App() {
     }
   }, [plans]);
 
-  // Save Settings
   useEffect(() => {
       try {
           localStorage.setItem('zhihui_ai_settings', JSON.stringify(aiSettings));
@@ -237,19 +225,17 @@ function App() {
       }
   }, [aiSettings]);
 
-  // Init suggestions on load (using current model setting)
   useEffect(() => {
     const fetchSuggestions = async () => {
-      // Small delay to ensure mock data is ready and UI is responsive
       setTimeout(async () => {
-        const sugs = await generateSmartSuggestions(plans, aiSettings.model);
+        // Pass the entire settings object to support different providers
+        const sugs = await generateSmartSuggestions(plans, aiSettings);
         setSuggestions(sugs);
       }, 500);
     };
     fetchSuggestions();
-  }, []); // Only run on mount, though ideally should re-run if plans change significantly
+  }, []);
 
-  // Auto-hide error message
   useEffect(() => {
     if (errorMessage) {
       const timer = setTimeout(() => setErrorMessage(null), 4000);
@@ -257,7 +243,6 @@ function App() {
     }
   }, [errorMessage]);
 
-  // Responsive Sidebar: Auto collapse on small screens
   useEffect(() => {
     const handleResize = () => {
       if (window.innerWidth < 1024) {
@@ -266,13 +251,11 @@ function App() {
         setIsSidebarOpen(true);
       }
     };
-    // Initial check
     handleResize();
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  // Resizing Logic
   const startResizing = useCallback(() => {
     isResizingRef.current = true;
     document.body.style.cursor = 'col-resize';
@@ -306,14 +289,14 @@ function App() {
     };
   }, [resize, stopResizing]);
 
-  // Handle Natural Language Input
   const handleAIInput = async (input: string) => {
     setIsProcessingAI(true);
     setAnalysisResult(null); 
     setErrorMessage(null);
     setSuggestions([]);
 
-    const result = await processUserIntent(input, plans, aiSettings.model);
+    // Pass settings to support custom providers
+    const result = await processUserIntent(input, plans, aiSettings);
     
     if (result) {
       if (result.type === 'CREATE_PLAN') {
@@ -325,17 +308,15 @@ function App() {
         setAnalysisResult(result.content);
       }
     } else {
-        setErrorMessage("AI 服务响应异常，请重试。");
+        setErrorMessage("AI 服务响应异常，请检查网络或配置。");
     }
     
     setIsProcessingAI(false);
   };
 
-  // Handle Smart Suggestion Click (Immediate creation without AI call)
   const handleSuggestionClick = async (suggestion: SmartSuggestion) => {
-    setSuggestions([]); // Clear suggestions
+    setSuggestions([]);
     
-    // Create new plan immediately from pre-calculated data
     const newPlan: WorkPlan = {
       id: crypto.randomUUID(),
       title: suggestion.planData.title,
@@ -357,7 +338,6 @@ function App() {
   };
 
   const handleSlotClick = (date: Date) => {
-    // Create new plan at specific slot
     const newPlan: WorkPlan = {
       id: crypto.randomUUID(),
       title: '新建日程',
@@ -373,7 +353,6 @@ function App() {
   };
 
   const handleDragCreate = (startDate: Date, durationMinutes: number) => {
-     // Create new plan immediately upon drop
      const newPlan: WorkPlan = {
         id: crypto.randomUUID(),
         title: '新建日程',
@@ -385,7 +364,7 @@ function App() {
         links: []
      };
      setSelectedPlan(newPlan);
-     setIsModalOpen(true); // Open modal to let user edit title immediately
+     setIsModalOpen(true);
   };
 
   const handleSavePlan = (updatedPlan: WorkPlan) => {
@@ -411,12 +390,9 @@ function App() {
   };
 
   const handleSearchResultClick = (plan: WorkPlan) => {
-    // 1. Move calendar to that date
     setCurrentDate(new Date(plan.startDate));
-    // 2. Open Modal
     setSelectedPlan(plan);
     setIsModalOpen(true);
-    // 3. Clear search
     setSearchQuery('');
     setIsSearchFocused(false);
   };
@@ -424,18 +400,15 @@ function App() {
   const handleSaveSettings = (newSettings: AISettings) => {
     setAiSettings(newSettings);
     setIsSettingsOpen(false);
-    setErrorMessage("设置已更新"); // Reusing error message for success toast temporarily, or could add success type
-    // Refresh suggestions with new model
+    setErrorMessage("配置已更新");
     setTimeout(async () => {
-        const sugs = await generateSmartSuggestions(plans, newSettings.model);
+        const sugs = await generateSmartSuggestions(plans, newSettings);
         setSuggestions(sugs);
     }, 100);
   };
 
-  // derived state for report
   const reportSections = analysisResult ? parseWeeklyReport(analysisResult) : null;
 
-  // derived state for search
   const searchResults = searchQuery.trim() 
     ? plans
         .filter(p => 
@@ -443,28 +416,23 @@ function App() {
           p.description?.toLowerCase().includes(searchQuery.toLowerCase()) ||
           p.tags.some(t => t.toLowerCase().includes(searchQuery.toLowerCase()))
         )
-        .sort((a, b) => new Date(b.startDate).getTime() - new Date(a.startDate).getTime()) // Sort by newest
+        .sort((a, b) => new Date(b.startDate).getTime() - new Date(a.startDate).getTime()) 
     : [];
 
   return (
     <div className="flex flex-col h-screen w-full bg-[#F5F5F7] text-slate-900 font-sans selection:bg-blue-100 overflow-hidden relative">
       
-      {/* GLOBAL COMMAND PALETTE */}
       <FlashCommand 
          plans={plans}
-         modelName={aiSettings.model}
+         settings={aiSettings}
          onPlanCreated={(newPlan) => {
              setPlans(prev => [...prev, newPlan]);
          }}
       />
 
-      {/* Unified Header */}
       <header className="flex-none h-16 px-6 flex items-center justify-between bg-white/60 backdrop-blur-xl border-b border-slate-200/60 z-30 relative">
-        
-        {/* Left: Brand & Date Nav */}
         <div className="flex items-center space-x-6">
           <div className="flex items-center gap-4 text-slate-900">
-            {/* Sidebar Toggle */}
             <button 
                 onClick={() => setIsSidebarOpen(!isSidebarOpen)} 
                 className={`p-2 rounded-lg transition-colors ${isSidebarOpen ? 'bg-slate-200/50 text-slate-900' : 'text-slate-500 hover:bg-slate-100'}`}
@@ -474,7 +442,6 @@ function App() {
             </button>
 
             <div className="flex items-center gap-2">
-                {/* NEW APP ICON */}
                 <AppIcon size={32} />
                 <div className="hidden sm:flex flex-col justify-center">
                     <span className="text-lg font-bold tracking-tight leading-none text-slate-900">闪历</span>
@@ -490,7 +457,6 @@ function App() {
                 <ChevronLeft size={16} />
              </button>
              
-             {/* New Date Picker Trigger */}
              <div className="relative">
                  <button 
                     onClick={() => setIsDatePickerOpen(!isDatePickerOpen)}
@@ -504,7 +470,6 @@ function App() {
                      <ChevronDown size={14} className={`text-slate-400 transition-transform ${isDatePickerOpen ? 'rotate-180' : ''}`} />
                  </button>
 
-                 {/* Dropdown Calendar */}
                  {isDatePickerOpen && (
                     <DatePicker 
                         currentDate={currentDate}
@@ -526,9 +491,7 @@ function App() {
           </button>
         </div>
 
-        {/* Right: Actions & Profile */}
         <div className="flex items-center space-x-2 sm:space-x-4">
-           {/* Enhanced Search */}
            <div className="relative hidden md:flex items-center group">
               <div className={`
                  flex items-center bg-slate-100/50 border border-transparent rounded-full px-3 py-1.5 w-48 transition-all duration-300
@@ -541,7 +504,7 @@ function App() {
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     onFocus={() => setIsSearchFocused(true)}
-                    onBlur={() => setTimeout(() => setIsSearchFocused(false), 200)} // Delay to allow click on result
+                    onBlur={() => setTimeout(() => setIsSearchFocused(false), 200)} 
                     className="bg-transparent border-none outline-none text-sm w-full placeholder-slate-400 text-slate-700" 
                   />
                   {searchQuery && (
@@ -554,7 +517,6 @@ function App() {
                   )}
               </div>
 
-              {/* Search Results Dropdown (Spotlight Style) */}
               {searchQuery && (
                 <div className="absolute top-full left-0 w-[320px] bg-white/95 backdrop-blur-xl rounded-2xl shadow-xl border border-slate-100 mt-2 p-1 z-50 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
                    {searchResults.length > 0 ? (
@@ -580,9 +542,6 @@ function App() {
                                       <Clock size={10} />
                                       {format(new Date(plan.startDate), 'M月d日 HH:mm')}
                                    </span>
-                                   {plan.status === PlanStatus.DONE && (
-                                     <span className="bg-emerald-100 text-emerald-700 px-1.5 rounded text-[10px]">已完成</span>
-                                   )}
                                 </div>
                              </div>
                            </button>
@@ -594,15 +553,13 @@ function App() {
                             <Search size={20} className="text-slate-300" />
                          </div>
                          <p className="text-sm font-medium text-slate-600 mb-1">未找到相关日程</p>
-                         <p className="text-xs text-slate-400 mb-4">可以尝试新建一个日程</p>
-                         
                          <button 
                             onClick={() => {
                                 handleSlotClick(startOfDay(currentDate));
                                 setSearchQuery('');
                                 setIsSearchFocused(false);
                             }}
-                            className="flex items-center gap-2 px-4 py-2 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 rounded-lg text-sm font-medium transition-colors active:scale-95"
+                            className="flex items-center gap-2 px-4 py-2 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 rounded-lg text-sm font-medium transition-colors active:scale-95 mt-3"
                          >
                             <Plus size={16} />
                             新建日程
@@ -613,7 +570,6 @@ function App() {
               )}
            </div>
 
-           {/* Icon Buttons */}
            <button 
              onClick={() => handleAIInput("生成本周工作周报，包含完成工作、总结、计划和需协调")}
              className="p-2 text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded-full transition-colors relative group"
@@ -636,7 +592,6 @@ function App() {
 
            <div className="h-6 w-px bg-slate-300 mx-2 hidden sm:block"></div>
 
-           {/* User Profile */}
            <div className="flex items-center gap-2 cursor-pointer p-1 pr-2 hover:bg-slate-100 rounded-full transition-colors">
               <div className="w-8 h-8 rounded-full bg-slate-200 flex items-center justify-center overflow-hidden border border-white shadow-sm">
                  <User size={16} className="text-slate-500" />
@@ -644,7 +599,6 @@ function App() {
               <span className="text-sm font-medium text-slate-700 hidden lg:block">Alex</span>
            </div>
 
-           {/* New Plan Button */}
            <button 
               onClick={() => handleSlotClick(startOfDay(currentDate))}
               className="hidden lg:flex bg-slate-900 hover:bg-black text-white px-4 py-1.5 rounded-full text-sm font-medium shadow-lg shadow-slate-900/10 transition-transform active:scale-95 items-center gap-2 ml-2"
@@ -655,9 +609,7 @@ function App() {
         </div>
       </header>
 
-      {/* Main Content */}
       <main className="flex-1 flex overflow-hidden">
-        {/* Resizable Sidebar Wrapper */}
         <div 
           style={{ width: isSidebarOpen ? sidebarWidth : 0 }}
           className="relative transition-all duration-300 ease-in-out flex-shrink-0"
@@ -673,19 +625,16 @@ function App() {
             />
           </div>
 
-          {/* Drag Handle */}
           {isSidebarOpen && (
               <div
                 onMouseDown={startResizing}
                 className="absolute top-0 right-0 w-1 h-full cursor-col-resize hover:bg-blue-500/50 z-30 transition-colors"
               >
-                  {/* Invisible Hit Area */}
                   <div className="absolute top-0 -left-2 w-4 h-full bg-transparent"></div>
               </div>
           )}
         </div>
         
-        {/* Error Toast */}
         {errorMessage && (
           <div className="absolute top-4 left-1/2 transform -translate-x-1/2 z-50 animate-in fade-in slide-in-from-top-4 duration-300">
              <div className="flex items-center gap-2 bg-slate-800 text-white px-4 py-2.5 rounded-full shadow-lg backdrop-blur-sm">
@@ -698,7 +647,6 @@ function App() {
           </div>
         )}
 
-        {/* Right Content: Calendar Grid */}
         <div className="flex-1 h-full overflow-hidden p-0 sm:p-4 pb-24 relative flex flex-col min-w-0">
             <div className="flex-1 h-full overflow-hidden sm:rounded-3xl sm:shadow-[0_2px_20px_rgb(0,0,0,0.02)] sm:border sm:border-slate-100 bg-white">
                 <WeeklyCalendar 
@@ -714,7 +662,6 @@ function App() {
             </div>
         </div>
 
-        {/* Floating AI Input with Suggestions */}
         <SmartInput 
           onSubmit={handleAIInput} 
           onSuggestionClick={handleSuggestionClick}
@@ -722,7 +669,6 @@ function App() {
           suggestions={suggestions}
         />
 
-        {/* AI Analysis Modal */}
         {analysisResult && (
            <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
               <div 
@@ -741,7 +687,6 @@ function App() {
                  </div>
                  
                  <div className="flex-1 overflow-y-auto custom-scrollbar pr-2 -mr-2">
-                     {/* Weekly Report Specialized View */}
                      {reportSections ? (
                         <div className="space-y-4 pt-2">
                            <div className="flex items-center gap-2 mb-2 pb-2 border-b border-slate-100">
@@ -760,13 +705,8 @@ function App() {
                                 </div>
                              </div>
                            ))}
-
-                           <div className="text-xs text-center text-slate-400 pt-4">
-                              --------------------------------------------------
-                           </div>
                         </div>
                      ) : (
-                       /* Generic Markdown View */
                        <div className="prose prose-slate prose-sm max-w-none bg-slate-50/50 p-5 rounded-2xl border border-slate-100">
                           <MarkdownRenderer content={analysisResult} />
                        </div>
@@ -785,7 +725,6 @@ function App() {
            </div>
         )}
 
-        {/* Edit Modal */}
         <PlanModal 
             plan={selectedPlan} 
             isOpen={isModalOpen} 
@@ -794,7 +733,6 @@ function App() {
             onDelete={handleDeletePlan}
         />
         
-        {/* Settings Modal */}
         <SettingsModal
             isOpen={isSettingsOpen}
             onClose={() => setIsSettingsOpen(false)}

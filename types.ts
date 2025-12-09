@@ -30,6 +30,16 @@ export interface CalendarEventPosition {
   width: number;
 }
 
+export enum AIProvider {
+  GOOGLE = 'google',
+  DEEPSEEK = 'deepseek',
+  ALI_QWEN = 'ali_qwen',
+  CUSTOM = 'custom'
+}
+
 export interface AISettings {
+  provider: AIProvider;
   model: string;
+  apiKey?: string; // For custom providers
+  baseUrl?: string; // For OpenAI compatible providers
 }
