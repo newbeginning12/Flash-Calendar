@@ -1,8 +1,8 @@
 
-import React, { useState, useRef, useEffect, useMemo } from 'react';
+import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { WorkPlan, PlanStatus } from '../types';
 import { format, addDays, isSameDay, getHours, getMinutes, differenceInMinutes, addMinutes, startOfWeek } from 'date-fns';
-import { Edit2, Trash2, CheckCircle2, Circle, Plus, PlayCircle } from 'lucide-react';
+import { Edit2, Trash2, CheckCircle2, Circle, Plus, PlayCircle, ZoomIn, ZoomOut, RotateCcw } from 'lucide-react';
 
 interface WeeklyCalendarProps {
   currentDate: Date;
@@ -18,8 +18,12 @@ interface WeeklyCalendarProps {
 const HOURS = Array.from({ length: 24 }, (_, i) => i);
 const DAYS_TO_SHOW = 7;
 const WEEKDAYS_ZH = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
-const ROW_HEIGHT = 64; 
 const SIDEBAR_WIDTH = 64; 
+
+// Zoom Constraints
+const MIN_ROW_HEIGHT = 40;
+const MAX_ROW_HEIGHT = 180;
+const DEFAULT_ROW_HEIGHT = 64;
 
 interface DragState {
   plan: WorkPlan;
@@ -34,6 +38,7 @@ interface DragState {
   currentClientY: number; 
   gridWidth: number; 
   isDragging: boolean;
+  originalRowHeight: number; // Capture row height at start of drag
 }
 
 interface ContextMenuState {
@@ -58,6 +63,21 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
   const [dragState, setDragState] = useState<DragState | null>(null);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const gridRef = useRef<HTMLDivElement>(null);
+  
+  // --- Zoom State ---
+  const [rowHeight, setRowHeight] = useState<number>(() => {
+    try {
+        const saved = localStorage.getItem('zhihui_calendar_row_height');
+        return saved ? Math.max(MIN_ROW_HEIGHT, Math.min(MAX_ROW_HEIGHT, parseInt(saved))) : DEFAULT_ROW_HEIGHT;
+    } catch {
+        return DEFAULT_ROW_HEIGHT;
+    }
+  });
+
+  // Save zoom preference
+  useEffect(() => {
+    localStorage.setItem('zhihui_calendar_row_height', rowHeight.toString());
+  }, [rowHeight]);
 
   useEffect(() => {
     const interval = setInterval(() => setNow(new Date()), 60000);
@@ -67,6 +87,29 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
   // Use reliable startOfWeek from date-fns (Monday start)
   const weekStart = startOfWeek(currentDate, { weekStartsOn: 1 });
   const weekDays = Array.from({ length: DAYS_TO_SHOW }, (_, i) => addDays(weekStart, i));
+
+  // --- Wheel Zoom Logic ---
+  const handleWheel = useCallback((e: WheelEvent) => {
+    if (e.ctrlKey || e.metaKey) {
+        e.preventDefault();
+        const delta = e.deltaY > 0 ? -4 : 4; // Zoom step
+        setRowHeight(prev => {
+            const next = prev + delta;
+            return Math.max(MIN_ROW_HEIGHT, Math.min(MAX_ROW_HEIGHT, next));
+        });
+    }
+  }, []);
+
+  useEffect(() => {
+      const el = gridRef.current;
+      if (el) {
+          el.addEventListener('wheel', handleWheel, { passive: false });
+      }
+      return () => {
+          if (el) el.removeEventListener('wheel', handleWheel);
+      }
+  }, [handleWheel]);
+
 
   // --- Helper: Duration Display ---
   const getDurationString = (startStr: string, endStr: string) => {
@@ -83,7 +126,7 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
 
   // --- Layout Algorithm for Overlapping Events ---
   const calculateLayout = (dayPlans: WorkPlan[]) => {
-    // 1. Sort by start time, then duration (longer first for better packing)
+    // 1. Sort by start time, then duration
     const sorted = [...dayPlans].sort((a, b) => {
         const startDiff = new Date(a.startDate).getTime() - new Date(b.startDate).getTime();
         if (startDiff !== 0) return startDiff;
@@ -95,7 +138,6 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
     const layoutMap = new Map<string, { left: string; width: string }>();
     if (sorted.length === 0) return layoutMap;
 
-    // 2. Group into connected clusters
     const clusters: WorkPlan[][] = [];
     let currentCluster: WorkPlan[] = [sorted[0]];
     let clusterEnd = new Date(sorted[0].endDate).getTime();
@@ -116,7 +158,6 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
     }
     clusters.push(currentCluster);
 
-    // 3. Layout each cluster
     clusters.forEach(cluster => {
         const columns: WorkPlan[][] = [];
         cluster.forEach(plan => {
@@ -149,6 +190,7 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
   };
 
   // --- Auto Scroll Logic ---
+  // We only run this when the currentDate changes to avoid fighting with user scrolling/zooming
   useEffect(() => {
     if (!gridRef.current) return;
 
@@ -185,15 +227,15 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
         targetMinutes = getHours(now) * 60 + getMinutes(now);
     }
 
-    const top = (targetMinutes / 60) * ROW_HEIGHT;
-    const padding = 48;
+    const top = (targetMinutes / 60) * rowHeight;
+    const padding = rowHeight; // One hour padding
     
     gridRef.current.scrollTo({
       top: Math.max(0, top - padding),
       behavior: 'smooth'
     });
-
-  }, [currentDate, plans]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentDate]); // Removed 'rowHeight' from dependency to prevent scroll jumping on zoom
 
   // --- Drag & Drop (Internal Moving) Logic ---
   const handleMouseDown = (e: React.MouseEvent, plan: WorkPlan) => {
@@ -223,10 +265,29 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
       currentClientX: e.clientX,
       currentClientY: e.clientY,
       gridWidth: gridRect.width,
-      isDragging: false
+      isDragging: false,
+      originalRowHeight: rowHeight
     });
     
     setContextMenu(null);
+  };
+
+  const calculateSnap = (state: DragState, days: Date[], currentRH: number) => {
+    const columnsWidth = state.gridWidth - SIDEBAR_WIDTH;
+    const colWidth = columnsWidth / DAYS_TO_SHOW;
+    const xInCols = Math.max(0, state.pointerX - SIDEBAR_WIDTH);
+    const colIndex = Math.min(DAYS_TO_SHOW - 1, Math.floor(xInCols / colWidth));
+    const snapDay = days[colIndex];
+
+    const rawTop = state.pointerY - state.offsetY;
+    const rawMinutes = (rawTop / currentRH) * 60;
+    const snappedMinutes = Math.max(0, Math.round(rawMinutes / 15) * 15);
+    
+    const snapDate = new Date(snapDay);
+    snapDate.setHours(0, 0, 0, 0);
+    snapDate.setMinutes(snappedMinutes);
+
+    return { snapDate, snapDay, colIndex, snappedMinutes };
   };
 
   useEffect(() => {
@@ -253,9 +314,10 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
         if (!dragState.isDragging) {
           onPlanClick(dragState.plan);
         } else {
-          const { snapDate, snapDay } = calculateSnap(dragState, weekDays);
-          const newStart = new Date(snapDay);
-          newStart.setHours(snapDate.getHours(), snapDate.getMinutes());
+          // Use the row height from state or the one captured? 
+          // Using current state is better for responsive updates
+          const { snapDate } = calculateSnap(dragState, weekDays, rowHeight);
+          const newStart = new Date(snapDate);
           const newEnd = addMinutes(newStart, dragState.durationMinutes);
 
           onPlanUpdate({
@@ -274,29 +336,11 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
     };
-  }, [dragState, weekDays, onPlanUpdate, onPlanClick]);
-
-  const calculateSnap = (state: DragState, days: Date[]) => {
-    const columnsWidth = state.gridWidth - SIDEBAR_WIDTH;
-    const colWidth = columnsWidth / DAYS_TO_SHOW;
-    const xInCols = Math.max(0, state.pointerX - SIDEBAR_WIDTH);
-    const colIndex = Math.min(DAYS_TO_SHOW - 1, Math.floor(xInCols / colWidth));
-    const snapDay = days[colIndex];
-
-    const rawTop = state.pointerY - state.offsetY;
-    const rawMinutes = (rawTop / ROW_HEIGHT) * 60;
-    const snappedMinutes = Math.max(0, Math.round(rawMinutes / 15) * 15);
-    
-    const snapDate = new Date(snapDay);
-    snapDate.setHours(0, 0, 0, 0);
-    snapDate.setMinutes(snappedMinutes);
-
-    return { snapDate, snapDay, colIndex, snappedMinutes };
-  };
+  }, [dragState, weekDays, onPlanUpdate, onPlanClick, rowHeight]);
 
   // --- External Drag & Drop Logic (Smart Create) ---
   const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault(); // Necessary to allow dropping
+    e.preventDefault(); 
     e.dataTransfer.dropEffect = 'copy';
   };
 
@@ -310,11 +354,10 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
           
           if (type === 'PRESET_DURATION' && minutes) {
              const rect = e.currentTarget.getBoundingClientRect();
-             const y = e.clientY - rect.top; // Relative to the column
+             const y = e.clientY - rect.top; 
              
-             // Convert Y to minutes (approximate)
-             const rawMinutes = (y / ROW_HEIGHT) * 60;
-             // Snap to nearest 15 mins
+             // Convert Y to minutes using dynamic rowHeight
+             const rawMinutes = (y / rowHeight) * 60;
              const snappedMinutes = Math.floor(rawMinutes / 15) * 15;
              
              const startDate = new Date(day);
@@ -332,7 +375,7 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
   useEffect(() => {
     const handleClickOutside = () => setContextMenu(null);
     window.addEventListener('click', handleClickOutside);
-    window.addEventListener('scroll', handleClickOutside, true); // Close on scroll
+    window.addEventListener('scroll', handleClickOutside, true);
     return () => {
         window.removeEventListener('click', handleClickOutside);
         window.removeEventListener('scroll', handleClickOutside, true);
@@ -356,7 +399,8 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
     
     const rect = e.currentTarget.getBoundingClientRect();
     const y = e.clientY - rect.top;
-    const minutes = (y / ROW_HEIGHT) * 60;
+    // Dynamic calculation
+    const minutes = (y / rowHeight) * 60;
     const snappedMinutes = Math.floor(minutes / 15) * 15;
     
     const date = new Date(day);
@@ -398,8 +442,8 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
     const startMinutes = getHours(start) * 60 + getMinutes(start);
     const durationMinutes = differenceInMinutes(end, start);
     
-    const top = (startMinutes / 60) * ROW_HEIGHT; 
-    const height = (durationMinutes / 60) * ROW_HEIGHT;
+    const top = (startMinutes / 60) * rowHeight; 
+    const height = (durationMinutes / 60) * rowHeight;
 
     const colors: Record<string, string> = {
         blue: 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100',
@@ -410,47 +454,49 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
         emerald: 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100',
     };
     
+    // Check if height is too small for full details
+    const isSmall = height < 30;
+
     return {
       top: `${top}px`,
-      height: `${Math.max(height, 24)}px`, 
-      className: `absolute rounded-lg border px-2 py-1 text-xs font-medium cursor-grab active:cursor-grabbing select-none overflow-hidden transition-all shadow-sm hover:z-20 hover:shadow-md ${colors[plan.color] || colors.blue}`
+      height: `${Math.max(height, 20)}px`, 
+      className: `absolute rounded-lg border px-1.5 ${isSmall ? 'py-0 flex items-center' : 'py-1'} text-xs font-medium cursor-grab active:cursor-grabbing select-none overflow-hidden transition-all shadow-sm hover:z-20 hover:shadow-md ${colors[plan.color] || colors.blue}`
     };
   };
 
   const currentMinutes = getHours(now) * 60 + getMinutes(now);
-  const currentTimeTop = (currentMinutes / 60) * ROW_HEIGHT;
+  const currentTimeTop = (currentMinutes / 60) * rowHeight;
 
   let ghostData = null;
   if (dragState && dragState.isDragging) {
-    const { snapDate, colIndex } = calculateSnap(dragState, weekDays);
+    const { snapDate, colIndex } = calculateSnap(dragState, weekDays, rowHeight);
     const startMinutes = getHours(snapDate) * 60 + getMinutes(snapDate);
     ghostData = {
         colIndex,
-        top: (startMinutes / 60) * ROW_HEIGHT,
-        height: (dragState.durationMinutes / 60) * ROW_HEIGHT,
+        top: (startMinutes / 60) * rowHeight,
+        height: (dragState.durationMinutes / 60) * rowHeight,
         start: snapDate,
         end: addMinutes(snapDate, dragState.durationMinutes)
     };
   }
 
-  // Helper to render status icon
   const renderStatusIcon = (status: PlanStatus) => {
     switch (status) {
         case PlanStatus.DONE:
-            return <CheckCircle2 size={13} className="flex-shrink-0 text-emerald-600 fill-emerald-50" strokeWidth={2.5} />;
+            return <CheckCircle2 size={12} className="flex-shrink-0 text-emerald-600 fill-emerald-50" strokeWidth={2.5} />;
         case PlanStatus.IN_PROGRESS:
-            return <PlayCircle size={13} className="flex-shrink-0 text-blue-600 fill-blue-50" strokeWidth={2.5} />;
+            return <PlayCircle size={12} className="flex-shrink-0 text-blue-600 fill-blue-50" strokeWidth={2.5} />;
         case PlanStatus.TODO:
         default:
-             return <Circle size={13} className="flex-shrink-0 text-slate-400" strokeWidth={2} />;
+             return <Circle size={12} className="flex-shrink-0 text-slate-400" strokeWidth={2} />;
     }
   };
 
   return (
-    <div className="flex flex-col h-full bg-white rounded-3xl shadow-[0_2px_20px_rgb(0,0,0,0.02)] border border-slate-100 overflow-hidden relative" onContextMenu={(e) => e.preventDefault()}>
+    <div className="flex flex-col h-full bg-white rounded-3xl shadow-[0_2px_20px_rgb(0,0,0,0.02)] border border-slate-100 overflow-hidden relative group/calendar" onContextMenu={(e) => e.preventDefault()}>
       
       {/* Header */}
-      <div className="flex border-b border-slate-100 bg-white/50 backdrop-blur-md sticky top-0 z-20">
+      <div className="flex border-b border-slate-100 bg-white/80 backdrop-blur-md sticky top-0 z-20">
         <div className="w-16 flex-shrink-0 border-r border-slate-50"></div> 
         <div className="flex flex-1">
           {weekDays.map((day) => {
@@ -488,17 +534,18 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
 
       {/* Grid */}
       <div className="flex-1 overflow-y-auto custom-scrollbar relative bg-slate-50/20" ref={gridRef}>
-        <div className="flex relative" style={{ minHeight: `${24 * ROW_HEIGHT}px` }}>
-          <div className="w-16 flex-shrink-0 border-r border-slate-100 bg-white sticky left-0 z-10">
+        <div className="flex relative" style={{ minHeight: `${24 * rowHeight}px` }}>
+          
+          {/* Timeline Sidebar */}
+          <div className="w-16 flex-shrink-0 border-r border-slate-100 bg-white sticky left-0 z-10 select-none">
             {HOURS.map((hour) => (
-              <div key={hour} className="relative" style={{ height: `${ROW_HEIGHT}px` }}>
-                <span className="absolute -top-3 right-3 text-xs text-slate-400 font-medium font-mono">
+              <div key={hour} className="relative w-full" style={{ height: `${rowHeight}px` }}>
+                <span className="absolute -top-2.5 right-3 text-[10px] text-slate-400 font-medium font-mono">
                   {hour.toString().padStart(2, '0')}:00
                 </span>
               </div>
             ))}
             
-            {/* Current Time Badge */}
              <div 
                 className="absolute right-0 z-20 -translate-y-1/2 pointer-events-none pr-1 flex items-center justify-end w-full"
                 style={{ top: `${currentTimeTop}px` }}
@@ -509,10 +556,11 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
             </div>
           </div>
 
+          {/* Main Grid Columns */}
           <div className="flex flex-1 relative">
              <div className="absolute inset-0 flex flex-col pointer-events-none">
                 {HOURS.map((h) => (
-                    <div key={h} className="border-b border-slate-100/50 last:border-none box-border" style={{ height: `${ROW_HEIGHT}px` }}></div>
+                    <div key={h} className="border-b border-slate-100/60 last:border-none box-border" style={{ height: `${rowHeight}px` }}></div>
                 ))}
              </div>
 
@@ -544,22 +592,22 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
                 >
                   {isGhostCol && (
                       <div 
-                        className="absolute inset-x-1 rounded-lg border-2 border-dashed border-indigo-400 bg-indigo-50/50 z-10 pointer-events-none flex items-center justify-center"
+                        className="absolute inset-x-1 rounded-lg border-2 border-dashed border-indigo-400 bg-indigo-50/50 z-10 pointer-events-none flex items-center justify-center overflow-hidden"
                         style={{ top: `${ghostData!.top}px`, height: `${Math.max(ghostData!.height, 24)}px` }}
                       >
-                         <span className="text-indigo-600 font-bold text-xs bg-white/90 px-2 py-1 rounded-full shadow-sm backdrop-blur-sm">
-                            {format(ghostData!.start, 'HH:mm')} - {format(ghostData!.end, 'HH:mm')} ({getDurationString(ghostData!.start.toISOString(), ghostData!.end.toISOString())})
+                         <span className="text-indigo-600 font-bold text-[10px] bg-white/90 px-1.5 py-0.5 rounded shadow-sm backdrop-blur-sm truncate max-w-full">
+                            {format(ghostData!.start, 'HH:mm')} - {format(ghostData!.end, 'HH:mm')}
                          </span>
                       </div>
                   )}
 
-                  {/* Current Time Line (Only for Today's Column) */}
+                  {/* Current Time Line */}
                   {isToday && (
                       <div 
                         className="absolute left-0 right-0 z-30 pointer-events-none flex items-center"
                         style={{ top: `${currentTimeTop}px` }}
                       >
-                         <div className="w-2 h-2 rounded-full bg-rose-500 -ml-1 ring-2 ring-white shadow-sm"></div>
+                         <div className="w-1.5 h-1.5 rounded-full bg-rose-500 -ml-[4px] ring-2 ring-white shadow-sm"></div>
                          <div className="h-px w-full bg-rose-500/50 shadow-[0_1px_2px_rgba(244,63,94,0.1)]"></div>
                       </div>
                   )}
@@ -568,10 +616,9 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
                     const style = getEventStyle(plan);
                     const layout = layoutMap.get(plan.id) || { left: '0%', width: '100%' };
                     const icon = renderStatusIcon(plan.status);
-                    const durationStr = getDurationString(plan.startDate, plan.endDate);
                     
-                    // Add tiny gaps for visual separation if sharing a column
                     const isFullWidth = layout.width === '100%';
+                    const isTight = parseInt(style.height) < 40;
                     
                     return (
                       <div
@@ -585,16 +632,16 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
                         onMouseDown={(e) => handleMouseDown(e, plan)}
                         onContextMenu={(e) => handlePlanContextMenu(e, plan)}
                       >
-                         {/* Inner container to handle spacing if width is tight */}
-                         <div className={`w-full h-full ${!isFullWidth ? 'border-l-0 border-r-0 rounded-none' : ''}`}>
-                             <div className="flex items-center gap-1.5 h-full items-start pt-0.5">
-                                {icon && <div className="mt-[1px]">{icon}</div>}
+                         <div className={`w-full h-full overflow-hidden ${!isFullWidth ? 'border-l-0 border-r-0 rounded-none' : ''}`}>
+                             <div className={`flex items-start gap-1 h-full ${isTight ? 'items-center' : ''}`}>
+                                {icon && <div className={isTight ? "" : "mt-0.5"}>{icon}</div>}
                                 <div className="flex-1 min-w-0">
-                                    <div className={`font-semibold truncate leading-tight`}>{plan.title}</div>
-                                    {parseInt(style.height) > 40 && (
-                                        <div className="text-[10px] opacity-80 truncate mt-0.5">
+                                    <div className={`font-semibold truncate leading-tight text-[11px] ${isTight ? 'mt-0' : ''}`}>
+                                        {plan.title}
+                                    </div>
+                                    {!isTight && parseInt(style.height) > 40 && (
+                                        <div className="text-[9px] opacity-80 truncate mt-0.5 font-mono">
                                             {format(new Date(plan.startDate), 'HH:mm')} - {format(new Date(plan.endDate), 'HH:mm')}
-                                            <span className="ml-1 font-medium">· {durationStr}</span>
                                         </div>
                                     )}
                                 </div>
@@ -609,6 +656,47 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Floating Zoom Control - Positioned bottom right over the grid */}
+      <div className="absolute bottom-6 right-8 z-40 transition-opacity duration-300 opacity-0 group-hover/calendar:opacity-100 hover:opacity-100 flex items-center gap-2 bg-white/90 backdrop-blur-md p-1.5 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] border border-slate-100">
+          <button 
+             onClick={() => setRowHeight(h => Math.max(MIN_ROW_HEIGHT, h - 10))}
+             className="w-7 h-7 flex items-center justify-center rounded-xl hover:bg-slate-100 text-slate-500 hover:text-slate-800 transition-colors"
+             title="缩小视图"
+          >
+             <ZoomOut size={14} />
+          </button>
+          
+          <div className="w-20 px-2 flex items-center">
+             <input 
+                type="range" 
+                min={MIN_ROW_HEIGHT} 
+                max={MAX_ROW_HEIGHT} 
+                step={2}
+                value={rowHeight}
+                onChange={(e) => setRowHeight(parseInt(e.target.value))}
+                className="w-full h-1 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600 hover:accent-indigo-500"
+             />
+          </div>
+
+          <button 
+             onClick={() => setRowHeight(h => Math.min(MAX_ROW_HEIGHT, h + 10))}
+             className="w-7 h-7 flex items-center justify-center rounded-xl hover:bg-slate-100 text-slate-500 hover:text-slate-800 transition-colors"
+             title="放大视图"
+          >
+             <ZoomIn size={14} />
+          </button>
+
+          <div className="w-px h-4 bg-slate-200 mx-0.5"></div>
+
+          <button 
+             onClick={() => setRowHeight(DEFAULT_ROW_HEIGHT)}
+             className="w-7 h-7 flex items-center justify-center rounded-xl hover:bg-slate-100 text-slate-400 hover:text-slate-800 transition-colors"
+             title="重置视图"
+          >
+             <RotateCcw size={12} />
+          </button>
+      </div>
       
       {/* Draggable Proxy */}
       {dragState && dragState.isDragging && (
@@ -618,14 +706,13 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
                 width: 140, 
                 left: dragState.currentClientX, 
                 top: dragState.currentClientY,
-                height: 50,
+                height: 40,
                 transform: `translate(12px, 12px)`
             }}
         >
              <div className="font-bold truncate">{dragState.plan.title}</div>
-             <div className="opacity-80 text-[10px] mt-0.5">
+             <div className="opacity-80 text-[10px] mt-0.5 font-mono">
                {format(new Date(dragState.plan.startDate), 'HH:mm')} - {format(new Date(dragState.plan.endDate), 'HH:mm')}
-               <span className="ml-1">· {getDurationString(dragState.plan.startDate, dragState.plan.endDate)}</span>
              </div>
         </div>
       )}

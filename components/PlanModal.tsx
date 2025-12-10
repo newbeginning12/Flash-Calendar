@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { WorkPlan, PlanStatus, LinkResource } from '../types';
-import { X, Tag, Trash2, Link as LinkIcon, ExternalLink, ChevronDown, ChevronUp, AlignLeft, Check, Clock, AlertCircle, ArrowRight, Calendar, Sparkles } from 'lucide-react';
+import { X, Tag, Trash2, Link as LinkIcon, ExternalLink, ChevronDown, ChevronUp, AlignLeft, Check, Clock, AlertCircle, ArrowRight, Calendar, Sparkles, Loader2 } from 'lucide-react';
 import { DateTimePicker } from './DateTimePicker';
 import { differenceInMinutes, addMinutes } from 'date-fns';
 
@@ -35,6 +35,8 @@ export const PlanModal: React.FC<PlanModalProps> = ({ plan, isOpen, onClose, onS
   const [editedPlan, setEditedPlan] = useState<WorkPlan>(plan);
   const [newLinkUrl, setNewLinkUrl] = useState('');
   const [newLinkTitle, setNewLinkTitle] = useState('');
+  const [linkUrlError, setLinkUrlError] = useState<string | null>(null);
+  const [isFetchingTitle, setIsFetchingTitle] = useState(false);
   
   const [tagInput, setTagInput] = useState('');
   const [customTags, setCustomTags] = useState<string[]>([]);
@@ -51,6 +53,10 @@ export const PlanModal: React.FC<PlanModalProps> = ({ plan, isOpen, onClose, onS
     setIsTagsExpanded(false);
     setShowColorPicker(false);
     setTimeError(null);
+    setNewLinkUrl('');
+    setNewLinkTitle('');
+    setLinkUrlError(null);
+    setIsFetchingTitle(false);
   }, [plan]);
 
   useEffect(() => {
@@ -152,8 +158,78 @@ export const PlanModal: React.FC<PlanModalProps> = ({ plan, isOpen, onClose, onS
       }
   };
 
+  // Helper to check if string looks like a URL
+  const isValidUrl = (string: string) => {
+    try {
+      new URL(string.startsWith('http') ? string : `https://${string}`);
+      return true;
+    } catch (_) {
+      return false;
+    }
+  };
+
+  const handleUrlChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = e.target.value;
+    setNewLinkUrl(val);
+    if (val && !isValidUrl(val)) {
+        setLinkUrlError('链接格式无效');
+    } else {
+        setLinkUrlError(null);
+    }
+  };
+
+  const handleUrlPaste = async (e: React.ClipboardEvent<HTMLInputElement>) => {
+    const pastedText = e.clipboardData.getData('text');
+    
+    if (isValidUrl(pastedText)) {
+        // If title is currently empty, try to fill it
+        if (!newLinkTitle.trim()) {
+            let fullUrl = pastedText;
+            if (!/^https?:\/\//i.test(fullUrl)) {
+                fullUrl = 'https://' + fullUrl;
+            }
+
+            try {
+                // 1. Immediate Fallback: Extract Domain Name
+                // This ensures the user gets instant feedback even if fetch fails
+                const urlObj = new URL(fullUrl);
+                const hostname = urlObj.hostname.replace(/^www\./, '');
+                setNewLinkTitle(hostname);
+
+                // 2. Attempt to fetch real title (Best Effort)
+                // Note: This often fails on client-side due to CORS, but works for some sites
+                // or if the app is served from the same origin.
+                setIsFetchingTitle(true);
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 3000); // 3s timeout
+
+                const response = await fetch(fullUrl, {
+                    signal: controller.signal,
+                    mode: 'cors', // Attempt CORS
+                    headers: { 'Accept': 'text/html' }
+                });
+                clearTimeout(timeoutId);
+
+                if (response.ok) {
+                    const html = await response.text();
+                    const doc = new DOMParser().parseFromString(html, "text/html");
+                    const pageTitle = doc.title;
+                    if (pageTitle && pageTitle.trim()) {
+                        setNewLinkTitle(pageTitle.trim());
+                    }
+                }
+            } catch (err) {
+                // Ignore CORS errors or network errors, fallback (domain) is already set
+                // console.debug("Auto-fill title fallback to domain due to:", err);
+            } finally {
+                setIsFetchingTitle(false);
+            }
+        }
+    }
+  };
+
   const addLink = () => {
-    if (!newLinkUrl.trim()) return;
+    if (!newLinkUrl.trim() || linkUrlError) return;
     let url = newLinkUrl.trim();
     if (!/^https?:\/\//i.test(url)) {
         url = 'https://' + url;
@@ -169,6 +245,7 @@ export const PlanModal: React.FC<PlanModalProps> = ({ plan, isOpen, onClose, onS
     }));
     setNewLinkUrl('');
     setNewLinkTitle('');
+    setLinkUrlError(null);
   };
 
   const deleteLink = (id: string) => {
@@ -398,29 +475,46 @@ export const PlanModal: React.FC<PlanModalProps> = ({ plan, isOpen, onClose, onS
                                 </div>
                             ))}
                         </div>
-                        <div className="flex items-center gap-2 bg-slate-50 p-1 rounded-xl border border-slate-200 focus-within:border-indigo-400 focus-within:ring-2 focus-within:ring-indigo-500/10 transition-all">
-                             <input 
-                                type="text"
-                                value={newLinkTitle}
-                                onChange={(e) => setNewLinkTitle(e.target.value)}
-                                placeholder="链接名称"
-                                className="w-1/4 bg-transparent text-sm px-3 py-1.5 outline-none border-r border-slate-200 text-slate-700"
-                            />
-                             <input 
-                                type="text"
-                                value={newLinkUrl}
-                                onChange={(e) => setNewLinkUrl(e.target.value)}
-                                onKeyDown={(e) => e.key === 'Enter' && addLink()}
-                                placeholder="URL (https://...)"
-                                className="flex-1 bg-transparent text-sm px-3 py-1.5 outline-none text-slate-700"
-                            />
-                            <button 
-                                onClick={addLink}
-                                disabled={!newLinkUrl.trim()}
-                                className="text-xs font-bold text-indigo-600 hover:text-indigo-700 px-3 py-1.5 hover:bg-indigo-50 rounded-lg transition-colors disabled:opacity-50 disabled:hover:bg-transparent"
-                            >
-                                添加
-                            </button>
+                        
+                        <div className="space-y-1.5">
+                            <div className={`flex items-center gap-2 bg-slate-50 p-1 rounded-xl border focus-within:ring-2 focus-within:ring-indigo-500/10 transition-all ${linkUrlError ? 'border-rose-300 focus-within:border-rose-400' : 'border-slate-200 focus-within:border-indigo-400'}`}>
+                                 <div className="relative w-1/3 border-r border-slate-200">
+                                     <input 
+                                        type="text"
+                                        value={newLinkTitle}
+                                        onChange={(e) => setNewLinkTitle(e.target.value)}
+                                        placeholder="链接名称 (可选)"
+                                        className="w-full bg-transparent text-sm px-3 py-1.5 outline-none text-slate-700 placeholder-slate-400"
+                                    />
+                                    {isFetchingTitle && (
+                                        <div className="absolute right-2 top-1/2 -translate-y-1/2">
+                                            <Loader2 size={12} className="animate-spin text-indigo-400" />
+                                        </div>
+                                    )}
+                                 </div>
+                                 <input 
+                                    type="text"
+                                    value={newLinkUrl}
+                                    onChange={handleUrlChange}
+                                    onPaste={handleUrlPaste}
+                                    onKeyDown={(e) => e.key === 'Enter' && addLink()}
+                                    placeholder="输入或粘贴 URL (https://...)"
+                                    className="flex-1 bg-transparent text-sm px-3 py-1.5 outline-none text-slate-700 placeholder-slate-400"
+                                />
+                                <button 
+                                    onClick={addLink}
+                                    disabled={!newLinkUrl.trim() || !!linkUrlError}
+                                    className="text-xs font-bold text-indigo-600 hover:text-indigo-700 px-3 py-1.5 hover:bg-indigo-50 rounded-lg transition-colors disabled:opacity-50 disabled:hover:bg-transparent disabled:cursor-not-allowed"
+                                >
+                                    添加
+                                </button>
+                            </div>
+                            {linkUrlError && (
+                                <div className="flex items-center gap-1.5 px-1 text-xs text-rose-500 animate-in fade-in slide-in-from-top-1">
+                                    <AlertCircle size={10} />
+                                    <span>{linkUrlError}</span>
+                                </div>
+                            )}
                         </div>
                     </div>
                 </div>

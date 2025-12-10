@@ -14,40 +14,64 @@ export const AppIcon: React.FC<AppIconProps> = ({ size = 32, className = "", wit
       style={{ width: size, height: size }}
     >
       <svg
-        viewBox="0 0 512 512"
+        viewBox="0 0 100 100"
         fill="none"
         xmlns="http://www.w3.org/2000/svg"
-        className={`w-full h-full ${withShadow ? 'drop-shadow-md' : ''}`}
+        className={`w-full h-full ${withShadow ? 'drop-shadow-lg' : ''}`}
       >
         <defs>
-          <linearGradient id="sparkle_gradient" x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop offset="0%" stopColor="#818cf8" /> {/* Indigo-400 */}
-            <stop offset="50%" stopColor="#c084fc" /> {/* Purple-400 */}
-            <stop offset="100%" stopColor="#f472b6" /> {/* Pink-400 */}
+          <linearGradient id="flash_gradient" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stopColor="#fbbf24" /> {/* Amber-400 */}
+            <stop offset="40%" stopColor="#f59e0b" /> {/* Amber-500 */}
+            <stop offset="100%" stopColor="#3b82f6" /> {/* Blue-500 - Electric spark at end */}
           </linearGradient>
+          
+          <linearGradient id="icon_bg" x1="50%" y1="0%" x2="50%" y2="100%">
+            <stop offset="0%" stopColor="#ffffff" />
+            <stop offset="100%" stopColor="#f3f4f6" />
+          </linearGradient>
+          
+          <filter id="inner_glow" x="-20%" y="-20%" width="140%" height="140%">
+             <feGaussianBlur in="SourceAlpha" stdDeviation="2" result="blur"/>
+             <feComposite in="blur" in2="SourceAlpha" operator="arithmetic" k2="-1" k3="1" result="shadowDiff"/>
+             <feFlood floodColor="white" floodOpacity="0.5"/>
+             <feComposite in2="shadowDiff" operator="in"/>
+             <feComposite in2="SourceGraphic" operator="over" result="firstfilter"/>
+             <feGaussianBlur in="firstfilter" stdDeviation="2" />
+             <feOffset dx="0" dy="1" />
+             <feComposite in2="SourceAlpha" operator="arithmetic" k2="-1" k3="1" result="shadowDiff2"/>
+             <feFlood floodColor="rgba(0,0,0,0.1)" floodOpacity="1"/>
+             <feComposite in2="shadowDiff2" operator="in"/>
+             <feComposite in2="firstfilter" operator="over"/>
+          </filter>
         </defs>
         
-        {/* Background: Dark Slate 900 to match app theme */}
+        {/* Apple Style Squircle Background */}
         <rect 
-          x="0" y="0" 
-          width="512" height="512" 
-          rx="110" ry="110" 
-          fill="#0F172A" 
+            x="5" y="5" width="90" height="90" rx="22" 
+            fill="url(#icon_bg)" 
+            stroke="rgba(0,0,0,0.04)"
+            strokeWidth="1"
         />
         
-        {/* The Intelligent Loop: Minimalist White Outline */}
-        <path 
-          d="M360 126H152C137.641 126 126 137.641 126 152V360C126 374.359 137.641 386 152 386H360C374.359 386 386 374.359 386 360V220" 
-          stroke="white" 
-          strokeWidth="36" 
-          strokeLinecap="round" 
-        />
+        {/* Flash/Spark Shape */}
+        <g transform="translate(50, 50) scale(0.9)">
+            <path 
+                d="M-5 -28 C-5 -28 5 -5 20 0 C5 5 -5 28 -5 28 C-5 28 -15 5 -30 0 C-15 -5 -5 -28 -5 -28 Z" 
+                fill="url(#flash_gradient)"
+                className="drop-shadow-sm"
+            />
+            
+            {/* Central Bright Spot */}
+            <circle cx="-5" cy="0" r="4" fill="white" fillOpacity="0.9" filter="blur(1px)" />
+        </g>
         
-        {/* The AI Sparkle: Completing the loop with magic */}
+        {/* Gloss Reflection */}
         <path 
-          d="M430 115C430 115 430 150 410 170C390 190 355 190 355 190C355 190 390 190 410 210C430 230 430 265 430 265C430 265 430 230 450 210C470 190 505 190 505 190C505 190 470 190 450 170C430 150 430 115 430 115Z" 
-          fill="url(#sparkle_gradient)" 
-          transform="translate(-20, 10) scale(0.9)"
+            d="M 15 15 Q 50 5 85 15 Q 50 40 15 15 Z" 
+            fill="white" 
+            fillOpacity="0.4"
+            className="pointer-events-none"
         />
       </svg>
     </div>

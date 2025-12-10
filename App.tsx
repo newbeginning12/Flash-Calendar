@@ -10,7 +10,8 @@ import { AppIcon } from './components/AppIcon';
 import { FlashCommand } from './components/FlashCommand';
 import { WorkPlan, PlanStatus, AISettings, AIProvider } from './types';
 import { processUserIntent, generateSmartSuggestions, SmartSuggestion, DEFAULT_MODEL } from './services/aiService';
-import { Calendar as CalendarIcon, Settings, Bell, Search, Plus, User, ChevronLeft, ChevronRight, ChevronDown, X, Sparkles, ClipboardList, Check, Copy, AlertCircle, Clock, Hash, PanelLeft } from 'lucide-react';
+import { storageService, BackupData } from './services/storageService';
+import { Calendar as CalendarIcon, Settings, Bell, Search, Plus, User, ChevronLeft, ChevronRight, ChevronDown, X, Sparkles, ClipboardList, Check, Copy, AlertCircle, Clock, Hash, PanelLeft, Loader2 } from 'lucide-react';
 import { addHours, format, addDays, startOfDay, isSameDay, addMinutes } from 'date-fns';
 
 // Helper to generate fresh mock data on init
@@ -186,17 +187,8 @@ const parseWeeklyReport = (text: string): ReportSection[] | null => {
 };
 
 function App() {
-  const [plans, setPlans] = useState<WorkPlan[]>(() => {
-    try {
-      const savedPlans = localStorage.getItem('zhihui_plans');
-      if (savedPlans) {
-        return JSON.parse(savedPlans);
-      }
-    } catch (error) {
-      console.error('Failed to load plans from localStorage:', error);
-    }
-    return generateMockPlans();
-  });
+  const [plans, setPlans] = useState<WorkPlan[]>([]);
+  const [isDataLoaded, setIsDataLoaded] = useState(false);
 
   // Settings State
   const [aiSettings, setAiSettings] = useState<AISettings>(() => {
@@ -223,6 +215,7 @@ function App() {
 
   const [isProcessingAI, setIsProcessingAI] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
   
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearchFocused, setIsSearchFocused] = useState(false);
@@ -238,14 +231,42 @@ function App() {
   // Abort Controller Ref
   const abortControllerRef = useRef<AbortController | null>(null);
 
-  useEffect(() => {
-    try {
-      localStorage.setItem('zhihui_plans', JSON.stringify(plans));
-    } catch (error) {
-      console.error('Failed to save plans to localStorage:', error);
-    }
-  }, [plans]);
+  // --- Persistence Logic ---
 
+  // 1. Load Data on Mount (IndexedDB)
+  useEffect(() => {
+    const initData = async () => {
+        try {
+            await storageService.init();
+            const savedPlans = await storageService.getAllPlans();
+            
+            // If DB is empty but we have mock data logic or first run logic:
+            if (savedPlans.length === 0) {
+               // Optional: Check localStorage migration or just empty
+               setPlans([]);
+            } else {
+               setPlans(savedPlans);
+            }
+        } catch (e) {
+            console.error("Failed to load plans from DB:", e);
+            setErrorMessage("数据加载失败");
+        } finally {
+            setIsDataLoaded(true);
+        }
+    };
+    initData();
+  }, []);
+
+  // 2. Save Data on Change (Debounced or Direct)
+  useEffect(() => {
+    if (isDataLoaded) {
+      storageService.savePlans(plans).catch(err => {
+          console.error("Auto-save failed:", err);
+      });
+    }
+  }, [plans, isDataLoaded]);
+
+  // 3. Save Settings to LocalStorage (Keep sync)
   useEffect(() => {
       try {
           localStorage.setItem('zhihui_ai_settings', JSON.stringify(aiSettings));
@@ -254,16 +275,18 @@ function App() {
       }
   }, [aiSettings]);
 
+  // --- Suggestions ---
+
   useEffect(() => {
     const fetchSuggestions = async () => {
+      if (!isDataLoaded) return;
       setTimeout(async () => {
-        // Pass the entire settings object to support different providers
         const sugs = await generateSmartSuggestions(plans, aiSettings);
         setSuggestions(sugs);
       }, 500);
     };
     fetchSuggestions();
-  }, []);
+  }, [isDataLoaded]); // Depend on data loaded
 
   useEffect(() => {
     if (errorMessage) {
@@ -271,6 +294,13 @@ function App() {
       return () => clearTimeout(timer);
     }
   }, [errorMessage]);
+
+  useEffect(() => {
+    if (successMessage) {
+      const timer = setTimeout(() => setSuccessMessage(null), 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [successMessage]);
 
   useEffect(() => {
     const handleResize = () => {
@@ -319,12 +349,10 @@ function App() {
   }, [resize, stopResizing]);
 
   const handleAIInput = async (input: string) => {
-    // 1. Abort any previous pending request
     if (abortControllerRef.current) {
         abortControllerRef.current.abort();
     }
     
-    // 2. Create new controller
     const controller = new AbortController();
     abortControllerRef.current = controller;
 
@@ -334,14 +362,9 @@ function App() {
     setSuggestions([]);
 
     try {
-        // Pass settings to support custom providers AND the abort signal
         const result = await processUserIntent(input, plans, aiSettings, controller.signal);
         
-        // 3. Check if aborted after promise resolves (ignore result if so)
-        if (controller.signal.aborted) {
-            console.log('Request aborted, ignoring result.');
-            return;
-        }
+        if (controller.signal.aborted) return;
 
         if (result) {
           if (result.type === 'CREATE_PLAN') {
@@ -363,7 +386,6 @@ function App() {
             setErrorMessage("请求发生错误");
         }
     } finally {
-        // Only turn off loading if this is still the active request
         if (abortControllerRef.current === controller) {
             setIsProcessingAI(false);
             abortControllerRef.current = null;
@@ -394,7 +416,6 @@ function App() {
       links: []
     };
 
-    // Open modal for confirmation instead of adding directly
     setSelectedPlan(newPlan);
     setIsModalOpen(true);
   };
@@ -467,11 +488,27 @@ function App() {
   const handleSaveSettings = (newSettings: AISettings) => {
     setAiSettings(newSettings);
     setIsSettingsOpen(false);
-    setErrorMessage("配置已更新");
+    setSuccessMessage("配置已更新");
     setTimeout(async () => {
         const sugs = await generateSmartSuggestions(plans, newSettings);
         setSuggestions(sugs);
     }, 100);
+  };
+
+  // --- Export / Import Handlers ---
+  
+  const handleExportData = () => {
+    storageService.exportData(plans, aiSettings);
+    setSuccessMessage("数据已导出");
+  };
+
+  const handleImportData = (data: BackupData) => {
+      if (data) {
+          if (data.plans) setPlans(data.plans);
+          if (data.settings) setAiSettings(data.settings);
+          setSuccessMessage(`成功导入 ${data.plans.length} 条日程`);
+          setIsSettingsOpen(false);
+      }
   };
 
   const reportSections = analysisResult ? parseWeeklyReport(analysisResult) : null;
@@ -489,13 +526,20 @@ function App() {
   return (
     <div className="flex flex-col h-screen w-full bg-[#F5F5F7] text-slate-900 font-sans selection:bg-blue-100 overflow-hidden relative">
       
-      <FlashCommand 
-         plans={plans}
-         settings={aiSettings}
-         onPlanCreated={(newPlan) => {
-             setPlans(prev => [...prev, newPlan]);
-         }}
-      />
+      {!isDataLoaded ? (
+         <div className="fixed inset-0 z-[60] bg-[#F5F5F7] flex items-center justify-center flex-col gap-4">
+             <Loader2 className="animate-spin text-slate-400" size={32} />
+             <p className="text-slate-500 font-medium text-sm">正在加载数据...</p>
+         </div>
+      ) : (
+         <FlashCommand 
+            plans={plans}
+            settings={aiSettings}
+            onPlanCreated={(newPlan) => {
+                setPlans(prev => [...prev, newPlan]);
+            }}
+         />
+      )}
 
       <header className="flex-none h-16 px-6 flex items-center justify-between bg-white/60 backdrop-blur-xl border-b border-slate-200/60 z-30 relative">
         <div className="flex items-center space-x-6">
@@ -559,6 +603,7 @@ function App() {
         </div>
 
         <div className="flex items-center space-x-2 sm:space-x-4">
+           {/* Search Logic ... same as before ... */}
            <div className="relative hidden md:flex items-center group">
               <div className={`
                  flex items-center bg-slate-100/50 border border-transparent rounded-full px-3 py-1.5 w-48 transition-all duration-300
@@ -583,14 +628,11 @@ function App() {
                     </button>
                   )}
               </div>
-
+              {/* Search Results Dropdown (Same as before) */}
               {searchQuery && (
                 <div className="absolute top-full left-0 w-[320px] bg-white/95 backdrop-blur-xl rounded-2xl shadow-xl border border-slate-100 mt-2 p-1 z-50 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
                    {searchResults.length > 0 ? (
                       <div className="max-h-[300px] overflow-y-auto custom-scrollbar">
-                         <div className="px-3 py-2 text-xs font-semibold text-slate-400 uppercase tracking-wider">
-                            找到 {searchResults.length} 个结果
-                         </div>
                          {searchResults.map(plan => (
                            <button
                              key={plan.id}
@@ -702,6 +744,7 @@ function App() {
           )}
         </div>
         
+        {/* Messages */}
         {errorMessage && (
           <div className="absolute top-4 left-1/2 transform -translate-x-1/2 z-50 animate-in fade-in slide-in-from-top-4 duration-300">
              <div className="flex items-center gap-2 bg-slate-800 text-white px-4 py-2.5 rounded-full shadow-lg backdrop-blur-sm">
@@ -710,6 +753,15 @@ function App() {
                 <button onClick={() => setErrorMessage(null)} className="ml-1 text-slate-400 hover:text-white">
                    <X size={14} />
                 </button>
+             </div>
+          </div>
+        )}
+        
+        {successMessage && (
+          <div className="absolute top-4 left-1/2 transform -translate-x-1/2 z-50 animate-in fade-in slide-in-from-top-4 duration-300">
+             <div className="flex items-center gap-2 bg-emerald-600 text-white px-4 py-2.5 rounded-full shadow-lg backdrop-blur-sm">
+                <Check size={18} />
+                <span className="text-sm font-medium">{successMessage}</span>
              </div>
           </div>
         )}
@@ -737,6 +789,7 @@ function App() {
           suggestions={suggestions}
         />
 
+        {/* AI Analysis Report Modal */}
         {analysisResult && (
            <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
               <div 
@@ -806,6 +859,8 @@ function App() {
             onClose={() => setIsSettingsOpen(false)}
             settings={aiSettings}
             onSave={handleSaveSettings}
+            onExport={handleExportData}
+            onImport={handleImportData}
         />
 
       </main>
