@@ -55,7 +55,7 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
   onPlanClick, 
   onSlotClick, 
   onPlanUpdate, 
-  onDeletePlan,
+  onDeletePlan, 
   onDateSelect,
   onDragCreate
 }) => {
@@ -672,7 +672,8 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
                     const icon = renderStatusIcon(plan.status);
                     
                     const isFullWidth = layout.width === '100%';
-                    const isTight = parseInt(style.height) < 40;
+                    const heightVal = parseFloat(style.height);
+                    const isTight = heightVal < 30;
                     
                     return (
                       <div
@@ -688,15 +689,35 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
                       >
                          <div className={`w-full h-full overflow-hidden ${!isFullWidth ? 'border-l-0 border-r-0 rounded-none' : ''}`}>
                              <div className={`flex items-start gap-1 h-full ${isTight ? 'items-center' : ''}`}>
-                                {icon && <div className={isTight ? "" : "mt-0.5"}>{icon}</div>}
-                                <div className="flex-1 min-w-0">
+                                {icon && <div className={isTight ? "flex-shrink-0" : "mt-0.5 flex-shrink-0"}>{icon}</div>}
+                                <div className="flex-1 min-w-0 flex flex-col">
                                     <div className={`font-semibold truncate leading-tight text-[11px] ${isTight ? 'mt-0' : ''}`}>
                                         {plan.title}
                                     </div>
-                                    {!isTight && parseInt(style.height) > 40 && (
-                                        <div className="text-[9px] opacity-80 truncate mt-0.5 font-mono">
-                                            {format(new Date(plan.startDate), 'HH:mm')} - {format(new Date(plan.endDate), 'HH:mm')}
-                                        </div>
+                                    {!isTight && (
+                                      <>
+                                          {heightVal >= 40 && (
+                                              <div className="text-[9px] opacity-80 truncate mt-0.5 font-mono flex-shrink-0">
+                                                  {format(new Date(plan.startDate), 'HH:mm')} - {format(new Date(plan.endDate), 'HH:mm')}
+                                              </div>
+                                          )}
+                                          
+                                          {heightVal >= 80 && plan.tags && plan.tags.length > 0 && (
+                                              <div className="flex flex-wrap gap-1 mt-1.5 overflow-hidden max-h-[18px]">
+                                                  {plan.tags.slice(0, 3).map(t => (
+                                                      <span key={t} className="px-1 py-0.5 rounded-sm bg-black/5 text-[9px] leading-none opacity-80 whitespace-nowrap">
+                                                          {t}
+                                                      </span>
+                                                  ))}
+                                              </div>
+                                          )}
+
+                                          {heightVal >= 120 && plan.description && (
+                                              <div className="text-[10px] opacity-70 mt-1.5 leading-snug line-clamp-3">
+                                                  {plan.description}
+                                              </div>
+                                          )}
+                                      </>
                                     )}
                                 </div>
                              </div>
