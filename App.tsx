@@ -8,10 +8,11 @@ import { TaskSidebar } from './components/TaskSidebar';
 import { DatePicker } from './components/DatePicker';
 import { AppIcon } from './components/AppIcon';
 import { FlashCommand } from './components/FlashCommand';
-import { WorkPlan, PlanStatus, AISettings, AIProvider } from './types';
+import { NotificationCenter } from './components/NotificationCenter';
+import { WorkPlan, PlanStatus, AISettings, AIProvider, AppNotification } from './types';
 import { processUserIntent, generateSmartSuggestions, SmartSuggestion, DEFAULT_MODEL } from './services/aiService';
 import { storageService, BackupData } from './services/storageService';
-import { Calendar as CalendarIcon, Settings, Bell, Search, Plus, User, ChevronLeft, ChevronRight, ChevronDown, X, Sparkles, ClipboardList, Check, Copy, AlertCircle, Clock, Hash, PanelLeft, Loader2 } from 'lucide-react';
+import { Calendar as CalendarIcon, Settings, Bell, Search, Plus, User, ChevronLeft, ChevronRight, ChevronDown, X, Sparkles, ClipboardList, Check, Copy, AlertCircle, Clock, Hash, PanelLeft, Loader2, Info } from 'lucide-react';
 import { addHours, format, addDays, startOfDay, isSameDay, addMinutes } from 'date-fns';
 
 // Helper to generate fresh mock data on init
@@ -216,6 +217,7 @@ function App() {
   const [isProcessingAI, setIsProcessingAI] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [notificationToast, setNotificationToast] = useState<AppNotification | null>(null);
   
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearchFocused, setIsSearchFocused] = useState(false);
@@ -228,12 +230,17 @@ function App() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const isResizingRef = useRef(false);
 
+  // Notification State
+  const [notifications, setNotifications] = useState<AppNotification[]>([]);
+  const [isNotificationOpen, setIsNotificationOpen] = useState(false);
+  const overdueAckRef = useRef<Record<string, string>>({}); // Tracks last acknowledged due date for plans
+
   // Abort Controller Ref
   const abortControllerRef = useRef<AbortController | null>(null);
 
   // --- Persistence Logic ---
 
-  // 1. Load Data on Mount (IndexedDB)
+  // 1. Load Data on Mount (IndexedDB & LocalStorage for Notifications)
   useEffect(() => {
     const initData = async () => {
         try {
@@ -242,11 +249,18 @@ function App() {
             
             // If DB is empty but we have mock data logic or first run logic:
             if (savedPlans.length === 0) {
-               // Optional: Check localStorage migration or just empty
                setPlans([]);
             } else {
                setPlans(savedPlans);
             }
+
+            // Load Notifications
+            const savedNotes = localStorage.getItem('zhihui_notifications');
+            if (savedNotes) setNotifications(JSON.parse(savedNotes));
+
+            const savedAck = localStorage.getItem('zhihui_overdue_ack');
+            if (savedAck) overdueAckRef.current = JSON.parse(savedAck);
+
         } catch (e) {
             console.error("Failed to load plans from DB:", e);
             setErrorMessage("数据加载失败");
@@ -275,6 +289,62 @@ function App() {
       }
   }, [aiSettings]);
 
+  // 4. Save Notifications to LocalStorage
+  useEffect(() => {
+      if (isDataLoaded) {
+          localStorage.setItem('zhihui_notifications', JSON.stringify(notifications));
+      }
+  }, [notifications, isDataLoaded]);
+
+  // --- Overdue Checker ---
+  useEffect(() => {
+      if (!isDataLoaded) return;
+
+      const checkOverdue = () => {
+          const now = new Date();
+          const newNotes: AppNotification[] = [];
+          let ackChanged = false;
+
+          plans.forEach(p => {
+              if (p.status !== PlanStatus.DONE) {
+                  const end = new Date(p.endDate);
+                  if (end < now) {
+                      const lastAckDate = overdueAckRef.current[p.id];
+                      // If the due date has changed since last notification OR we haven't notified yet
+                      if (lastAckDate !== p.endDate) {
+                          const newNote: AppNotification = {
+                              id: crypto.randomUUID(),
+                              type: 'OVERDUE',
+                              title: '任务已逾期',
+                              message: `"${p.title}" 计划于 ${format(end, 'HH:mm')} 完成，请确认状态。`,
+                              timestamp: now.toISOString(),
+                              read: false,
+                              planId: p.id
+                          };
+                          newNotes.push(newNote);
+                          overdueAckRef.current[p.id] = p.endDate;
+                          ackChanged = true;
+                      }
+                  }
+              }
+          });
+
+          if (newNotes.length > 0) {
+              setNotifications(prev => [...newNotes, ...prev]);
+              // Trigger Toast for the most recent one
+              setNotificationToast(newNotes[0]);
+          }
+          if (ackChanged) {
+              localStorage.setItem('zhihui_overdue_ack', JSON.stringify(overdueAckRef.current));
+          }
+      };
+
+      const timer = setInterval(checkOverdue, 60000); // Check every minute
+      checkOverdue(); // Check immediately on load/change
+
+      return () => clearInterval(timer);
+  }, [plans, isDataLoaded]);
+
   // --- Suggestions ---
 
   useEffect(() => {
@@ -301,6 +371,14 @@ function App() {
       return () => clearTimeout(timer);
     }
   }, [successMessage]);
+
+  useEffect(() => {
+    if (notificationToast) {
+        // Auto dismiss toast after 5 seconds
+        const timer = setTimeout(() => setNotificationToast(null), 6000);
+        return () => clearTimeout(timer);
+    }
+  }, [notificationToast]);
 
   useEffect(() => {
     const handleResize = () => {
@@ -347,6 +425,36 @@ function App() {
       window.removeEventListener('mouseup', stopResizing);
     };
   }, [resize, stopResizing]);
+
+  // --- Notification Handlers ---
+  const unreadCount = notifications.filter(n => !n.read).length;
+
+  const handleMarkRead = (id: string) => {
+      setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true } : n));
+  };
+
+  const handleClearNotifications = () => {
+      setNotifications([]);
+  };
+
+  const handleDeleteNotification = (id: string) => {
+      setNotifications(prev => prev.filter(n => n.id !== id));
+  };
+
+  const handleNotificationClick = (notification: AppNotification) => {
+      handleMarkRead(notification.id);
+      setIsNotificationOpen(false);
+      setNotificationToast(null); // Dismiss toast if clicked
+      if (notification.planId) {
+          const plan = plans.find(p => p.id === notification.planId);
+          if (plan) {
+              setCurrentDate(new Date(plan.startDate));
+              handlePlanClick(plan);
+          } else {
+              setErrorMessage("该日程已被删除");
+          }
+      }
+  };
 
   const handleAIInput = async (input: string) => {
     if (abortControllerRef.current) {
@@ -603,7 +711,7 @@ function App() {
         </div>
 
         <div className="flex items-center space-x-2 sm:space-x-4">
-           {/* Search Logic ... same as before ... */}
+           {/* Search Logic */}
            <div className="relative hidden md:flex items-center group">
               <div className={`
                  flex items-center bg-slate-100/50 border border-transparent rounded-full px-3 py-1.5 w-48 transition-all duration-300
@@ -628,7 +736,7 @@ function App() {
                     </button>
                   )}
               </div>
-              {/* Search Results Dropdown (Same as before) */}
+              {/* Search Results Dropdown */}
               {searchQuery && (
                 <div className="absolute top-full left-0 w-[320px] bg-white/95 backdrop-blur-xl rounded-2xl shadow-xl border border-slate-100 mt-2 p-1 z-50 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
                    {searchResults.length > 0 ? (
@@ -687,10 +795,30 @@ function App() {
              <ClipboardList size={20} />
            </button>
 
-           <button className="p-2 text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded-full transition-colors relative">
-             <Bell size={20} />
-             <span className="absolute top-1.5 right-2 w-2 h-2 bg-rose-500 rounded-full border-2 border-white"></span>
-           </button>
+           <div className="relative">
+             <button 
+               onClick={() => setIsNotificationOpen(!isNotificationOpen)}
+               className={`p-2 rounded-full transition-colors relative ${
+                   isNotificationOpen ? 'bg-slate-100 text-slate-900' : 'text-slate-500 hover:text-slate-900 hover:bg-slate-100'
+               }`}
+               title="通知中心"
+             >
+               <Bell size={20} />
+               {unreadCount > 0 && (
+                 <span className="absolute top-1.5 right-2 w-2 h-2 bg-rose-500 rounded-full border-2 border-white ring-1 ring-white/50 animate-pulse"></span>
+               )}
+             </button>
+             
+             <NotificationCenter
+                isOpen={isNotificationOpen}
+                onClose={() => setIsNotificationOpen(false)}
+                notifications={notifications}
+                onMarkRead={handleMarkRead}
+                onClearAll={handleClearNotifications}
+                onDelete={handleDeleteNotification}
+                onItemClick={handleNotificationClick}
+             />
+           </div>
            
            <button 
              onClick={() => setIsSettingsOpen(true)}
@@ -763,6 +891,33 @@ function App() {
                 <Check size={18} />
                 <span className="text-sm font-medium">{successMessage}</span>
              </div>
+          </div>
+        )}
+
+        {/* --- Real-time Notification Banner (Apple Style) --- */}
+        {notificationToast && (
+          <div 
+            onClick={() => handleNotificationClick(notificationToast)}
+            className="fixed top-20 right-5 z-[70] w-80 bg-white/90 backdrop-blur-2xl rounded-2xl shadow-[0_20px_40px_-10px_rgba(0,0,0,0.15)] border border-white/60 p-4 cursor-pointer hover:scale-[1.02] transition-all animate-in slide-in-from-right-10 fade-in duration-300 flex items-start gap-3 group ring-1 ring-black/5"
+          >
+              <div className="flex-shrink-0 w-10 h-10 rounded-full bg-rose-100 text-rose-500 flex items-center justify-center">
+                 <Clock size={20} />
+              </div>
+              <div className="flex-1 min-w-0">
+                  <div className="flex justify-between items-start">
+                    <h4 className="font-bold text-sm text-slate-800">任务已逾期</h4>
+                    <button 
+                        onClick={(e) => { e.stopPropagation(); setNotificationToast(null); }}
+                        className="text-slate-400 hover:text-slate-600 p-0.5 rounded-md hover:bg-slate-100"
+                    >
+                        <X size={14} />
+                    </button>
+                  </div>
+                  <p className="text-xs text-slate-600 mt-1 leading-relaxed">
+                     {notificationToast.message}
+                  </p>
+                  <p className="text-[10px] text-slate-400 mt-2 font-medium">点击查看详情</p>
+              </div>
           </div>
         )}
 

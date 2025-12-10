@@ -26,45 +26,58 @@ declare global {
   }
 }
 
-// --- Custom AI Icon (Nano Banana - Flash Style) ---
-const NanoIcon = ({ isExpanded, isListening, isProcessing }: { isExpanded: boolean, isListening: boolean, isProcessing: boolean }) => {
+// --- Apple Style AI Icon (Clean, Blue/Cyan, Sparkles) ---
+const AIAssistantIcon = ({ isExpanded, isListening, isProcessing }: { isExpanded: boolean, isListening: boolean, isProcessing: boolean }) => {
   const isActive = isListening || isProcessing;
   
   return (
     <div className={`relative flex items-center justify-center transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] ${isExpanded ? 'w-8 h-8' : 'w-9 h-9'}`}>
       
-      {/* Active Glow - Warm Amber/Gold for "Flash" */}
-      <div className={`absolute inset-0 rounded-full bg-gradient-to-tr from-amber-300 via-orange-400 to-blue-400 blur-xl transition-all duration-500 ${isActive ? 'scale-150 opacity-60' : 'scale-75 opacity-0'}`} />
+      {/* Active Glow - Cyan/Blue (No Purple) */}
+      <div className={`absolute inset-0 rounded-full bg-gradient-to-tr from-cyan-400 via-blue-500 to-sky-400 blur-lg transition-all duration-500 ${isActive ? 'scale-150 opacity-50' : 'scale-75 opacity-0'}`} />
       
-      {/* Main Orb */}
+      {/* Main Orb Container */}
       <div className={`
-          absolute inset-0 rounded-full transition-all duration-500 overflow-hidden border border-white/20
+          absolute inset-0 rounded-full transition-all duration-500 overflow-hidden
           ${isActive 
-             ? 'bg-gradient-to-br from-amber-400 via-orange-500 to-blue-500 shadow-[0_0_15px_rgba(251,191,36,0.5)]' 
-             : 'bg-gradient-to-br from-slate-100 to-slate-200 shadow-[inset_0_2px_4px_rgba(255,255,255,0.8),0_4px_10px_rgba(0,0,0,0.05)]'
+             ? 'bg-gradient-to-br from-blue-500 to-cyan-500 shadow-lg' 
+             : 'bg-gradient-to-b from-white to-slate-100 border border-slate-200 shadow-[0_2px_4px_rgba(0,0,0,0.05)]'
           }
       `}>
-          {/* Glass Sheen */}
-          <div className="absolute inset-0 bg-gradient-to-b from-white/60 to-transparent opacity-100" />
+          {/* Glass Sheen / Reflection */}
+          <div className="absolute inset-0 bg-gradient-to-b from-white/60 to-transparent opacity-60" />
       </div>
       
       {/* Icon Content */}
-      <div className={`relative z-10 drop-shadow-sm flex items-center justify-center transition-colors duration-300 ${isActive ? 'text-white' : 'text-slate-400'}`}>
+      <div className={`relative z-10 flex items-center justify-center transition-colors duration-300 ${isActive ? 'text-white' : 'text-slate-500'}`}>
          {isProcessing ? (
             <Loader2 className="animate-spin" size={16} strokeWidth={2.5} />
          ) : isListening ? (
              <div className="flex gap-0.5 items-center h-2.5">
-                <div className="w-0.5 bg-white rounded-full animate-[bounce_1s_infinite] h-2"></div>
-                <div className="w-0.5 bg-white rounded-full animate-[bounce_1.2s_infinite] h-2.5"></div>
-                <div className="w-0.5 bg-white rounded-full animate-[bounce_0.8s_infinite] h-2"></div>
+                <div className="w-0.5 bg-current rounded-full animate-[bounce_1s_infinite] h-2"></div>
+                <div className="w-0.5 bg-current rounded-full animate-[bounce_1.2s_infinite] h-2.5"></div>
+                <div className="w-0.5 bg-current rounded-full animate-[bounce_0.8s_infinite] h-2"></div>
              </div>
          ) : (
-            // The Flash Spark
-             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className={`transition-transform duration-500 ${isExpanded ? 'scale-[0.85]' : 'scale-100'}`}>
+            // Apple Style AI Sparkles (Double Star)
+             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className={`transition-transform duration-500 ${isExpanded ? 'scale-90' : 'scale-100'}`}>
+                <defs>
+                   <linearGradient id="ai-gradient" x1="0" y1="0" x2="24" y2="24" gradientUnits="userSpaceOnUse">
+                      <stop offset="0" stopColor="#3b82f6" /> {/* Blue 500 */}
+                      <stop offset="1" stopColor="#06b6d4" /> {/* Cyan 500 */}
+                   </linearGradient>
+                </defs>
+                {/* Main 4-Point Star */}
                 <path 
-                    d="M12 2L14.5 9.5H22L16 14.5L18.5 22L12 17L5.5 22L8 14.5L2 9.5H9.5L12 2Z" 
-                    fill="currentColor" 
-                    className={isActive ? 'fill-white' : 'fill-slate-400'}
+                    d="M12 2L14.5 9.5L22 12L14.5 14.5L12 22L9.5 14.5L2 12L9.5 9.5L12 2Z" 
+                    fill={isActive ? "currentColor" : "url(#ai-gradient)"}
+                    className="drop-shadow-sm"
+                />
+                {/* Secondary Small Star */}
+                <path 
+                    d="M19 16L20 18.5L22.5 19.5L20 20.5L19 23L18 20.5L15.5 19.5L18 18.5L19 16Z" 
+                    fill={isActive ? "currentColor" : "url(#ai-gradient)"}
+                    opacity={isActive ? "0.8" : "0.7"}
                 />
              </svg>
          )}
@@ -273,7 +286,7 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onSubmit, onStop, onSugg
                 ${isExpanded ? 'left-3' : 'left-1.5'}
             `}
         >
-             <NanoIcon isExpanded={isExpanded} isListening={isListening} isProcessing={isProcessing} />
+             <AIAssistantIcon isExpanded={isExpanded} isListening={isListening} isProcessing={isProcessing} />
         </div>
 
         {/* Collapsed Label */}
@@ -302,7 +315,7 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onSubmit, onStop, onSugg
                     </div>
                  )}
                  {isListening && !value && (
-                    <span className="absolute text-amber-500 font-medium animate-pulse text-[15px]">
+                    <span className="absolute text-blue-500 font-medium animate-pulse text-[15px]">
                         正在聆听...
                     </span>
                  )}
@@ -313,7 +326,7 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onSubmit, onStop, onSugg
                     onChange={(e) => setValue(e.target.value)}
                     onKeyDown={handleKeyDown}
                     disabled={!isExpanded || isProcessing}
-                    className="w-full h-full bg-transparent border-none outline-none text-[16px] text-slate-800 placeholder-transparent font-medium caret-amber-500"
+                    className="w-full h-full bg-transparent border-none outline-none text-[16px] text-slate-800 placeholder-transparent font-medium caret-blue-500"
                  />
             </div>
 

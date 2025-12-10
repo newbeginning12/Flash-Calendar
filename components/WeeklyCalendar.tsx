@@ -1,5 +1,5 @@
 
-import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useMemo, useCallback, useLayoutEffect } from 'react';
 import { WorkPlan, PlanStatus } from '../types';
 import { format, addDays, isSameDay, getHours, getMinutes, differenceInMinutes, addMinutes, startOfWeek } from 'date-fns';
 import { Edit2, Trash2, CheckCircle2, Circle, Plus, PlayCircle, ZoomIn, ZoomOut, RotateCcw } from 'lucide-react';
@@ -23,7 +23,7 @@ const SIDEBAR_WIDTH = 64;
 // Zoom Constraints
 const MIN_ROW_HEIGHT = 40;
 const MAX_ROW_HEIGHT = 180;
-const DEFAULT_ROW_HEIGHT = 64;
+const DEFAULT_ROW_HEIGHT = 48;
 
 interface DragState {
   plan: WorkPlan;
@@ -74,6 +74,13 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
     }
   });
 
+  // Keep a ref of current rowHeight for event handlers to access the latest value without re-binding
+  const rowHeightRef = useRef(rowHeight);
+  useEffect(() => { rowHeightRef.current = rowHeight; }, [rowHeight]);
+
+  // Store the anchor point for zoom operations: { time (hours from 0:00), offset (pixels from top of viewport) }
+  const zoomAnchorRef = useRef<{ time: number; offset: number } | null>(null);
+
   // Save zoom preference
   useEffect(() => {
     localStorage.setItem('zhihui_calendar_row_height', rowHeight.toString());
@@ -84,21 +91,61 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
     return () => clearInterval(interval);
   }, []);
 
-  // Use reliable startOfWeek from date-fns (Monday start)
-  const weekStart = startOfWeek(currentDate, { weekStartsOn: 1 });
-  const weekDays = Array.from({ length: DAYS_TO_SHOW }, (_, i) => addDays(weekStart, i));
+  // Unified Zoom Handler
+  // anchorY: relative Y position in the grid container (e.g., mouse position or center). If undefined, defaults to center.
+  const handleZoom = useCallback((newHeight: number, anchorY?: number) => {
+     const currentHeight = rowHeightRef.current;
+     const clamped = Math.max(MIN_ROW_HEIGHT, Math.min(MAX_ROW_HEIGHT, newHeight));
+     
+     if (clamped === currentHeight || !gridRef.current) return;
+     
+     const container = gridRef.current;
+     let offset = anchorY;
+     
+     // If no specific anchor is provided (e.g. slider/button), use the center of the viewport
+     if (offset === undefined) {
+         offset = container.clientHeight / 2;
+     }
+
+     // Calculate the "Time" at the anchor point.
+     // Formula: (ScrollTop + Offset) = TotalPixelsFromTop = Time * RowHeight
+     // So: Time = (ScrollTop + Offset) / RowHeight
+     const time = (container.scrollTop + offset) / currentHeight;
+     
+     // Store this anchor so we can restore it after the render updates the height
+     zoomAnchorRef.current = { time, offset };
+     
+     setRowHeight(clamped);
+  }, []);
+
+  // Use Layout Effect to restore scroll position BEFORE the browser paints
+  useLayoutEffect(() => {
+     if (gridRef.current && zoomAnchorRef.current) {
+         const { time, offset } = zoomAnchorRef.current;
+         // Calculate new ScrollTop to keep the 'time' at the same 'offset'
+         // NewScrollTop + Offset = Time * NewRowHeight
+         const newScroll = time * rowHeight - offset;
+         
+         gridRef.current.scrollTop = newScroll;
+         zoomAnchorRef.current = null;
+     }
+  }, [rowHeight]);
 
   // --- Wheel Zoom Logic ---
   const handleWheel = useCallback((e: WheelEvent) => {
     if (e.ctrlKey || e.metaKey) {
         e.preventDefault();
-        const delta = e.deltaY > 0 ? -4 : 4; // Zoom step
-        setRowHeight(prev => {
-            const next = prev + delta;
-            return Math.max(MIN_ROW_HEIGHT, Math.min(MAX_ROW_HEIGHT, next));
-        });
+        if (!gridRef.current) return;
+
+        // Calculate mouse position relative to the scrolling container
+        const rect = gridRef.current.getBoundingClientRect();
+        const mouseRelY = e.clientY - rect.top;
+        const currentRH = rowHeightRef.current;
+        
+        const delta = e.deltaY > 0 ? -4 : 4;
+        handleZoom(currentRH + delta, mouseRelY);
     }
-  }, []);
+  }, [handleZoom]);
 
   useEffect(() => {
       const el = gridRef.current;
@@ -110,6 +157,9 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
       }
   }, [handleWheel]);
 
+  // Use reliable startOfWeek from date-fns (Monday start)
+  const weekStart = startOfWeek(currentDate, { weekStartsOn: 1 });
+  const weekDays = Array.from({ length: DAYS_TO_SHOW }, (_, i) => addDays(weekStart, i));
 
   // --- Helper: Duration Display ---
   const getDurationString = (startStr: string, endStr: string) => {
@@ -230,12 +280,14 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
     const top = (targetMinutes / 60) * rowHeight;
     const padding = rowHeight; // One hour padding
     
+    // Only scroll if we haven't scrolled manually yet (simplification: actually we scroll whenever date changes)
+    // To prevent this from running on zoom, we must ensure it depends only on currentDate
     gridRef.current.scrollTo({
       top: Math.max(0, top - padding),
       behavior: 'smooth'
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentDate]); // Removed 'rowHeight' from dependency to prevent scroll jumping on zoom
+  }, [currentDate]); 
 
   // --- Drag & Drop (Internal Moving) Logic ---
   const handleMouseDown = (e: React.MouseEvent, plan: WorkPlan) => {
@@ -460,7 +512,9 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
     return {
       top: `${top}px`,
       height: `${Math.max(height, 20)}px`, 
-      className: `absolute rounded-lg border px-1.5 ${isSmall ? 'py-0 flex items-center' : 'py-1'} text-xs font-medium cursor-grab active:cursor-grabbing select-none overflow-hidden transition-all shadow-sm hover:z-20 hover:shadow-md ${colors[plan.color] || colors.blue}`
+      // IMPORTANT: Removed 'transition-all' to prevent jitter during zoom. 
+      // Added specific transitions for visual flair only.
+      className: `absolute rounded-lg border px-1.5 ${isSmall ? 'py-0 flex items-center' : 'py-1'} text-xs font-medium cursor-grab active:cursor-grabbing select-none overflow-hidden transition-colors transition-shadow shadow-sm hover:z-20 hover:shadow-md ${colors[plan.color] || colors.blue}`
     };
   };
 
@@ -660,7 +714,7 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
       {/* Floating Zoom Control - Positioned bottom right over the grid */}
       <div className="absolute bottom-6 right-8 z-40 transition-opacity duration-300 opacity-0 group-hover/calendar:opacity-100 hover:opacity-100 flex items-center gap-2 bg-white/90 backdrop-blur-md p-1.5 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] border border-slate-100">
           <button 
-             onClick={() => setRowHeight(h => Math.max(MIN_ROW_HEIGHT, h - 10))}
+             onClick={() => handleZoom(rowHeight - 10)}
              className="w-7 h-7 flex items-center justify-center rounded-xl hover:bg-slate-100 text-slate-500 hover:text-slate-800 transition-colors"
              title="缩小视图"
           >
@@ -674,13 +728,13 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
                 max={MAX_ROW_HEIGHT} 
                 step={2}
                 value={rowHeight}
-                onChange={(e) => setRowHeight(parseInt(e.target.value))}
+                onChange={(e) => handleZoom(parseInt(e.target.value))}
                 className="w-full h-1 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600 hover:accent-indigo-500"
              />
           </div>
 
           <button 
-             onClick={() => setRowHeight(h => Math.min(MAX_ROW_HEIGHT, h + 10))}
+             onClick={() => handleZoom(rowHeight + 10)}
              className="w-7 h-7 flex items-center justify-center rounded-xl hover:bg-slate-100 text-slate-500 hover:text-slate-800 transition-colors"
              title="放大视图"
           >
@@ -690,7 +744,7 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
           <div className="w-px h-4 bg-slate-200 mx-0.5"></div>
 
           <button 
-             onClick={() => setRowHeight(DEFAULT_ROW_HEIGHT)}
+             onClick={() => handleZoom(DEFAULT_ROW_HEIGHT)}
              className="w-7 h-7 flex items-center justify-center rounded-xl hover:bg-slate-100 text-slate-400 hover:text-slate-800 transition-colors"
              title="重置视图"
           >

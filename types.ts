@@ -1,4 +1,5 @@
 
+
 export enum PlanStatus {
   TODO = 'TODO',
   IN_PROGRESS = 'IN_PROGRESS',
@@ -42,4 +43,14 @@ export interface AISettings {
   model: string;
   apiKey?: string; // For custom providers
   baseUrl?: string; // For OpenAI compatible providers
+}
+
+export interface AppNotification {
+  id: string;
+  type: 'OVERDUE' | 'SYSTEM';
+  title: string;
+  message: string;
+  timestamp: string; // ISO String
+  read: boolean;
+  planId?: string;
 }
