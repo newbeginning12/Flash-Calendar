@@ -151,7 +151,7 @@ export const TaskSidebar: React.FC<TaskSidebarProps> = ({
                 onContextMenu={(e) => handleContextMenu(e, plan)}
                 className={`group flex items-start gap-3 p-3 rounded-xl border transition-all cursor-pointer hover:shadow-md select-none ${
                     isDone 
-                        ? 'bg-slate-50 border-slate-100 opacity-70' 
+                        ? 'bg-slate-50 border-slate-100' 
                         : 'bg-white border-slate-200/60 hover:border-indigo-200'
                 }`}
               >
@@ -168,7 +168,7 @@ export const TaskSidebar: React.FC<TaskSidebarProps> = ({
                 {/* Content */}
                 <div className="flex-1 min-w-0">
                     <div className={`text-sm font-medium leading-tight mb-1 truncate ${
-                        isDone ? 'text-slate-500 line-through decoration-slate-300' : 'text-slate-800'
+                        isDone ? 'text-slate-500' : 'text-slate-800'
                     }`}>
                         {plan.title}
                     </div>

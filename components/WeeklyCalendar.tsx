@@ -696,14 +696,14 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
                                     </div>
                                     {!isTight && (
                                       <>
-                                          {heightVal >= 40 && (
+                                          {heightVal > 35 && (
                                               <div className="text-[9px] opacity-80 truncate mt-0.5 font-mono flex-shrink-0">
                                                   {format(new Date(plan.startDate), 'HH:mm')} - {format(new Date(plan.endDate), 'HH:mm')}
                                               </div>
                                           )}
                                           
-                                          {heightVal >= 80 && plan.tags && plan.tags.length > 0 && (
-                                              <div className="flex flex-wrap gap-1 mt-1.5 overflow-hidden max-h-[18px]">
+                                          {heightVal > 60 && plan.tags && plan.tags.length > 0 && (
+                                              <div className="flex flex-wrap gap-1 mt-1.5 overflow-hidden max-h-[18px] flex-shrink-0">
                                                   {plan.tags.slice(0, 3).map(t => (
                                                       <span key={t} className="px-1 py-0.5 rounded-sm bg-black/5 text-[9px] leading-none opacity-80 whitespace-nowrap">
                                                           {t}
@@ -712,8 +712,8 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
                                               </div>
                                           )}
 
-                                          {heightVal >= 120 && plan.description && (
-                                              <div className="text-[10px] opacity-70 mt-1.5 leading-snug line-clamp-3">
+                                          {heightVal > 75 && plan.description && (
+                                              <div className="text-[10px] opacity-70 mt-1.5 leading-snug line-clamp-3 overflow-hidden">
                                                   {plan.description}
                                               </div>
                                           )}
