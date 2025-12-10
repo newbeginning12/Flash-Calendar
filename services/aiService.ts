@@ -1,6 +1,7 @@
 
 import { GoogleGenAI, Type } from "@google/genai";
 import { WorkPlan, PlanStatus, AISettings, AIProvider } from "../types";
+import { startOfWeek, endOfWeek, addWeeks, format } from "date-fns";
 
 // Initialize Google AI with environment variable (Always used for Google Provider)
 const googleAI = new GoogleGenAI({ apiKey: process.env.API_KEY });
@@ -116,34 +117,57 @@ export const processUserIntent = async (
   settings: AISettings,
   signal?: AbortSignal
 ): Promise<AIProcessingResult> => {
-  const localTimeContext = formatLocalTime(new Date());
+  const now = new Date();
+  
+  // Explicitly calculate Date Ranges for "This Week" and "Next Week" to fix logic errors
+  const thisWeekStart = startOfWeek(now, { weekStartsOn: 1 }); // Monday
+  const thisWeekEnd = endOfWeek(now, { weekStartsOn: 1 });     // Sunday
+  const nextWeekStart = startOfWeek(addWeeks(now, 1), { weekStartsOn: 1 });
+  const nextWeekEnd = endOfWeek(addWeeks(now, 1), { weekStartsOn: 1 });
+  
+  const dateFormat = 'yyyy-MM-dd';
+  const localTimeContext = format(now, 'yyyy-MM-dd HH:mm:ss');
+
+  const dateContext = `
+    时间上下文:
+    - 当前时间: ${localTimeContext}
+    - 本周范围: ${format(thisWeekStart, dateFormat)} 至 ${format(thisWeekEnd, dateFormat)} (含)
+    - 下周范围: ${format(nextWeekStart, dateFormat)} 至 ${format(nextWeekEnd, dateFormat)} (含)
+  `;
 
   // OPTIMIZATION: Filter plans to reduce token usage and prevent payload errors (XHR 500).
   // Only send plans from 30 days ago to 60 days in the future.
-  const now = new Date();
-  const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-  const sixtyDaysLater = new Date(now.getTime() + 60 * 24 * 60 * 60 * 1000);
-
   const relevantPlans = currentPlans.filter(p => {
     const d = new Date(p.startDate);
+    const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+    const sixtyDaysLater = new Date(now.getTime() + 60 * 24 * 60 * 60 * 1000);
     return d >= thirtyDaysAgo && d <= sixtyDaysLater;
   }).slice(0, 80); // Hard limit item count to avoid large payloads
 
   const plansContext = relevantPlans.map(p => ({
     title: p.title,
     start: p.startDate,
+    simpleDate: p.startDate.split('T')[0], // Provide simple date string (YYYY-MM-DD) for easier AI comparison
     end: p.endDate,
-    status: p.status
+    status: p.status === 'DONE' ? '已完成' : (p.status === 'IN_PROGRESS' ? '进行中' : '待办')
   }));
 
   const systemInstructionText = `
     你是一个专业的工作计划助手。根据用户输入和当前时间/日程数据，判断意图是 CREATE (创建/修改) 还是 ANALYZE (查询/周报)。
-    当前时间: ${localTimeContext}
+    
+    ${dateContext}
 
     请返回严格的 JSON 格式。
 
     1. 如果是周报请求或分析请求 (ANALYZE)：
        - 必须根据 'Current Plans' 生成内容。
+       - **严格的时间分类规则**:
+         * "1. 本周完成工作": 仅包含 simpleDate 落在 **本周范围** (${format(thisWeekStart, dateFormat)} ~ ${format(thisWeekEnd, dateFormat)}) 内的任务 (无论状态是否完成，都列在这里)。务必逐个对比日期。
+         * "3. 下周工作计划": 仅包含 simpleDate 落在 **下周范围** (${format(nextWeekStart, dateFormat)} ~ ${format(nextWeekEnd, dateFormat)}) 内的任务。务必逐个对比日期。
+         * **严禁**将本周的任务放入下周计划，反之亦然。
+       - **列表格式要求**:
+         * 所有列表项请务必使用 **数字序号** (1., 2., 3.)，**严禁**使用无序列表 (- 或 *)。
+         * 格式推荐: "1. 任务标题 (YYYY-MM-DD, 状态)"。状态请务必使用中文 (已完成, 进行中, 待办)。
        - 返回格式: { "intent": "ANALYZE", "analysisContent": "Markdown..." }
        - Markdown 内容**必须**包含以下4个严格标题 (请保持完全一致，不要修改标点):
          ### 1. 本周完成工作

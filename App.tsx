@@ -394,7 +394,9 @@ function App() {
       links: []
     };
 
-    setPlans(prev => [...prev, newPlan]);
+    // Open modal for confirmation instead of adding directly
+    setSelectedPlan(newPlan);
+    setIsModalOpen(true);
   };
 
   const handlePlanClick = (plan: WorkPlan) => {

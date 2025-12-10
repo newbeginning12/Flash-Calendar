@@ -1,7 +1,7 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { WorkPlan, PlanStatus, LinkResource } from '../types';
-import { X, Tag, Trash2, Link as LinkIcon, ExternalLink, ChevronDown, ChevronUp, CornerDownLeft, AlertCircle } from 'lucide-react';
+import { X, Tag, Trash2, Link as LinkIcon, ExternalLink, ChevronDown, ChevronUp, AlignLeft, Check, Clock, AlertCircle, ArrowRight, Calendar, Sparkles } from 'lucide-react';
 import { DateTimePicker } from './DateTimePicker';
 import { differenceInMinutes, addMinutes } from 'date-fns';
 
@@ -19,7 +19,8 @@ const STATUS_LABELS: Record<PlanStatus, string> = {
   [PlanStatus.DONE]: '已完成',
 };
 
-// Built-in Programmer/Productivity Tags
+const COLORS = ['blue', 'indigo', 'purple', 'rose', 'orange', 'emerald'];
+
 const DEFAULT_TAGS = [
   '工作', '会议', '开发', 'Bug修复', '需求', '设计', 
   '测试', '发布', '运维', '学习', '前端', '后端', 
@@ -30,16 +31,15 @@ const DEFAULT_TAGS = [
 export const PlanModal: React.FC<PlanModalProps> = ({ plan, isOpen, onClose, onSave, onDelete }) => {
   if (!isOpen || !plan) return null;
 
+  const inputRef = useRef<HTMLInputElement>(null);
   const [editedPlan, setEditedPlan] = useState<WorkPlan>(plan);
   const [newLinkUrl, setNewLinkUrl] = useState('');
   const [newLinkTitle, setNewLinkTitle] = useState('');
   
-  // Tag State
   const [tagInput, setTagInput] = useState('');
   const [customTags, setCustomTags] = useState<string[]>([]);
   const [isTagsExpanded, setIsTagsExpanded] = useState(false);
-  
-  // Validation State
+  const [showColorPicker, setShowColorPicker] = useState(false);
   const [timeError, setTimeError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -49,10 +49,26 @@ export const PlanModal: React.FC<PlanModalProps> = ({ plan, isOpen, onClose, onS
     });
     setTagInput('');
     setIsTagsExpanded(false);
+    setShowColorPicker(false);
     setTimeError(null);
   }, [plan]);
 
-  // Load custom tags from LocalStorage
+  useEffect(() => {
+    if (isOpen && plan) {
+        // Intelligent focus and selection logic
+        const timer = setTimeout(() => {
+            if (inputRef.current) {
+                inputRef.current.focus();
+                // If it is the default generic title, select it all for quick overwrite
+                if (plan.title === '新建日程') {
+                    inputRef.current.select();
+                }
+            }
+        }, 50);
+        return () => clearTimeout(timer);
+    }
+  }, [isOpen, plan]);
+
   useEffect(() => {
     const saved = localStorage.getItem('zhihui_custom_tags');
     if (saved) {
@@ -64,7 +80,6 @@ export const PlanModal: React.FC<PlanModalProps> = ({ plan, isOpen, onClose, onS
     }
   }, []);
 
-  // Validate time whenever dates change
   useEffect(() => {
     const start = new Date(editedPlan.startDate).getTime();
     const end = new Date(editedPlan.endDate).getTime();
@@ -76,7 +91,6 @@ export const PlanModal: React.FC<PlanModalProps> = ({ plan, isOpen, onClose, onS
     }
   }, [editedPlan.startDate, editedPlan.endDate]);
 
-  // Combine default and custom tags
   const allTags = Array.from(new Set([...DEFAULT_TAGS, ...customTags]));
 
   const handleChange = (field: keyof WorkPlan, value: any) => {
@@ -88,11 +102,7 @@ export const PlanModal: React.FC<PlanModalProps> = ({ plan, isOpen, onClose, onS
       const oldEnd = new Date(editedPlan.endDate);
       const newStart = new Date(newStartIso);
       
-      // Calculate original duration
       const durationMins = differenceInMinutes(oldEnd, oldStart);
-      
-      // Auto-shift End Time to maintain duration (or at least keep it valid)
-      // If duration was negative or zero (invalid), default to 1 hour
       const validDuration = durationMins > 0 ? durationMins : 60;
       const newEnd = addMinutes(newStart, validDuration);
 
@@ -107,7 +117,6 @@ export const PlanModal: React.FC<PlanModalProps> = ({ plan, isOpen, onClose, onS
       handleChange('endDate', newEndIso);
   };
 
-  // --- Tag Handlers ---
   const handleAddTag = (tag: string) => {
       const cleanTag = tag.trim();
       if (!cleanTag) return;
@@ -143,14 +152,12 @@ export const PlanModal: React.FC<PlanModalProps> = ({ plan, isOpen, onClose, onS
       }
   };
 
-  // --- Link Handlers ---
   const addLink = () => {
     if (!newLinkUrl.trim()) return;
     let url = newLinkUrl.trim();
     if (!/^https?:\/\//i.test(url)) {
         url = 'https://' + url;
     }
-    
     const newLink: LinkResource = {
       id: crypto.randomUUID(),
       title: newLinkTitle.trim() || url,
@@ -171,249 +178,281 @@ export const PlanModal: React.FC<PlanModalProps> = ({ plan, isOpen, onClose, onS
     }));
   };
 
+  const isDefaultTitle = editedPlan.title === '新建日程';
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div 
-        className="absolute inset-0 bg-slate-900/20 backdrop-blur-sm transition-opacity" 
+        className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm transition-opacity" 
         onClick={onClose}
       />
       
-      <div className="relative w-full max-w-lg bg-white/90 backdrop-blur-xl rounded-3xl shadow-[0_20px_50px_rgb(0,0,0,0.1)] border border-white/50 overflow-hidden flex flex-col max-h-[90vh] animate-in fade-in zoom-in duration-200">
+      <div className="relative w-full max-w-2xl bg-white rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh] animate-in fade-in zoom-in-95 duration-200">
         
-        {/* --- Sticky Header --- */}
-        <div className="flex-none p-6 pb-2 border-b border-transparent">
-             <div className="flex justify-between items-start mb-2">
-                <div className="flex-1 mr-4">
-                    <input 
-                    type="text" 
-                    value={editedPlan.title}
-                    onChange={(e) => handleChange('title', e.target.value)}
-                    className="w-full text-2xl font-semibold bg-transparent border-none outline-none placeholder-slate-400 text-slate-800"
-                    placeholder="日程标题"
-                    autoFocus
-                    />
+        {/* --- Header Section --- */}
+        <div className="px-8 pt-8 pb-4 flex-none">
+            <div className="flex gap-5">
+                {/* Left: Color Indicator */}
+                <div className="pt-3 flex-shrink-0">
+                     <div className="relative">
+                        <button 
+                            onClick={() => setShowColorPicker(!showColorPicker)}
+                            className={`w-6 h-6 rounded-full bg-${editedPlan.color}-500 ring-4 ring-${editedPlan.color}-50 hover:ring-${editedPlan.color}-100 transition-all cursor-pointer shadow-sm`}
+                            title="更换颜色"
+                        />
+                        {showColorPicker && (
+                            <div className="absolute top-full left-0 mt-3 p-3 bg-white rounded-xl shadow-xl border border-slate-100 flex gap-2 z-50 animate-in fade-in zoom-in-95 w-[164px] flex-wrap">
+                                {COLORS.map(c => (
+                                    <button
+                                        key={c}
+                                        onClick={() => { handleChange('color', c); setShowColorPicker(false); }}
+                                        className={`w-6 h-6 rounded-full bg-${c}-500 hover:scale-110 transition-transform ${editedPlan.color === c ? 'ring-2 ring-offset-1 ring-slate-400' : ''}`}
+                                    />
+                                ))}
+                            </div>
+                        )}
+                     </div>
                 </div>
-                <button onClick={onClose} className="p-2 -mr-2 text-slate-400 hover:text-slate-600 rounded-full hover:bg-slate-100/50 transition-colors">
+
+                {/* Right: Title & Time */}
+                <div className="flex-1 min-w-0">
+                    <div className="relative group">
+                        {isDefaultTitle && (
+                            <div className="absolute -top-5 left-0 flex items-center gap-1 text-xs font-medium text-indigo-500 animate-in fade-in slide-in-from-bottom-1 pointer-events-none select-none opacity-90">
+                                <Sparkles size={10} className="fill-indigo-500" />
+                                <span>建议修改标题</span>
+                            </div>
+                        )}
+                        <input 
+                            ref={inputRef}
+                            type="text" 
+                            value={editedPlan.title}
+                            onChange={(e) => handleChange('title', e.target.value)}
+                            className={`w-full text-2xl font-semibold bg-transparent border-b-2 border-transparent hover:border-slate-200 focus:border-indigo-500 outline-none placeholder-slate-300 leading-tight py-1 transition-all ${
+                                isDefaultTitle ? 'text-slate-400 font-normal' : 'text-slate-800'
+                            }`}
+                            placeholder="添加日程标题"
+                        />
+                    </div>
+                    
+                    {/* Time Picker Row */}
+                    <div className="mt-4 flex flex-wrap items-center gap-3">
+                        <div className="flex-1 min-w-[200px]">
+                            <DateTimePicker 
+                                value={editedPlan.startDate} 
+                                onChange={handleStartTimeChange} 
+                                label="开始时间"
+                            />
+                        </div>
+                        <ArrowRight size={16} className="text-slate-300 flex-shrink-0 mt-4 hidden sm:block" />
+                        <div className="flex-1 min-w-[200px]">
+                            <DateTimePicker 
+                                value={editedPlan.endDate} 
+                                onChange={handleEndTimeChange}
+                                minDate={editedPlan.startDate}
+                                isError={!!timeError}
+                                label="结束时间"
+                            />
+                        </div>
+                    </div>
+                    {timeError && (
+                        <div className="flex items-center gap-1.5 mt-2 text-xs text-rose-500 font-medium animate-in slide-in-from-top-1 fade-in">
+                            <AlertCircle size={12} />
+                            {timeError}
+                        </div>
+                    )}
+                </div>
+                
+                <button onClick={onClose} className="p-2 -mr-2 -mt-2 text-slate-400 hover:text-slate-600 rounded-full hover:bg-slate-100 transition-colors h-10 w-10 flex items-center justify-center self-start">
                     <X size={20} />
                 </button>
             </div>
         </div>
-        
-        {/* --- Scrollable Body --- */}
-        <div className="flex-1 overflow-y-auto custom-scrollbar px-6 pb-6">
-            
-            {/* Time Inputs (New DateTimePicker) */}
-            <div className="mb-6 pt-2">
-                <div className="grid grid-cols-2 gap-4">
-                    <DateTimePicker 
-                        label="开始时间"
-                        value={editedPlan.startDate}
-                        onChange={handleStartTimeChange}
-                    />
-                    <DateTimePicker 
-                        label="结束时间"
-                        value={editedPlan.endDate}
-                        onChange={handleEndTimeChange}
-                        isError={!!timeError}
-                        minDate={editedPlan.startDate}
-                    />
-                </div>
-                
-                {/* Error Message */}
-                {timeError && (
-                    <div className="flex items-center gap-1.5 mt-2 text-xs text-rose-500 font-medium animate-in slide-in-from-top-1 fade-in">
-                        <AlertCircle size={12} />
-                        {timeError}
+
+        {/* Divider */}
+        <div className="h-px bg-slate-100 w-full"></div>
+
+        {/* --- Body Section --- */}
+        <div className="flex-1 overflow-y-auto custom-scrollbar px-8 py-6">
+            <div className="space-y-6">
+
+                {/* Status */}
+                <div className="flex gap-5">
+                    <div className="w-6 flex-shrink-0 flex justify-center mt-1 text-slate-400">
+                        <Check size={20} />
                     </div>
-                )}
-            </div>
-
-            {/* Status */}
-            <div className="mb-6">
-                 <div className="flex items-center">
-                    <select 
-                        value={editedPlan.status}
-                        onChange={(e) => handleChange('status', e.target.value)}
-                        className="block w-full rounded-xl border-slate-200 bg-slate-50/50 py-2 px-3 text-sm font-medium text-slate-700 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 hover:bg-white transition-colors cursor-pointer"
-                    >
-                        {Object.values(PlanStatus).map(s => (
-                        <option key={s} value={s}>{STATUS_LABELS[s]}</option>
-                        ))}
-                    </select>
-                </div>
-            </div>
-
-            {/* Tags Section */}
-            <div className="mb-6">
-                <label className="text-[10px] text-slate-400 font-medium uppercase tracking-wide mb-1.5 block">
-                    标签
-                </label>
-                
-                {/* 1. Active Tags & Input Area */}
-                <div className="flex flex-wrap gap-2 mb-3 bg-white border border-slate-200 rounded-xl p-2 focus-within:ring-2 focus-within:ring-blue-500/20 focus-within:border-blue-400 transition-all">
-                    {editedPlan.tags.map(tag => (
-                        <span key={tag} className="inline-flex items-center px-2 py-1 rounded-lg text-xs font-medium bg-blue-50 text-blue-700 border border-blue-100">
-                            {tag}
-                            <button 
-                                onClick={() => handleRemoveTag(tag)}
-                                className="ml-1.5 text-blue-400 hover:text-blue-600 focus:outline-none"
-                            >
-                                <X size={12} />
-                            </button>
-                        </span>
-                    ))}
-                    
-                    <div className="relative flex-1 min-w-[120px]">
-                        <input 
-                            type="text"
-                            placeholder={editedPlan.tags.length === 0 ? "输入新标签..." : "添加..."}
-                            value={tagInput}
-                            onChange={(e) => setTagInput(e.target.value)}
-                            onKeyDown={handleTagInputKeyDown}
-                            className="w-full h-full bg-transparent border-none py-1 px-1 text-sm outline-none placeholder-slate-400"
-                        />
-                        {tagInput && (
-                            <div className="absolute right-0 top-1/2 -translate-y-1/2 flex items-center gap-1 text-[10px] text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200 animate-in fade-in shadow-sm">
-                                <CornerDownLeft size={10} />
-                                回车保存
-                            </div>
-                        )}
+                    <div className="flex-1">
+                        <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">状态</label>
+                        <div className="flex gap-2">
+                            {Object.values(PlanStatus).map(s => (
+                                <button
+                                    key={s}
+                                    onClick={() => handleChange('status', s)}
+                                    className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-all ${
+                                        editedPlan.status === s
+                                        ? 'bg-slate-800 text-white shadow-md'
+                                        : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'
+                                    }`}
+                                >
+                                    {STATUS_LABELS[s]}
+                                </button>
+                            ))}
+                        </div>
                     </div>
                 </div>
 
-                {/* 2. Collapsible Presets Area */}
-                <div className="bg-slate-50/50 rounded-xl p-3 border border-slate-100 transition-all">
-                    <div 
-                        className="flex items-center justify-between cursor-pointer mb-2 select-none"
-                        onClick={() => setIsTagsExpanded(!isTagsExpanded)}
-                    >
-                        <span className="text-xs font-semibold text-slate-500 flex items-center gap-1">
-                           <Tag size={12} /> 常用标签
-                        </span>
-                        <button className="text-slate-400 hover:text-blue-600 transition-colors">
-                            {isTagsExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-                        </button>
+                {/* Tags */}
+                <div className="flex gap-5">
+                    <div className="w-6 flex-shrink-0 flex justify-center mt-1.5 text-slate-400">
+                        <Tag size={20} />
                     </div>
-                    
-                    <div className={`relative transition-all duration-300 ease-in-out overflow-hidden ${isTagsExpanded ? 'max-h-48 opacity-100' : 'max-h-[28px] opacity-90'}`}>
-                        <div className="flex flex-wrap gap-2 pb-1">
-                            {allTags.map(tag => {
-                                const isSelected = editedPlan.tags.includes(tag);
-                                return (
-                                    <button
-                                        key={tag}
-                                        onClick={() => toggleTag(tag)}
-                                        className={`
-                                            px-2 py-0.5 rounded-md text-xs border transition-all whitespace-nowrap
-                                            ${isSelected 
-                                                ? 'bg-blue-100 text-blue-700 border-blue-200 font-medium' 
-                                                : 'bg-white text-slate-600 border-slate-200 hover:border-blue-300 hover:text-blue-600'
-                                            }
-                                        `}
+                    <div className="flex-1">
+                        <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">标签</label>
+                        <div className="flex flex-wrap gap-2 mb-3">
+                            {editedPlan.tags.map(tag => (
+                                <span key={tag} className="inline-flex items-center px-2.5 py-1 rounded-md text-sm font-medium bg-indigo-50 text-indigo-700 border border-indigo-100 group">
+                                    {tag}
+                                    <button 
+                                        onClick={() => handleRemoveTag(tag)}
+                                        className="ml-1.5 text-indigo-400 hover:text-indigo-700 opacity-60 group-hover:opacity-100 transition-opacity"
                                     >
-                                        {tag}
+                                        <X size={14} />
                                     </button>
-                                );
-                            })}
+                                </span>
+                            ))}
+                            <input 
+                                type="text"
+                                placeholder="输入标签按回车..."
+                                value={tagInput}
+                                onChange={(e) => setTagInput(e.target.value)}
+                                onKeyDown={handleTagInputKeyDown}
+                                className="bg-transparent text-sm outline-none placeholder-slate-400 min-w-[120px] py-1 border-b border-transparent focus:border-indigo-300 transition-colors"
+                            />
                         </div>
-                        {!isTagsExpanded && (
-                            <div className="absolute inset-y-0 right-0 w-12 bg-gradient-to-l from-slate-50 to-transparent pointer-events-none"></div>
-                        )}
+                        
+                        <div className="relative">
+                            <button 
+                                onClick={() => setIsTagsExpanded(!isTagsExpanded)}
+                                className="flex items-center gap-1 text-xs text-slate-500 hover:text-indigo-600 transition-colors font-medium"
+                            >
+                                {isTagsExpanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                                {isTagsExpanded ? '收起推荐标签' : '显示推荐标签'}
+                            </button>
+                            
+                            {isTagsExpanded && (
+                                <div className="mt-3 p-3 bg-slate-50/50 rounded-xl border border-slate-100 flex flex-wrap gap-2 animate-in fade-in slide-in-from-top-2">
+                                    {allTags.map(tag => (
+                                        <button
+                                            key={tag}
+                                            onClick={() => toggleTag(tag)}
+                                            className={`px-2.5 py-1 rounded-md text-xs border transition-all ${
+                                                editedPlan.tags.includes(tag)
+                                                ? 'bg-indigo-100 text-indigo-700 border-indigo-200'
+                                                : 'bg-white text-slate-600 border-slate-200 hover:border-indigo-300 hover:text-indigo-600'
+                                            }`}
+                                        >
+                                            {tag}
+                                        </button>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
                     </div>
-                    
-                    {!isTagsExpanded && (
-                        <div 
-                            onClick={() => setIsTagsExpanded(true)}
-                            className="text-[10px] text-center text-slate-400 mt-1 cursor-pointer hover:text-blue-500 flex items-center justify-center gap-1 pt-1 border-t border-slate-100/50"
-                        >
-                            <ChevronDown size={10} /> 展开全部
-                        </div>
-                    )}
                 </div>
-            </div>
 
-            {/* Description */}
-            <div className="mb-6">
-                 <label className="text-[10px] text-slate-400 font-medium uppercase tracking-wide mb-1.5 block">备注信息</label>
-                <textarea 
-                    value={editedPlan.description}
-                    onChange={(e) => handleChange('description', e.target.value)}
-                    placeholder="添加备注详情..."
-                    className="w-full h-20 p-3 bg-slate-50/50 rounded-2xl text-sm text-slate-700 resize-none outline-none border border-slate-100 focus:bg-white focus:shadow-sm focus:ring-1 focus:ring-blue-500/20 transition-all"
-                />
-            </div>
-
-            {/* Links Section */}
-            <div className="mb-2">
-                <div className="flex items-center justify-between mb-2">
-                     <label className="text-[10px] text-slate-400 font-medium uppercase tracking-wide flex items-center gap-1">
-                        <LinkIcon size={12} /> 相关链接
-                     </label>
+                {/* Notes */}
+                <div className="flex gap-5">
+                    <div className="w-6 flex-shrink-0 flex justify-center mt-1 text-slate-400">
+                        <AlignLeft size={20} />
+                    </div>
+                    <div className="flex-1">
+                         <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">备注</label>
+                         <textarea 
+                            value={editedPlan.description}
+                            onChange={(e) => handleChange('description', e.target.value)}
+                            placeholder="添加详细说明..."
+                            className="w-full min-h-[100px] text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl p-3 resize-none outline-none focus:border-indigo-500 focus:bg-white transition-all leading-relaxed"
+                        />
+                    </div>
                 </div>
-                <div className="space-y-2">
-                    {editedPlan.links.map(link => (
-                        <div key={link.id} className="flex items-center gap-2 group bg-slate-50 px-3 py-2 rounded-lg border border-slate-100 hover:border-blue-200 hover:shadow-sm transition-all">
-                             <div className="bg-blue-100 text-blue-600 p-1 rounded">
-                                 <LinkIcon size={12} />
-                             </div>
-                             <a href={link.url} target="_blank" rel="noopener noreferrer" className="flex-1 text-sm text-blue-600 hover:underline truncate flex items-center gap-1">
-                                 {link.title} <ExternalLink size={10} className="opacity-50" />
-                             </a>
-                             <button onClick={() => deleteLink(link.id)} className="opacity-0 group-hover:opacity-100 text-slate-300 hover:text-rose-500 transition-all p-1">
-                                 <X size={14} />
-                             </button>
+
+                {/* Links */}
+                <div className="flex gap-5">
+                    <div className="w-6 flex-shrink-0 flex justify-center mt-1.5 text-slate-400">
+                        <LinkIcon size={20} />
+                    </div>
+                    <div className="flex-1">
+                        <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">相关链接</label>
+                        <div className="space-y-2 mb-3">
+                             {editedPlan.links.map(link => (
+                                <div key={link.id} className="flex items-center gap-2 group text-sm bg-white border border-slate-100 p-2 rounded-lg hover:border-indigo-200 transition-colors">
+                                     <div className="p-1.5 bg-slate-50 rounded text-slate-400">
+                                         <LinkIcon size={12} />
+                                     </div>
+                                     <a href={link.url} target="_blank" rel="noopener noreferrer" className="text-indigo-600 hover:underline truncate flex-1 flex items-center gap-1 font-medium">
+                                         {link.title} <ExternalLink size={10} className="opacity-50" />
+                                     </a>
+                                     <button onClick={() => deleteLink(link.id)} className="text-slate-300 hover:text-rose-500 p-1 rounded hover:bg-rose-50 transition-colors">
+                                         <X size={14} />
+                                     </button>
+                                </div>
+                            ))}
                         </div>
-                    ))}
-                    
-                    <div className="flex flex-col gap-2 mt-2 p-3 bg-slate-50/50 rounded-xl border border-slate-100/50">
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 bg-slate-50 p-1 rounded-xl border border-slate-200 focus-within:border-indigo-400 focus-within:ring-2 focus-within:ring-indigo-500/10 transition-all">
                              <input 
                                 type="text"
                                 value={newLinkTitle}
                                 onChange={(e) => setNewLinkTitle(e.target.value)}
-                                placeholder="链接标题 (可选)"
-                                className="flex-1 bg-white border border-slate-200 rounded px-2 py-1 text-xs outline-none focus:border-blue-400"
+                                placeholder="链接名称"
+                                className="w-1/4 bg-transparent text-sm px-3 py-1.5 outline-none border-r border-slate-200 text-slate-700"
                             />
-                        </div>
-                        <div className="flex items-center gap-2">
                              <input 
                                 type="text"
                                 value={newLinkUrl}
                                 onChange={(e) => setNewLinkUrl(e.target.value)}
                                 onKeyDown={(e) => e.key === 'Enter' && addLink()}
-                                placeholder="https://..."
-                                className="flex-1 bg-white border border-slate-200 rounded px-2 py-1 text-xs outline-none focus:border-blue-400"
+                                placeholder="URL (https://...)"
+                                className="flex-1 bg-transparent text-sm px-3 py-1.5 outline-none text-slate-700"
                             />
                             <button 
                                 onClick={addLink}
                                 disabled={!newLinkUrl.trim()}
-                                className="bg-slate-200 hover:bg-slate-300 text-slate-600 px-3 py-1 rounded text-xs font-medium transition-colors disabled:opacity-50"
+                                className="text-xs font-bold text-indigo-600 hover:text-indigo-700 px-3 py-1.5 hover:bg-indigo-50 rounded-lg transition-colors disabled:opacity-50 disabled:hover:bg-transparent"
                             >
                                 添加
                             </button>
                         </div>
                     </div>
                 </div>
+
             </div>
         </div>
 
-        {/* --- Sticky Footer --- */}
-        <div className="flex-none p-6 pt-4 border-t border-slate-100 bg-white/50 backdrop-blur-md flex justify-between items-center z-10">
+        {/* --- Footer --- */}
+        <div className="flex-none px-8 py-5 border-t border-slate-100 bg-white flex justify-between items-center z-10">
           <button 
             onClick={() => onDelete(editedPlan.id)}
-            className="flex items-center space-x-2 px-4 py-2 text-rose-500 hover:bg-rose-50 rounded-xl transition-colors text-sm font-medium"
+            className="text-slate-400 hover:text-rose-600 text-sm font-medium flex items-center gap-1.5 px-3 py-2 hover:bg-rose-50 rounded-xl transition-colors"
           >
             <Trash2 size={16} />
-            <span>删除</span>
+            删除
           </button>
           
-          <button 
-            onClick={() => onSave(editedPlan)}
-            disabled={!!timeError}
-            className="px-6 py-2 bg-slate-900 hover:bg-black text-white rounded-xl shadow-lg shadow-slate-900/20 transform active:scale-95 transition-all text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            保存修改
-          </button>
+          <div className="flex gap-3">
+             <button 
+                onClick={onClose}
+                className="px-5 py-2.5 text-slate-600 font-medium hover:bg-slate-100 rounded-xl transition-colors text-sm"
+             >
+                取消
+             </button>
+             <button 
+                onClick={() => onSave(editedPlan)}
+                disabled={!!timeError}
+                className="px-8 py-2.5 bg-slate-900 hover:bg-black text-white rounded-xl shadow-lg shadow-slate-900/20 transform active:scale-95 transition-all text-sm font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
+             >
+                保存修改
+             </button>
+          </div>
         </div>
       </div>
     </div>

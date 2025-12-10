@@ -54,9 +54,15 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
   onDateSelect,
   onDragCreate
 }) => {
+  const [now, setNow] = useState(new Date());
   const [dragState, setDragState] = useState<DragState | null>(null);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const gridRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const interval = setInterval(() => setNow(new Date()), 60000);
+    return () => clearInterval(interval);
+  }, []);
 
   // Use reliable startOfWeek from date-fns (Monday start)
   const weekStart = startOfWeek(currentDate, { weekStartsOn: 1 });
@@ -411,21 +417,7 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
     };
   };
 
-  const handleColumnClick = (e: React.MouseEvent<HTMLDivElement>, day: Date) => {
-    if (dragState) return;
-    const rect = e.currentTarget.getBoundingClientRect();
-    const y = e.clientY - rect.top;
-    const minutes = (y / ROW_HEIGHT) * 60;
-    const snappedMinutes = Math.floor(minutes / 15) * 15;
-
-    const newDate = new Date(day);
-    newDate.setHours(0, 0, 0, 0);
-    newDate.setMinutes(snappedMinutes);
-    onSlotClick(newDate);
-  };
-
-  const currentTime = new Date();
-  const currentMinutes = getHours(currentTime) * 60 + getMinutes(currentTime);
+  const currentMinutes = getHours(now) * 60 + getMinutes(now);
   const currentTimeTop = (currentMinutes / 60) * ROW_HEIGHT;
 
   let ghostData = null;
@@ -505,6 +497,16 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
                 </span>
               </div>
             ))}
+            
+            {/* Current Time Badge */}
+             <div 
+                className="absolute right-0 z-20 -translate-y-1/2 pointer-events-none pr-1 flex items-center justify-end w-full"
+                style={{ top: `${currentTimeTop}px` }}
+            >
+                <div className="text-[10px] font-bold text-rose-500 bg-white/90 backdrop-blur-sm border border-rose-100 px-1.5 py-0.5 rounded shadow-sm font-mono">
+                    {format(now, 'HH:mm')}
+                </div>
+            </div>
           </div>
 
           <div className="flex flex-1 relative">
@@ -513,17 +515,6 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
                     <div key={h} className="border-b border-slate-100/50 last:border-none box-border" style={{ height: `${ROW_HEIGHT}px` }}></div>
                 ))}
              </div>
-
-             {/* Current Time Line */}
-             {weekDays.some(d => isSameDay(d, currentTime)) && (
-                 <div 
-                   className="absolute left-0 right-0 flex items-center pointer-events-none z-30"
-                   style={{ top: `${currentTimeTop}px` }}
-                 >
-                    <div className="w-full h-[1px] bg-rose-500 shadow-[0_0_4px_rgba(244,63,94,0.5)]"></div>
-                    <div className="absolute -left-1 w-2 h-2 rounded-full bg-rose-500"></div>
-                 </div>
-             )}
 
             {weekDays.map((day, idx) => {
               const dayStr = format(day, 'yyyy-MM-dd');
@@ -539,14 +530,14 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
 
               const isGhostCol = ghostData && ghostData.colIndex === idx;
               const isSelectedDay = isSameDay(day, currentDate);
+              const isToday = isSameDay(day, now);
 
               return (
                 <div 
                   key={key} 
-                  className={`flex-1 relative border-r border-slate-100/50 last:border-none group cursor-pointer transition-colors ${
+                  className={`flex-1 relative border-r border-slate-100/50 last:border-none group transition-colors ${
                       isSelectedDay ? 'bg-blue-50/30' : 'bg-transparent hover:bg-white/40'
                   }`}
-                  onClick={(e) => handleColumnClick(e, day)}
                   onContextMenu={(e) => handleSlotContextMenu(e, day)}
                   onDragOver={handleDragOver}
                   onDrop={(e) => handleDrop(e, day)}
@@ -559,6 +550,17 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
                          <span className="text-indigo-600 font-bold text-xs bg-white/90 px-2 py-1 rounded-full shadow-sm backdrop-blur-sm">
                             {format(ghostData!.start, 'HH:mm')} - {format(ghostData!.end, 'HH:mm')} ({getDurationString(ghostData!.start.toISOString(), ghostData!.end.toISOString())})
                          </span>
+                      </div>
+                  )}
+
+                  {/* Current Time Line (Only for Today's Column) */}
+                  {isToday && (
+                      <div 
+                        className="absolute left-0 right-0 z-30 pointer-events-none flex items-center"
+                        style={{ top: `${currentTimeTop}px` }}
+                      >
+                         <div className="w-2 h-2 rounded-full bg-rose-500 -ml-1 ring-2 ring-white shadow-sm"></div>
+                         <div className="h-px w-full bg-rose-500/50 shadow-[0_1px_2px_rgba(244,63,94,0.1)]"></div>
                       </div>
                   )}
 

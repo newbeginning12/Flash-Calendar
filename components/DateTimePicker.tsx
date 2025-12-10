@@ -5,7 +5,7 @@ import { format, addMonths, subMonths, startOfMonth, endOfMonth, startOfWeek, en
 import { ChevronLeft, ChevronRight, Calendar as CalendarIcon, ChevronDown, Check } from 'lucide-react';
 
 interface DateTimePickerProps {
-  label: string;
+  label?: string;
   value: string; // ISO String
   onChange: (value: string) => void;
   minDate?: string;
@@ -37,8 +37,6 @@ export const DateTimePicker: React.FC<DateTimePickerProps> = ({ label, value, on
   useEffect(() => {
     const handleScroll = (e: Event) => {
         if (isOpen) {
-            // CRITICAL FIX: If the scroll event originated from inside the popup, do NOT close it.
-            // We verify if the target of the scroll event is contained within our popup ref.
             if (popupRef.current && popupRef.current.contains(e.target as Node)) {
                 return;
             }
@@ -66,7 +64,6 @@ export const DateTimePicker: React.FC<DateTimePickerProps> = ({ label, value, on
   // Auto-scroll to selected time
   useEffect(() => {
       if (isOpen) {
-          // Use requestAnimationFrame to ensure DOM is ready
           requestAnimationFrame(() => {
               const hourEl = document.getElementById(`dtp-hour-${currentHour}`);
               const minuteEl = document.getElementById(`dtp-minute-${currentMinute}`);
@@ -129,7 +126,6 @@ export const DateTimePicker: React.FC<DateTimePickerProps> = ({ label, value, on
       setViewDate(now);
   };
 
-  // Calendar Generation
   const monthStart = startOfMonth(viewDate);
   const monthEnd = endOfMonth(monthStart);
   const startDate = startOfWeek(monthStart, { weekStartsOn: 1 });
@@ -137,39 +133,40 @@ export const DateTimePicker: React.FC<DateTimePickerProps> = ({ label, value, on
   const days = eachDayOfInterval({ start: startDate, end: endDate });
 
   return (
-    <div className="relative" ref={containerRef}>
-        <label className="text-[10px] text-slate-400 font-medium uppercase tracking-wide mb-1.5 block">
-            {label}
-        </label>
+    <div className="relative w-full" ref={containerRef}>
+        {label && (
+            <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mb-2 block">
+                {label}
+            </label>
+        )}
         
         <button
             onClick={() => setIsOpen(!isOpen)}
             className={`
-                w-full flex items-center justify-between bg-slate-50/50 border rounded-xl px-3 py-2.5 text-sm transition-all
+                w-full flex items-center justify-between bg-slate-50 border rounded-xl px-3 py-2.5 text-sm transition-all
                 ${isError 
                     ? 'border-rose-300 bg-rose-50/30 text-rose-600 hover:border-rose-400' 
                     : isOpen 
-                        ? 'border-blue-500 ring-1 ring-blue-500/20 bg-white shadow-sm' 
-                        : 'border-slate-200 text-slate-700 hover:bg-slate-50 hover:border-slate-300'
+                        ? 'border-blue-500 ring-1 ring-blue-500/20 shadow-sm bg-white' 
+                        : 'border-slate-200 text-slate-700 hover:bg-white hover:border-slate-300'
                 }
             `}
         >
-            <div className="flex items-center gap-2">
-                <CalendarIcon size={16} className={isError ? "text-rose-400" : "text-slate-400"} />
-                <span className="font-medium font-mono tracking-tight text-slate-700">
+            <div className="flex items-center gap-2 truncate">
+                <CalendarIcon size={16} className={isError ? "text-rose-400 flex-shrink-0" : "text-slate-400 flex-shrink-0"} />
+                <span className="font-medium font-mono tracking-tight text-slate-700 truncate">
                     {format(dateValue, 'yyyy-MM-dd')}
                 </span>
-                <span className="w-px h-3 bg-slate-200 mx-1"></span>
-                <span className="font-medium font-mono tracking-tight flex items-center gap-1 text-slate-600">
+                <span className="w-px h-3 bg-slate-200 mx-1 flex-shrink-0"></span>
+                <span className="font-medium font-mono tracking-tight flex items-center gap-1 text-slate-600 truncate">
                      {format(dateValue, 'HH:mm')}
                 </span>
             </div>
-            <ChevronDown size={14} className={`text-slate-400 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+            <ChevronDown size={14} className={`text-slate-400 transition-transform flex-shrink-0 ml-2 ${isOpen ? 'rotate-180' : ''}`} />
         </button>
 
         {isOpen && position && createPortal(
             <div className="fixed inset-0 z-[9999]">
-                {/* Transparent Backdrop to close on click outside */}
                 <div className="absolute inset-0" onClick={() => setIsOpen(false)} />
 
                 <div 
@@ -186,7 +183,6 @@ export const DateTimePicker: React.FC<DateTimePickerProps> = ({ label, value, on
                     }}
                     onClick={(e) => e.stopPropagation()}
                 >
-                    {/* Header: Date Navigation */}
                     <div className="p-4 border-b border-slate-100 bg-white">
                         <div className="flex items-center justify-between mb-3">
                             <button onClick={handlePrevMonth} className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-400 hover:text-slate-700 transition-colors">
@@ -237,9 +233,7 @@ export const DateTimePicker: React.FC<DateTimePickerProps> = ({ label, value, on
                         </div>
                     </div>
 
-                    {/* Time Selection */}
                     <div className="flex h-40 bg-slate-50/50 border-t border-slate-100">
-                        {/* Hours */}
                         <div className="flex-1 border-r border-slate-100 overflow-hidden flex flex-col">
                             <div className="px-3 py-1.5 text-[10px] text-slate-400 font-bold uppercase bg-slate-50/95 backdrop-blur-sm border-b border-slate-100 z-10 text-center">
                                 小时
@@ -262,7 +256,6 @@ export const DateTimePicker: React.FC<DateTimePickerProps> = ({ label, value, on
                             </div>
                         </div>
                         
-                        {/* Minutes */}
                         <div className="flex-1 overflow-hidden flex flex-col">
                             <div className="px-3 py-1.5 text-[10px] text-slate-400 font-bold uppercase bg-slate-50/95 backdrop-blur-sm border-b border-slate-100 z-10 text-center">
                                 分钟
@@ -286,7 +279,6 @@ export const DateTimePicker: React.FC<DateTimePickerProps> = ({ label, value, on
                         </div>
                     </div>
                     
-                    {/* Footer Actions */}
                     <div className="p-3 bg-white border-t border-slate-100 flex justify-between items-center">
                          <button 
                             onClick={handleJumpToToday}
