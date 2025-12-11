@@ -63,16 +63,21 @@ export const DateTimePicker: React.FC<DateTimePickerProps> = ({ label, value, on
 
   // Auto-scroll to selected time
   useEffect(() => {
-      if (isOpen) {
-          requestAnimationFrame(() => {
+      if (isOpen && position) {
+          // Use setTimeout to ensure the DOM elements are rendered and painted inside the portal
+          const timer = setTimeout(() => {
               const hourEl = document.getElementById(`dtp-hour-${currentHour}`);
               const minuteEl = document.getElementById(`dtp-minute-${currentMinute}`);
               
-              if (hourEl) hourEl.scrollIntoView({ block: 'center', behavior: 'smooth' });
-              if (minuteEl) minuteEl.scrollIntoView({ block: 'center', behavior: 'smooth' });
-          });
+              if (hourEl) hourEl.scrollIntoView({ block: 'center', behavior: 'auto' });
+              if (minuteEl) minuteEl.scrollIntoView({ block: 'center', behavior: 'auto' });
+          }, 0);
+          return () => clearTimeout(timer);
       }
-  }, [isOpen, currentHour, currentMinute]);
+      // We only want to scroll when opening the popup or when position stabilizes.
+      // We DO NOT want to scroll when currentHour/currentMinute changes (user interaction).
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, position]);
 
   const calculatePosition = () => {
       if (containerRef.current) {

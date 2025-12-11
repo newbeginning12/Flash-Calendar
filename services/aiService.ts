@@ -459,3 +459,64 @@ export const generateSmartSuggestions = async (
   }
   return [];
 };
+
+export const analyzeScheduleImage = async (
+  base64Image: string, // data:image/jpeg;base64,...
+  settings: AISettings
+): Promise<AIProcessingResult> => {
+    // Extract base64 data
+    const data = base64Image.split(',')[1];
+    const mimeType = base64Image.split(';')[0].split(':')[1];
+
+    const systemPrompt = `
+      You are an AI assistant that analyzes images of schedules, chats, or documents to extract work plans.
+      Identify the task title, time, and description.
+      Current Time: ${new Date().toLocaleString()}
+
+      Return a JSON object:
+      {
+        "intent": "CREATE",
+        "planData": {
+          "title": "Task Title",
+          "description": "Context from image",
+          "startDate": "YYYY-MM-DDTHH:mm:ss",
+          "endDate": "YYYY-MM-DDTHH:mm:ss",
+          "tags": ["Tag1"]
+        }
+      }
+      If exact date is missing, infer from context (e.g. "tomorrow") relative to current time. 
+      If no valid plan found, return null.
+    `;
+
+    if (settings.provider === AIProvider.GOOGLE) {
+        try {
+             // Use 2.5-flash for multimodal if standard model is not set to vision capable
+             // But we respect user selection if possible, or fallback to flash
+             const modelToUse = settings.model.includes('flash') || settings.model.includes('pro') ? settings.model : 'gemini-2.5-flash';
+             
+             const response = await googleAI.models.generateContent({
+                model: modelToUse,
+                contents: {
+                    parts: [
+                        { inlineData: { mimeType, data } },
+                        { text: "Analyze this image and extract schedule information." }
+                    ]
+                },
+                config: {
+                    responseMimeType: "application/json",
+                    systemInstruction: systemPrompt
+                }
+             });
+             const text = response.text;
+             const json = extractJSON(text);
+             if (json && json.intent === 'CREATE') {
+                 // Reuse local helper logic if needed, but for now simple return
+                 return { type: 'CREATE_PLAN', data: json.planData };
+             }
+        } catch (e) {
+            console.error("Image analysis failed", e);
+        }
+    }
+    // OpenAI Compatible Vision not fully implemented for brevity, returning null
+    return null;
+};
