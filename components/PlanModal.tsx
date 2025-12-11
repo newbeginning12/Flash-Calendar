@@ -1,9 +1,9 @@
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { WorkPlan, PlanStatus, LinkResource } from '../types';
 import { X, Tag, Trash2, Link as LinkIcon, ExternalLink, ChevronDown, ChevronUp, AlignLeft, Check, Clock, AlertCircle, ArrowRight, Calendar, Sparkles, Loader2 } from 'lucide-react';
 import { DateTimePicker } from './DateTimePicker';
-import { differenceInMinutes, addMinutes } from 'date-fns';
+import { differenceInMinutes, addMinutes, isSameDay } from 'date-fns';
 
 interface PlanModalProps {
   plan: WorkPlan | null;
@@ -87,15 +87,45 @@ export const PlanModal: React.FC<PlanModalProps> = ({ plan, isOpen, onClose, onS
   }, []);
 
   useEffect(() => {
-    const start = new Date(editedPlan.startDate).getTime();
-    const end = new Date(editedPlan.endDate).getTime();
+    const start = new Date(editedPlan.startDate);
+    const end = new Date(editedPlan.endDate);
     
-    if (end <= start) {
+    if (end.getTime() <= start.getTime()) {
         setTimeError('结束时间不能早于开始时间');
+    } else if (!isSameDay(start, end)) {
+        setTimeError('暂不支持跨天计划');
     } else {
         setTimeError(null);
     }
   }, [editedPlan.startDate, editedPlan.endDate]);
+
+  // Auto-update status logic for new plans
+  useEffect(() => {
+      // Only apply auto-status logic if it's a "New Plan" (default title)
+      // This prevents overriding manual status changes on existing named plans
+      if (editedPlan.title === '新建日程') {
+          const now = new Date();
+          const start = new Date(editedPlan.startDate);
+          const end = new Date(editedPlan.endDate);
+          
+          let newStatus = PlanStatus.TODO;
+          
+          // Logic: 
+          // 1. End time is past -> DONE
+          // 2. Now is between Start and End -> IN_PROGRESS
+          // 3. Start time is future -> TODO
+          
+          if (end <= now) {
+              newStatus = PlanStatus.DONE;
+          } else if (start <= now && end > now) {
+              newStatus = PlanStatus.IN_PROGRESS;
+          }
+          
+          if (newStatus !== editedPlan.status) {
+              setEditedPlan(prev => ({ ...prev, status: newStatus }));
+          }
+      }
+  }, [editedPlan.startDate, editedPlan.endDate, editedPlan.title]);
 
   const allTags = Array.from(new Set([...DEFAULT_TAGS, ...customTags]));
 
@@ -122,6 +152,21 @@ export const PlanModal: React.FC<PlanModalProps> = ({ plan, isOpen, onClose, onS
   const handleEndTimeChange = (newEndIso: string) => {
       handleChange('endDate', newEndIso);
   };
+
+  const durationLabel = useMemo(() => {
+      const start = new Date(editedPlan.startDate);
+      const end = new Date(editedPlan.endDate);
+      const diff = differenceInMinutes(end, start);
+      
+      if (diff <= 0) return null;
+      
+      const h = Math.floor(diff / 60);
+      const m = diff % 60;
+      
+      if (h > 0 && m > 0) return `${h}小时${m}分钟`;
+      if (h > 0) return `${h}小时`;
+      return `${m}分钟`;
+  }, [editedPlan.startDate, editedPlan.endDate]);
 
   const handleAddTag = (tag: string) => {
       const cleanTag = tag.trim();
@@ -323,12 +368,23 @@ export const PlanModal: React.FC<PlanModalProps> = ({ plan, isOpen, onClose, onS
                         </div>
                         <ArrowRight size={16} className="text-slate-300 flex-shrink-0 mt-4 hidden sm:block" />
                         <div className="flex-1 min-w-[200px]">
+                            {/* Manual Label Row with Duration */}
+                            <div className="flex justify-between items-center mb-2">
+                                <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">
+                                    结束时间
+                                </label>
+                                {durationLabel && (
+                                    <span className="text-[10px] text-slate-500 font-medium bg-slate-100 px-1.5 py-0.5 rounded whitespace-nowrap animate-in fade-in">
+                                        {durationLabel}
+                                    </span>
+                                )}
+                            </div>
                             <DateTimePicker 
                                 value={editedPlan.endDate} 
                                 onChange={handleEndTimeChange}
                                 minDate={editedPlan.startDate}
                                 isError={!!timeError}
-                                label="结束时间"
+                                // label="结束时间" // Omitted to use custom label above
                             />
                         </div>
                     </div>

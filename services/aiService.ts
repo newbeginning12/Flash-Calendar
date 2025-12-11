@@ -1,5 +1,3 @@
-
-
 import { GoogleGenAI, Type } from "@google/genai";
 import { WorkPlan, PlanStatus, AISettings, AIProvider } from "../types";
 import { startOfWeek, endOfWeek, addWeeks, format } from "date-fns";
@@ -17,6 +15,21 @@ const getRandomColor = () => COLORS[Math.floor(Math.random() * COLORS.length)];
 const formatLocalTime = (date: Date) => {
   const pad = (n: number) => n.toString().padStart(2, '0');
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+};
+
+// Helper: Determine Plan Status based on time
+const determineStatus = (startDateStr: string, endDateStr: string): PlanStatus => {
+  const now = new Date();
+  const start = new Date(startDateStr);
+  const end = new Date(endDateStr);
+
+  if (end <= now) {
+    return PlanStatus.DONE;
+  }
+  if (start <= now && end > now) {
+    return PlanStatus.IN_PROGRESS;
+  }
+  return PlanStatus.TODO;
 };
 
 // Helper: Extract JSON from markdown code blocks or raw text
@@ -80,8 +93,8 @@ export interface SmartSuggestion {
   planData: {
     title: string;
     description?: string;
-    startDate: string;
-    endDate: string;
+    startDate: string; // ISO
+    endDate: string;   // ISO
     tags?: string[];
   }
 }
@@ -341,7 +354,7 @@ const handleIntentRequest = async (
         description: rawPlan.description || "",
         startDate: startISO!,
         endDate: endISO!,
-        status: PlanStatus.TODO,
+        status: determineStatus(startISO!, endISO!),
         tags: (rawPlan.tags || []).slice(0, 3),
         color: getRandomColor(),
         links: []

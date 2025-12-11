@@ -1,5 +1,3 @@
-
-
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { WeeklyCalendar } from './components/WeeklyCalendar';
 import { SmartInput } from './components/SmartInput';
@@ -23,6 +21,21 @@ const generateMockPlans = (): WorkPlan[] => {
 
 const COLORS = ['blue', 'indigo', 'purple', 'rose', 'orange', 'emerald'];
 const getRandomColor = () => COLORS[Math.floor(Math.random() * COLORS.length)];
+
+// Helper: Determine Plan Status based on time for manual creation
+const determineDefaultStatus = (startStr: string, endStr: string): PlanStatus => {
+  const now = new Date();
+  const start = new Date(startStr);
+  const end = new Date(endStr);
+
+  if (end <= now) {
+    return PlanStatus.DONE;
+  }
+  if (start <= now && end > now) {
+    return PlanStatus.IN_PROGRESS;
+  }
+  return PlanStatus.TODO;
+};
 
 // --- Simple Markdown Renderer ---
 const parseInline = (text: string) => {
@@ -500,7 +513,7 @@ function App() {
       startDate: suggestion.planData.startDate,
       endDate: suggestion.planData.endDate,
       tags: suggestion.planData.tags || [],
-      status: PlanStatus.TODO,
+      status: determineDefaultStatus(suggestion.planData.startDate, suggestion.planData.endDate),
       color: getRandomColor(),
       links: []
     };
@@ -514,12 +527,15 @@ function App() {
   };
 
   const handleSlotClick = (date: Date) => {
+    const startDate = date.toISOString();
+    const endDate = addHours(date, 1).toISOString();
+    
     const newPlan: WorkPlan = {
       id: crypto.randomUUID(),
       title: '新建日程',
-      startDate: date.toISOString(),
-      endDate: addHours(date, 1).toISOString(),
-      status: PlanStatus.TODO,
+      startDate: startDate,
+      endDate: endDate,
+      status: determineDefaultStatus(startDate, endDate),
       tags: [],
       color: 'blue',
       links: []
@@ -529,12 +545,15 @@ function App() {
   };
 
   const handleDragCreate = (startDate: Date, durationMinutes: number) => {
+     const startStr = startDate.toISOString();
+     const endStr = addMinutes(startDate, durationMinutes).toISOString();
+
      const newPlan: WorkPlan = {
         id: crypto.randomUUID(),
         title: '新建日程',
-        startDate: startDate.toISOString(),
-        endDate: addMinutes(startDate, durationMinutes).toISOString(),
-        status: PlanStatus.TODO,
+        startDate: startStr,
+        endDate: endStr,
+        status: determineDefaultStatus(startStr, endStr),
         tags: [],
         color: getRandomColor(),
         links: []
