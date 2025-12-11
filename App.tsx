@@ -149,8 +149,9 @@ const parseWeeklyReport = (text: string): ReportSection[] | null => {
 
   sections.forEach((section, index) => {
       // Create a regex that finds the header line.
-      // e.g. "### 1. 本周完成工作" or "## 本周完成工作" or "1. 本周完成工作"
-      const headerRegex = new RegExp(`(?:^|\\n)(?:#{1,6}|\\d+[.、])?\\s*${section.key}.*`, 'i');
+      // Robust Regex: Matches optional markdown (###), optional numbering (1.), and then the title
+      // Example match: "### 1. 本周完成工作" OR "1. 本周完成工作" OR "### 本周完成工作"
+      const headerRegex = new RegExp(`(?:^|\\n)(?:#{1,6}\\s*)?(?:\\d+[.、]\\s*)?${section.key}.*`, 'i');
       const match = text.match(headerRegex);
       
       let content = '';
@@ -164,7 +165,7 @@ const parseWeeklyReport = (text: string): ReportSection[] | null => {
           
           for (let j = index + 1; j < sections.length; j++) {
                const nextKey = sections[j].key;
-               const nextRegex = new RegExp(`(?:^|\\n)(?:#{1,6}|\\d+[.、])?\\s*${nextKey}.*`, 'i');
+               const nextRegex = new RegExp(`(?:^|\\n)(?:#{1,6}\\s*)?(?:\\d+[.、]\\s*)?${nextKey}.*`, 'i');
                const nextMatch = rest.match(nextRegex);
                if (nextMatch) {
                    if (nextMatch.index! < nearestNextIndex) {

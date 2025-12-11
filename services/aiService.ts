@@ -109,8 +109,11 @@ const callOpenAICompatible = async (
     return null;
   }
 
+  // Remove trailing slashes from baseUrl to prevent double slashes (e.g. .com//chat)
+  const cleanBaseUrl = settings.baseUrl.replace(/\/+$/, '');
+
   try {
-    const response = await fetch(`${settings.baseUrl}/chat/completions`, {
+    const response = await fetch(`${cleanBaseUrl}/chat/completions`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
