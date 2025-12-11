@@ -1,4 +1,5 @@
 
+
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { WeeklyCalendar } from './components/WeeklyCalendar';
 import { SmartInput } from './components/SmartInput';
@@ -134,9 +135,6 @@ interface ReportSection {
 }
 
 const parseWeeklyReport = (text: string): ReportSection[] | null => {
-  // Regex to detect if this looks like our structured weekly report
-  // Checks for "### 1." or "## 1." or "### 1、" followed by keywords
-  // A looser check to enable parsing even if AI hallucinates slight format changes
   if (!/(?:###|##)\s*1[.\、]/.test(text) && !/本周完成工作/.test(text)) return null;
 
   const sections = [
@@ -152,11 +150,7 @@ const parseWeeklyReport = (text: string): ReportSection[] | null => {
     const currentSection = sections[i];
     const nextSection = sections[i + 1];
 
-    // Construct regex to find content between current title and next title (or end of string)
-    // Matches: (### or ##) (number) (. or 、) (optional whitespace) (Title)
     const startPattern = `(?:###|##)\\s*${currentSection.id}[.\\、]?\\s*${currentSection.title}`;
-    
-    // Look ahead for the next section number, e.g. "### 2." or "## 2、"
     const nextId = nextSection ? nextSection.id : null;
     const stopPattern = nextId ? `(?:###|##)\\s*${nextId}[.\\、]` : '$';
 
@@ -165,8 +159,6 @@ const parseWeeklyReport = (text: string): ReportSection[] | null => {
 
     let content = match ? match[1].trim() : '';
     
-    // Fallback: If regex failed but we are confident the section should exist (because text contains the title)
-    // We try to find the title index manually. 
     if (!content && text.includes(currentSection.title)) {
        content = '（内容解析可能有误，请查看原文）';
     } else if (!content) {
@@ -179,7 +171,6 @@ const parseWeeklyReport = (text: string): ReportSection[] | null => {
     });
   }
   
-  // If we found nothing useful, fallback to null to render full markdown
   if (results.every(r => r.content === '（暂无内容）' || r.content === '（内容解析可能有误，请查看原文）')) {
       return null;
   }
@@ -197,7 +188,6 @@ function App() {
         const saved = localStorage.getItem('zhihui_ai_settings');
         if (saved) {
             const parsed = JSON.parse(saved);
-            // Ensure provider exists (migration support)
             return { provider: AIProvider.GOOGLE, model: DEFAULT_MODEL, ...parsed };
         }
         return { provider: AIProvider.GOOGLE, model: DEFAULT_MODEL };
@@ -223,7 +213,6 @@ function App() {
   const [isSearchFocused, setIsSearchFocused] = useState(false);
   
   const [suggestions, setSuggestions] = useState<SmartSuggestion[]>([]);
-  
   const [analysisResult, setAnalysisResult] = useState<string | null>(null);
 
   const [sidebarWidth, setSidebarWidth] = useState(320);
@@ -233,28 +222,23 @@ function App() {
   // Notification State
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [isNotificationOpen, setIsNotificationOpen] = useState(false);
-  const overdueAckRef = useRef<Record<string, string>>({}); // Tracks last acknowledged due date for plans
+  const overdueAckRef = useRef<Record<string, string>>({});
 
   // Abort Controller Ref
   const abortControllerRef = useRef<AbortController | null>(null);
 
   // --- Persistence Logic ---
-
-  // 1. Load Data on Mount (IndexedDB & LocalStorage for Notifications)
   useEffect(() => {
     const initData = async () => {
         try {
             await storageService.init();
             const savedPlans = await storageService.getAllPlans();
-            
-            // If DB is empty but we have mock data logic or first run logic:
             if (savedPlans.length === 0) {
                setPlans([]);
             } else {
                setPlans(savedPlans);
             }
 
-            // Load Notifications
             const savedNotes = localStorage.getItem('zhihui_notifications');
             if (savedNotes) setNotifications(JSON.parse(savedNotes));
 
@@ -271,7 +255,6 @@ function App() {
     initData();
   }, []);
 
-  // 2. Save Data on Change (Debounced or Direct)
   useEffect(() => {
     if (isDataLoaded) {
       storageService.savePlans(plans).catch(err => {
@@ -280,7 +263,6 @@ function App() {
     }
   }, [plans, isDataLoaded]);
 
-  // 3. Save Settings to LocalStorage (Keep sync)
   useEffect(() => {
       try {
           localStorage.setItem('zhihui_ai_settings', JSON.stringify(aiSettings));
@@ -289,7 +271,6 @@ function App() {
       }
   }, [aiSettings]);
 
-  // 4. Save Notifications to LocalStorage
   useEffect(() => {
       if (isDataLoaded) {
           localStorage.setItem('zhihui_notifications', JSON.stringify(notifications));
@@ -299,7 +280,6 @@ function App() {
   // --- Overdue Checker ---
   useEffect(() => {
       if (!isDataLoaded) return;
-
       const checkOverdue = () => {
           const now = new Date();
           const newNotes: AppNotification[] = [];
@@ -310,7 +290,6 @@ function App() {
                   const end = new Date(p.endDate);
                   if (end < now) {
                       const lastAckDate = overdueAckRef.current[p.id];
-                      // If the due date has changed since last notification OR we haven't notified yet
                       if (lastAckDate !== p.endDate) {
                           const newNote: AppNotification = {
                               id: crypto.randomUUID(),
@@ -331,7 +310,6 @@ function App() {
 
           if (newNotes.length > 0) {
               setNotifications(prev => [...newNotes, ...prev]);
-              // Trigger Toast for the most recent one
               setNotificationToast(newNotes[0]);
           }
           if (ackChanged) {
@@ -339,14 +317,12 @@ function App() {
           }
       };
 
-      const timer = setInterval(checkOverdue, 60000); // Check every minute
-      checkOverdue(); // Check immediately on load/change
-
+      const timer = setInterval(checkOverdue, 60000); 
+      checkOverdue(); 
       return () => clearInterval(timer);
   }, [plans, isDataLoaded]);
 
   // --- Suggestions ---
-
   useEffect(() => {
     const fetchSuggestions = async () => {
       if (!isDataLoaded) return;
@@ -356,7 +332,7 @@ function App() {
       }, 500);
     };
     fetchSuggestions();
-  }, [isDataLoaded]); // Depend on data loaded
+  }, [isDataLoaded]);
 
   useEffect(() => {
     if (errorMessage) {
@@ -374,20 +350,22 @@ function App() {
 
   useEffect(() => {
     if (notificationToast) {
-        // Auto dismiss toast after 5 seconds
         const timer = setTimeout(() => setNotificationToast(null), 6000);
         return () => clearTimeout(timer);
     }
   }, [notificationToast]);
 
-  useEffect(() => {
-    const handleResize = () => {
+  // --- Event Handlers ---
+
+  const handleResize = () => {
       if (window.innerWidth < 1024) {
         setIsSidebarOpen(false);
       } else {
         setIsSidebarOpen(true);
       }
-    };
+  };
+
+  useEffect(() => {
     handleResize();
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
@@ -410,7 +388,6 @@ function App() {
         const newWidth = mouseMoveEvent.clientX;
         const minWidth = 240;
         const maxWidth = window.innerWidth * 0.4;
-        
         if (newWidth >= minWidth && newWidth <= maxWidth) {
             setSidebarWidth(newWidth);
         }
@@ -426,7 +403,6 @@ function App() {
     };
   }, [resize, stopResizing]);
 
-  // --- Notification Handlers ---
   const unreadCount = notifications.filter(n => !n.read).length;
 
   const handleMarkRead = (id: string) => {
@@ -444,7 +420,7 @@ function App() {
   const handleNotificationClick = (notification: AppNotification) => {
       handleMarkRead(notification.id);
       setIsNotificationOpen(false);
-      setNotificationToast(null); // Dismiss toast if clicked
+      setNotificationToast(null);
       if (notification.planId) {
           const plan = plans.find(p => p.id === notification.planId);
           if (plan) {
@@ -460,7 +436,6 @@ function App() {
     if (abortControllerRef.current) {
         abortControllerRef.current.abort();
     }
-    
     const controller = new AbortController();
     abortControllerRef.current = controller;
 
@@ -471,7 +446,6 @@ function App() {
 
     try {
         const result = await processUserIntent(input, plans, aiSettings, controller.signal);
-        
         if (controller.signal.aborted) return;
 
         if (result) {
@@ -511,7 +485,6 @@ function App() {
 
   const handleSuggestionClick = async (suggestion: SmartSuggestion) => {
     setSuggestions([]);
-    
     const newPlan: WorkPlan = {
       id: crypto.randomUUID(),
       title: suggestion.planData.title,
@@ -523,7 +496,6 @@ function App() {
       color: getRandomColor(),
       links: []
     };
-
     setSelectedPlan(newPlan);
     setIsModalOpen(true);
   };
@@ -603,8 +575,6 @@ function App() {
     }, 100);
   };
 
-  // --- Export / Import Handlers ---
-  
   const handleExportData = () => {
     storageService.exportData(plans, aiSettings);
     setSuccessMessage("数据已导出");

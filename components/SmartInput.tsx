@@ -275,7 +275,7 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onSubmit, onStop, onSugg
             relative flex items-center shadow-[0_12px_40px_-8px_rgba(0,0,0,0.12)] backdrop-blur-3xl transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] pointer-events-auto
             ${isExpanded 
                 ? 'w-[90%] max-w-[600px] h-[56px] rounded-[28px] bg-white/95 border border-white/60 cursor-text ring-1 ring-black/5' 
-                : 'w-[136px] h-[46px] rounded-full bg-white/95 border border-white/60 hover:scale-[1.02] cursor-pointer hover:shadow-[0_16px_50px_-10px_rgba(0,0,0,0.15)] ring-1 ring-black/5'
+                : 'w-[160px] h-[46px] rounded-full bg-white/95 border border-white/60 hover:scale-[1.02] cursor-pointer hover:shadow-[0_16px_50px_-10px_rgba(0,0,0,0.15)] ring-1 ring-black/5'
             }
         `}
       >
@@ -292,13 +292,30 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onSubmit, onStop, onSugg
         {/* Collapsed Label */}
         <div 
             className={`absolute inset-0 flex items-center justify-center pointer-events-none transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)]
-                ${!isExpanded ? 'opacity-100 translate-x-3 scale-100' : 'opacity-0 translate-x-[-20px] scale-90'}
+                ${!isExpanded ? 'opacity-100 scale-100' : 'opacity-0 translate-x-[-20px] scale-90'}
             `}
         >
              <span className="text-[14px] font-semibold text-slate-600 tracking-tight">
                 闪历 AI
              </span>
         </div>
+
+        {/* Quick Record Button (Collapsed State) */}
+        <button
+            onClick={(e) => {
+                e.stopPropagation();
+                setIsExpanded(true);
+                startListening();
+            }}
+            className={`
+                absolute right-1.5 top-1/2 -translate-y-1/2 w-8 h-8 flex items-center justify-center rounded-full 
+                text-slate-400 hover:text-blue-600 hover:bg-blue-50 transition-all duration-300 z-30
+                ${!isExpanded ? 'opacity-100 scale-100 pointer-events-auto' : 'opacity-0 scale-50 pointer-events-none'}
+            `}
+            title="语音输入"
+        >
+            <Mic size={18} />
+        </button>
 
         {/* Expanded Content */}
         <div 
