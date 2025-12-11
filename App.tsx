@@ -135,45 +135,52 @@ interface ReportSection {
 }
 
 const parseWeeklyReport = (text: string): ReportSection[] | null => {
-  if (!/(?:###|##)\s*1[.\、]/.test(text) && !/本周完成工作/.test(text)) return null;
+  // Relaxed detection: if it mentions at least one of the headers
+  if (!text.includes('本周完成工作') && !text.includes('本周工作总结')) return null;
 
   const sections = [
-    { id: '1', title: '本周完成工作' },
-    { id: '2', title: '本周工作总结' },
-    { id: '3', title: '下周工作计划' },
-    { id: '4', title: '需协调与帮助' }
+    { key: '本周完成工作', title: '本周完成工作' },
+    { key: '本周工作总结', title: '本周工作总结' },
+    { key: '下周工作计划', title: '下周工作计划' },
+    { key: '需协调与帮助', title: '需协调与帮助' }
   ];
 
   const results: ReportSection[] = [];
 
-  for (let i = 0; i < sections.length; i++) {
-    const currentSection = sections[i];
-    const nextSection = sections[i + 1];
-
-    const startPattern = `(?:###|##)\\s*${currentSection.id}[.\\、]?\\s*${currentSection.title}`;
-    const nextId = nextSection ? nextSection.id : null;
-    const stopPattern = nextId ? `(?:###|##)\\s*${nextId}[.\\、]` : '$';
-
-    const regex = new RegExp(`${startPattern}([\\s\\S]*?)(?=${stopPattern})`, 'i');
-    const match = text.match(regex);
-
-    let content = match ? match[1].trim() : '';
-    
-    if (!content && text.includes(currentSection.title)) {
-       content = '（内容解析可能有误，请查看原文）';
-    } else if (!content) {
-       content = '（暂无内容）';
-    }
-
-    results.push({
-      title: `${currentSection.id}. ${currentSection.title}`,
-      content: content
-    });
-  }
-  
-  if (results.every(r => r.content === '（暂无内容）' || r.content === '（内容解析可能有误，请查看原文）')) {
-      return null;
-  }
+  sections.forEach((section, index) => {
+      // Create a regex that finds the header line.
+      // e.g. "### 1. 本周完成工作" or "## 本周完成工作" or "1. 本周完成工作"
+      const headerRegex = new RegExp(`(?:^|\\n)(?:#{1,6}|\\d+[.、])?\\s*${section.key}.*`, 'i');
+      const match = text.match(headerRegex);
+      
+      let content = '';
+      if (match) {
+          const startIndex = match.index! + match[0].length;
+          let rest = text.slice(startIndex);
+          
+          // Find the start of the next section to slice
+          // We look for any of the other section headers that appear AFTER this one
+          let nearestNextIndex = rest.length;
+          
+          for (let j = index + 1; j < sections.length; j++) {
+               const nextKey = sections[j].key;
+               const nextRegex = new RegExp(`(?:^|\\n)(?:#{1,6}|\\d+[.、])?\\s*${nextKey}.*`, 'i');
+               const nextMatch = rest.match(nextRegex);
+               if (nextMatch) {
+                   if (nextMatch.index! < nearestNextIndex) {
+                       nearestNextIndex = nextMatch.index!;
+                   }
+               }
+          }
+          
+          content = rest.slice(0, nearestNextIndex).trim();
+      }
+      
+      results.push({
+          title: section.title,
+          content: content
+      });
+  });
 
   return results;
 };
@@ -922,7 +929,7 @@ function App() {
                 onClick={() => setAnalysisResult(null)}
               />
               <div className="relative w-full max-w-lg bg-white/95 backdrop-blur-2xl rounded-3xl shadow-[0_20px_60px_-15px_rgba(0,0,0,0.3)] border border-white/60 p-6 animate-in fade-in zoom-in duration-200 flex flex-col max-h-[85vh]">
-                 <div className="flex items-center gap-3 mb-4 flex-none">
+                 <div className="flex items-center gap-3 mb-6 flex-none">
                     <div className="w-10 h-10 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white shadow-inner">
                         <Sparkles size={20} />
                     </div>
@@ -934,20 +941,26 @@ function App() {
                  
                  <div className="flex-1 overflow-y-auto custom-scrollbar pr-2 -mr-2">
                      {reportSections ? (
-                        <div className="space-y-4 pt-2">
+                        <div className="space-y-6 pt-2">
                            <div className="flex items-center gap-2 mb-2 pb-2 border-b border-slate-100">
                              <span className="text-2xl">📅</span>
                              <h2 className="text-lg font-bold text-slate-800">本周工作周报</h2>
                            </div>
                            
                            {reportSections.map((section, idx) => (
-                             <div key={idx} className="bg-slate-50/80 p-4 rounded-2xl border border-slate-100/80 relative hover:border-blue-200/50 hover:shadow-sm transition-all group">
-                                <div className="flex justify-between items-start mb-3">
+                             <div key={idx} className="group">
+                                <div className="flex justify-between items-center mb-2">
                                   <h3 className="font-bold text-slate-800 text-base">{section.title}</h3>
-                                  <CopyButton text={section.content} />
+                                  <div className="opacity-0 group-hover:opacity-100 transition-opacity">
+                                      <CopyButton text={section.content || section.title} />
+                                  </div>
                                 </div>
                                 <div className="text-slate-600 text-sm leading-relaxed">
-                                   <MarkdownRenderer content={section.content} />
+                                   {section.content ? (
+                                       <MarkdownRenderer content={section.content} />
+                                   ) : (
+                                       <div className="text-slate-300 text-sm italic py-2">请输入</div>
+                                   )}
                                 </div>
                              </div>
                            ))}

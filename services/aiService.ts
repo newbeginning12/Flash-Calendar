@@ -198,6 +198,18 @@ const handleIntentRequest = async (
     **任务目标**: 
     分析用户输入，提取核心任务信息，并生成 JSON 格式的日程安排。
 
+    **功能规则**:
+    1. **创建日程 (CREATE)**: 用户想安排具体事项时。
+    2. **分析/周报 (ANALYZE)**: 用户询问安排、生成周报或总结时。
+
+    **周报格式强制要求**:
+    当用户请求生成"周报"时，\`analysisContent\` **必须** 严格包含以下四个 Markdown 标题(精确匹配文字):
+    ### 1. 本周完成工作
+    ### 2. 本周工作总结
+    ### 3. 下周工作计划
+    ### 4. 需协调与帮助
+    (内容项请使用无序列表)
+
     **智能字段填充**:
        - **Title**: 简练的动宾结构（如“修复登录页 Bug”）。
        - **Description**: 如果有更详细的上下文，整理成一段通顺的文字放入这里。
@@ -261,6 +273,13 @@ const handleIntentRequest = async (
       rawResponseText = response.text;
     } catch (e: any) {
       if (signal?.aborted || e.name === 'AbortError') throw e;
+      
+      // Better error logging
+      if (e.status === 429 || e.status === 'RESOURCE_EXHAUSTED' || e?.error?.code === 429) {
+         console.warn("Google AI Quota Exceeded (429).");
+         return null; 
+      }
+      
       console.error("Google AI Error:", e);
       return null;
     }
