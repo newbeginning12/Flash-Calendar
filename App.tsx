@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { 
   User, Plus, Bell, ChevronLeft, ChevronRight, Calendar as CalendarIcon, 
-  Settings 
+  Settings, PanelLeft
 } from 'lucide-react';
 import { 
   WorkPlan, AISettings, AIProvider, AppNotification, PlanStatus 
@@ -15,13 +15,14 @@ import { DatePicker } from './components/DatePicker';
 import { AppIcon } from './components/AppIcon';
 import { FlashCommand } from './components/FlashCommand';
 import { NotificationCenter } from './components/NotificationCenter';
-import { DragOverlay } from './components/DragOverlay';
 import { 
-  processUserIntent, generateSmartSuggestions, DEFAULT_MODEL, SmartSuggestion, analyzeScheduleImage
+  processUserIntent, generateSmartSuggestions, DEFAULT_MODEL, SmartSuggestion
 } from './services/aiService';
 import { storageService, BackupData } from './services/storageService';
 import { format, addDays, subDays } from 'date-fns';
-import { compressImage } from './utils/imageHelpers';
+
+const MIN_SIDEBAR_WIDTH = 240;
+const DEFAULT_SIDEBAR_WIDTH = 280;
 
 const App: React.FC = () => {
   // State
@@ -46,10 +47,11 @@ const App: React.FC = () => {
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [isNotificationOpen, setIsNotificationOpen] = useState(false);
 
-  // Drag & Drop
-  const [isDragOver, setIsDragOver] = useState(false);
-  const [isProcessingDrop, setIsProcessingDrop] = useState(false);
-  const [isValidDropType, setIsValidDropType] = useState(false);
+  // Sidebar State
+  const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_SIDEBAR_WIDTH);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const [isResizing, setIsResizing] = useState(false);
+  const sidebarRef = useRef<HTMLDivElement>(null);
 
   // Load Initial Data
   useEffect(() => {
@@ -64,6 +66,13 @@ const App: React.FC = () => {
         if (savedSettings) {
             setSettings(JSON.parse(savedSettings));
         }
+
+        // Load sidebar preference
+        const savedWidth = localStorage.getItem('zhihui_sidebar_width');
+        if (savedWidth) setSidebarWidth(parseInt(savedWidth));
+        const savedState = localStorage.getItem('zhihui_sidebar_open');
+        if (savedState) setIsSidebarOpen(savedState === 'true');
+
       } catch (e) {
         console.error("Initialization failed", e);
       }
@@ -176,64 +185,6 @@ const App: React.FC = () => {
      }
   }, [plans.length]);
 
-  // ... Drag Drop Handlers ...
-  const handleDragEnter = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDragOver(true);
-    if (e.dataTransfer.items && e.dataTransfer.items.length > 0) {
-        // Explicitly cast to DataTransferItem to avoid 'unknown' type error in some TS environments
-        const item = e.dataTransfer.items[0] as DataTransferItem;
-        setIsValidDropType(item.kind === 'file' && item.type.startsWith('image/'));
-    }
-  };
-
-  const handleDragLeave = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    // Only set false if leaving the window or overlay
-    if (e.currentTarget.contains(e.relatedTarget as Node)) return;
-    setIsDragOver(false);
-  };
-  
-  const handleDrop = async (e: React.DragEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-      setIsDragOver(false);
-      
-      const files = Array.from(e.dataTransfer.files);
-      // Cast the found file to File | undefined to handle potentially inferred unknown type
-      const imageFile = files.find((f: any) => f.type.startsWith('image/')) as File | undefined;
-      
-      if (imageFile) {
-          setIsProcessingDrop(true);
-          try {
-              const base64 = await compressImage(imageFile);
-              const result = await analyzeScheduleImage(base64, settings);
-               if (result && result.type === 'CREATE_PLAN' && result.data) {
-                  const basePlan: WorkPlan = {
-                      id: crypto.randomUUID(),
-                      title: '识别日程',
-                      startDate: new Date().toISOString(),
-                      endDate: new Date(Date.now() + 3600000).toISOString(),
-                      status: PlanStatus.TODO,
-                      tags: [],
-                      color: 'purple',
-                      links: [],
-                      ...result.data
-                  };
-                  setEditingPlan(basePlan as WorkPlan);
-                  setIsPlanModalOpen(true);
-              }
-          } catch (err) {
-              console.error("Image analysis failed", err);
-              alert("无法识别图片内容");
-          } finally {
-              setIsProcessingDrop(false);
-          }
-      }
-  };
-
   // ... Settings Handlers ...
   const handleSettingsSave = (newSettings: AISettings) => {
       setSettings(newSettings);
@@ -256,42 +207,95 @@ const App: React.FC = () => {
       setIsSettingsOpen(false);
   };
 
+  // ... Sidebar Resize Handlers ...
+  const startResizing = useCallback(() => {
+    setIsResizing(true);
+  }, []);
+
+  const stopResizing = useCallback(() => {
+    setIsResizing(false);
+    localStorage.setItem('zhihui_sidebar_width', sidebarWidth.toString());
+  }, [sidebarWidth]);
+
+  const resize = useCallback((mouseMoveEvent: MouseEvent) => {
+    if (isResizing) {
+      const maxWidth = window.innerWidth * 0.4; // Max 40% of screen
+      const newWidth = Math.min(Math.max(mouseMoveEvent.clientX, MIN_SIDEBAR_WIDTH), maxWidth);
+      setSidebarWidth(newWidth);
+    }
+  }, [isResizing]);
+
+  useEffect(() => {
+    window.addEventListener("mousemove", resize);
+    window.addEventListener("mouseup", stopResizing);
+    return () => {
+      window.removeEventListener("mousemove", resize);
+      window.removeEventListener("mouseup", stopResizing);
+    };
+  }, [resize, stopResizing]);
+
+  const toggleSidebar = () => {
+      const newState = !isSidebarOpen;
+      setIsSidebarOpen(newState);
+      localStorage.setItem('zhihui_sidebar_open', newState.toString());
+  };
+
   return (
-    <div 
-        className="flex h-screen w-full bg-slate-50 text-slate-900 font-sans overflow-hidden relative"
-        onDragEnter={handleDragEnter}
-        onDragOver={(e) => e.preventDefault()}
-        onDragLeave={handleDragLeave}
-        onDrop={handleDrop}
-    >
-       <DragOverlay 
-          isDragging={isDragOver} 
-          isValidType={isValidDropType} 
-          isProcessing={isProcessingDrop} 
-          onCancel={() => setIsProcessingDrop(false)}
-       />
+    <div className={`flex h-screen w-full bg-slate-50 text-slate-900 font-sans overflow-hidden relative ${isResizing ? 'cursor-col-resize select-none' : ''}`}>
        
-       {/* Sidebar */}
-       <div className="hidden lg:block w-72 h-full flex-shrink-0">
-          <TaskSidebar 
-             currentDate={currentDate}
-             plans={plans}
-             onPlanClick={handlePlanClick}
-             onPlanUpdate={handleUpdatePlan}
-             onDeletePlan={handleDeletePlan}
-             onCreateNew={() => handleSlotClick(new Date())}
-          />
+       {/* Sidebar Container */}
+       <div 
+          ref={sidebarRef}
+          className={`hidden lg:block h-full flex-shrink-0 bg-white shadow-[1px_0_20px_rgba(0,0,0,0.02)] transition-[width] ease-in-out will-change-[width] overflow-hidden ${isResizing ? 'duration-0' : 'duration-300'}`}
+          style={{ width: isSidebarOpen ? sidebarWidth : 0 }}
+       >
+          <div style={{ width: sidebarWidth }} className="h-full">
+            <TaskSidebar 
+                currentDate={currentDate}
+                plans={plans}
+                onPlanClick={handlePlanClick}
+                onPlanUpdate={handleUpdatePlan}
+                onDeletePlan={handleDeletePlan}
+                onCreateNew={() => handleSlotClick(new Date())}
+            />
+          </div>
        </div>
 
+       {/* Drag Handle */}
+       {isSidebarOpen && (
+          <div
+            className="hidden lg:block w-1 hover:w-1.5 h-full cursor-col-resize hover:bg-indigo-500/30 active:bg-indigo-500 active:w-1.5 transition-all z-40 flex-shrink-0 -ml-0.5"
+            onMouseDown={startResizing}
+          />
+       )}
+
        {/* Main Content */}
-       <div className="flex-1 flex flex-col min-w-0 h-full relative">
+       <div className="flex-1 flex flex-col min-w-0 h-full relative bg-slate-50">
            {/* Header */}
-           <header className="h-16 flex items-center justify-between px-6 bg-white border-b border-slate-200/60 flex-shrink-0 z-30">
+           <header className="h-16 flex items-center justify-between px-4 lg:px-6 bg-white border-b border-slate-200/60 flex-shrink-0 z-30">
                 <div className="flex items-center gap-4">
-                    <div className="lg:hidden">
-                        <AppIcon size={32} />
+                    
+                    {/* Sidebar Toggle & Branding */}
+                    <div className="flex items-center gap-3 mr-2">
+                        <button 
+                            onClick={toggleSidebar}
+                            className={`p-2 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors hidden lg:block ${!isSidebarOpen ? 'bg-slate-100 text-slate-700' : ''}`}
+                            title={isSidebarOpen ? "收起侧边栏" : "展开侧边栏"}
+                        >
+                            <PanelLeft size={20} />
+                        </button>
+                        
+                        <div className="flex items-center gap-2.5 select-none pr-4 border-r border-slate-100">
+                             <AppIcon size={28} />
+                             <span className="font-bold text-lg tracking-tight text-slate-800 hidden sm:block">闪历</span>
+                        </div>
                     </div>
                     
+                    {/* Mobile Menu Trigger (Legacy placeholder if needed) */}
+                    <div className="lg:hidden">
+                        {/* Mobile users just see icon + title above, sidebar logic for mobile is typically overlay, not handled in this resize scope */}
+                    </div>
+
                     {/* Date Nav */}
                     <div className="flex items-center gap-2 bg-slate-100/50 p-1 rounded-xl relative">
                         <button onClick={() => setCurrentDate(subDays(currentDate, 7))} className="p-1.5 hover:bg-white rounded-lg transition-all text-slate-500 hover:text-slate-800 hover:shadow-sm">
