@@ -54,3 +54,15 @@ export interface AppNotification {
   read: boolean;
   planId?: string;
 }
+
+export interface WeeklyReportData {
+  achievements: string[];
+  summary: string;
+  nextWeekPlans: string[];
+  risks: string;
+}
+
+export type AIProcessingResult = 
+  | { type: 'CREATE_PLAN'; data: Partial<WorkPlan> }
+  | { type: 'ANALYSIS'; data: WeeklyReportData }
+  | null;

@@ -1,6 +1,6 @@
 import { GoogleGenAI, Type } from "@google/genai";
-import { WorkPlan, PlanStatus, AISettings, AIProvider } from "../types";
-import { startOfWeek, endOfWeek, addWeeks, format } from "date-fns";
+import { WorkPlan, PlanStatus, AISettings, AIProvider, WeeklyReportData, AIProcessingResult } from "../types";
+import { startOfWeek, endOfWeek, addWeeks, format, isWithinInterval, parseISO } from "date-fns";
 
 // Initialize Google AI with environment variable (Always used for Google Provider)
 const googleAI = new GoogleGenAI({ apiKey: process.env.API_KEY });
@@ -83,11 +83,6 @@ const parseDate = (dateStr: string | undefined): string | null => {
   }
 };
 
-export type AIProcessingResult = 
-  | { type: 'CREATE_PLAN'; data: Partial<WorkPlan> }
-  | { type: 'ANALYSIS'; content: string }
-  | null;
-
 export interface SmartSuggestion {
   label: string;
   planData: {
@@ -169,7 +164,6 @@ export const processUserIntent = async (
   settings: AISettings,
   signal?: AbortSignal
 ): Promise<AIProcessingResult> => {
-  // Pass to common handler
   return handleIntentRequest(userInput, currentPlans, settings, signal);
 };
 
@@ -189,22 +183,40 @@ const handleIntentRequest = async (
   
   const dateFormat = 'yyyy-MM-dd';
   const localTimeContext = format(now, 'yyyy-MM-dd HH:mm:ss');
+  
+  // Explicitly format ranges for the AI
+  const thisWeekRangeStr = `${format(thisWeekStart, dateFormat)} 至 ${format(thisWeekEnd, dateFormat)}`;
+  const nextWeekRangeStr = `${format(nextWeekStart, dateFormat)} 至 ${format(nextWeekEnd, dateFormat)}`;
+
+  // Logic Improvement: Pre-filter plans into strict buckets
+  const thisWeekPlans = currentPlans.filter(p => 
+    isWithinInterval(parseISO(p.startDate), { start: thisWeekStart, end: thisWeekEnd })
+  );
+  
+  const nextWeekPlans = currentPlans.filter(p => 
+    isWithinInterval(parseISO(p.startDate), { start: nextWeekStart, end: nextWeekEnd })
+  );
 
   const dateContext = `
     时间上下文:
     - 当前时间: ${localTimeContext}
-    - 本周范围: ${format(thisWeekStart, dateFormat)} 至 ${format(thisWeekEnd, dateFormat)} (含)
-    - 下周范围: ${format(nextWeekStart, dateFormat)} 至 ${format(nextWeekEnd, dateFormat)} (含)
+    - **本周范围 (This Week)**: ${thisWeekRangeStr} (含)
+    - **下周范围 (Next Week)**: ${nextWeekRangeStr} (含)
   `;
 
-  // Context plans (simplified)
-  const relevantPlans = currentPlans.slice(0, 50); // Optimization
-  const plansContext = relevantPlans.map(p => ({
+  // Context plans (Optimized for tokens)
+  const mapPlan = (p: WorkPlan) => ({
     title: p.title,
-    start: p.startDate,
-    simpleDate: p.startDate.split('T')[0],
-    status: p.status
-  }));
+    date: p.startDate.split('T')[0], // Give AI the date string to be sure
+    status: p.status,
+    desc: p.description?.substring(0, 50)
+  });
+
+  // Strict separation in the payload
+  const plansContextJSON = JSON.stringify({
+    LIST_A_THIS_WEEK: thisWeekPlans.map(mapPlan),
+    LIST_B_NEXT_WEEK: nextWeekPlans.map(mapPlan)
+  });
 
   const systemInstructionText = `
     你是一个专业的工作计划助手 (AI Agent)。
@@ -218,20 +230,17 @@ const handleIntentRequest = async (
     1. **创建日程 (CREATE)**: 用户想安排具体事项时。
     2. **分析/周报 (ANALYZE)**: 用户询问安排、生成周报或总结时。
 
-    **周报格式强制要求**:
-    当用户请求生成"周报"时，\`analysisContent\` **必须** 严格包含以下四个 Markdown 标题(精确匹配文字):
-    ### 1. 本周完成工作
-    ### 2. 本周工作总结
-    ### 3. 下周工作计划
-    ### 4. 需协调与帮助
-    (内容项请使用无序列表)
-
-    **智能字段填充**:
-       - **Title**: 简练的动宾结构（如“修复登录页 Bug”）。
-       - **Description**: 如果有更详细的上下文，整理成一段通顺的文字放入这里。
-    **时间推断**: 
-       - 结合当前时间 (${localTimeContext}) 推断相对时间（如“明天下午”）。
-       - 如果没有具体时间，默认为 **明天上午 10:00** (或逻辑上合理的下一个工作时间点)。**千万不要**因为没有时间就拒绝创建。
+    **周报生成严格规则 (ANALYZE)**:
+    用户请求周报时，你是一个数据格式化员，而非决策者。必须严格遵守以下数据来源规则：
+    
+    1. **本周工作 (Achievements)**:
+       - **只能** 从提供的 "LIST_A_THIS_WEEK" 列表中提取数据。
+       - 即使 "LIST_A_THIS_WEEK" 中的某个任务日期是本周五（属于未来），它依然属于**本周工作计划**，**绝对不能**放到下周。
+    
+    2. **下周计划 (Next Week)**:
+       - **只能** 从提供的 "LIST_B_NEXT_WEEK" 列表中提取数据。
+       - 如果 "LIST_B_NEXT_WEEK" 为空，请输出 "暂无具体安排，建议根据本周进度规划"。
+       - **严禁** 将 "LIST_A_THIS_WEEK" 中的任何任务挪到下周计划中，即使它们还没完成。
 
     **输出格式要求 (Strict JSON)**:
     直接返回 JSON 对象，不要包含 \`\`\`json 标记，**严禁包含任何思考过程或解释性文字**。
@@ -246,7 +255,12 @@ const handleIntentRequest = async (
         "endDate": "YYYY-MM-DDTHH:mm:ss (ISO 8601)",
         "tags": ["标签1", "标签2"]
       },
-      "analysisContent": "仅在 intent 为 ANALYZE 时返回 markdown 文本"
+      "reportData": {
+        "achievements": ["完成事项1 (MM-DD)", "进行中事项2 (MM-DD)"],
+        "summary": "一段简练的本周工作总结 (50-100字)",
+        "nextWeekPlans": ["下周事项1", "下周事项2"],
+        "risks": "一段关于风险或需协调事项的描述，如果没有则写'无'"
+      }
     }
   `;
 
@@ -255,7 +269,7 @@ const handleIntentRequest = async (
   if (settings.provider === AIProvider.GOOGLE) {
     try {
       // Construct parts
-      const parts: any[] = [{ text: `Current Plans: ${JSON.stringify(plansContext)}\nUser Input: "${textInput}"` }];
+      const parts: any[] = [{ text: `Strict Plans Data: ${plansContextJSON}\nUser Input: "${textInput}"` }];
       
       const response = await googleAI.models.generateContent({
         model: settings.model,
@@ -277,7 +291,16 @@ const handleIntentRequest = async (
                 },
                 nullable: true
               },
-              analysisContent: { type: Type.STRING, nullable: true }
+              reportData: {
+                type: Type.OBJECT,
+                properties: {
+                    achievements: { type: Type.ARRAY, items: { type: Type.STRING } },
+                    summary: { type: Type.STRING },
+                    nextWeekPlans: { type: Type.ARRAY, items: { type: Type.STRING } },
+                    risks: { type: Type.STRING }
+                },
+                nullable: true
+              }
             },
             required: ["intent"]
           },
@@ -290,7 +313,6 @@ const handleIntentRequest = async (
     } catch (e: any) {
       if (signal?.aborted || e.name === 'AbortError') throw e;
       
-      // Better error logging
       if (e.status === 429 || e.status === 'RESOURCE_EXHAUSTED' || e?.error?.code === 429) {
          console.warn("Google AI Quota Exceeded (429).");
          return null; 
@@ -303,7 +325,7 @@ const handleIntentRequest = async (
     // OpenAI Compatible (Qwen-VL / DeepSeek) - Text Only now
     const messages: OpenAICompatibleMessage[] = [
       { role: 'system', content: systemInstructionText + " IMPORTANT: Only return the JSON object. No markdown, no thinking." },
-      { role: 'user', content: `Current Plans: ${JSON.stringify(plansContext)}\nUser Input: "${textInput}"` }
+      { role: 'user', content: `Strict Plans Data: ${plansContextJSON}\nUser Input: "${textInput}"` }
     ];
 
     rawResponseText = await callOpenAICompatible(settings, messages, true, signal);
@@ -311,13 +333,12 @@ const handleIntentRequest = async (
 
   // --- Common Processing ---
   if (!rawResponseText) return null;
-  console.log("AI Response Raw:", rawResponseText); // Debug log
   
   const data = extractJSON(rawResponseText);
   if (!data) return null;
 
-  if (data.intent === 'ANALYZE' && data.analysisContent) {
-    return { type: 'ANALYSIS', content: data.analysisContent };
+  if (data.intent === 'ANALYZE' && data.reportData) {
+    return { type: 'ANALYSIS', data: data.reportData };
   }
 
   // Handle CREATE intent (with heavy fallback logic)

@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { 
   User, Plus, Bell, ChevronLeft, ChevronRight, Calendar as CalendarIcon, 
-  Settings, PanelLeft
+  Settings, PanelLeft, Sparkles
 } from 'lucide-react';
 import { 
-  WorkPlan, AISettings, AIProvider, AppNotification, PlanStatus 
+  WorkPlan, AISettings, AIProvider, AppNotification, PlanStatus, WeeklyReportData
 } from './types';
 import { WeeklyCalendar } from './components/WeeklyCalendar';
 import { TaskSidebar } from './components/TaskSidebar';
@@ -15,6 +15,7 @@ import { DatePicker } from './components/DatePicker';
 import { AppIcon } from './components/AppIcon';
 import { FlashCommand } from './components/FlashCommand';
 import { NotificationCenter } from './components/NotificationCenter';
+import { WeeklyReportModal } from './components/WeeklyReportModal';
 import { 
   processUserIntent, generateSmartSuggestions, DEFAULT_MODEL, SmartSuggestion
 } from './services/aiService';
@@ -24,7 +25,7 @@ import { format, addDays, subDays } from 'date-fns';
 const MIN_SIDEBAR_WIDTH = 240;
 const DEFAULT_SIDEBAR_WIDTH = 280;
 
-const App: React.FC = () => {
+export const App: React.FC = () => {
   // State
   const [plans, setPlans] = useState<WorkPlan[]>([]);
   const [currentDate, setCurrentDate] = useState(new Date());
@@ -42,6 +43,10 @@ const App: React.FC = () => {
   const [isDatePickerOpen, setIsDatePickerOpen] = useState(false);
   const [smartSuggestions, setSmartSuggestions] = useState<SmartSuggestion[]>([]);
   const [isProcessingAI, setIsProcessingAI] = useState(false);
+
+  // Weekly Report State
+  const [reportData, setReportData] = useState<WeeklyReportData | null>(null);
+  const [isReportModalOpen, setIsReportModalOpen] = useState(false);
 
   // Notifications
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
@@ -153,8 +158,9 @@ const App: React.FC = () => {
                   };
                   setEditingPlan(basePlan as WorkPlan);
                   setIsPlanModalOpen(true);
-              } else if (result.type === 'ANALYSIS') {
-                  alert(result.content);
+              } else if (result.type === 'ANALYSIS' && result.data) {
+                  setReportData(result.data);
+                  setIsReportModalOpen(true);
               }
           }
       } finally {
@@ -274,182 +280,179 @@ const App: React.FC = () => {
            {/* Header */}
            <header className="h-16 flex items-center justify-between px-4 lg:px-6 bg-white border-b border-slate-200/60 flex-shrink-0 z-30">
                 <div className="flex items-center gap-4">
-                    
-                    {/* Sidebar Toggle & Branding */}
-                    <div className="flex items-center gap-3 mr-2">
-                        <button 
-                            onClick={toggleSidebar}
-                            className={`p-2 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors hidden lg:block ${!isSidebarOpen ? 'bg-slate-100 text-slate-700' : ''}`}
-                            title={isSidebarOpen ? "收起侧边栏" : "展开侧边栏"}
-                        >
-                            <PanelLeft size={20} />
-                        </button>
-                        
-                        <div className="flex items-center gap-2.5 select-none pr-4 border-r border-slate-100">
-                             <AppIcon size={28} />
-                             <span className="font-bold text-lg tracking-tight text-slate-800 hidden sm:block">闪历</span>
-                        </div>
+                    <button 
+                       onClick={toggleSidebar}
+                       className="p-2 -ml-2 text-slate-400 hover:text-indigo-600 hover:bg-slate-100 rounded-lg transition-colors lg:block hidden"
+                       title={isSidebarOpen ? "收起侧边栏" : "展开侧边栏"}
+                    >
+                       <PanelLeft size={20} />
+                    </button>
+                    <div className="w-8 h-8 flex-shrink-0">
+                       <AppIcon />
                     </div>
-                    
-                    {/* Mobile Menu Trigger (Legacy placeholder if needed) */}
-                    <div className="lg:hidden">
-                        {/* Mobile users just see icon + title above, sidebar logic for mobile is typically overlay, not handled in this resize scope */}
-                    </div>
+                    <h1 className="text-xl font-bold bg-gradient-to-r from-slate-800 to-slate-600 bg-clip-text text-transparent tracking-tight">
+                        闪历
+                    </h1>
 
-                    {/* Date Nav */}
-                    <div className="flex items-center gap-2 bg-slate-100/50 p-1 rounded-xl relative">
-                        <button onClick={() => setCurrentDate(subDays(currentDate, 7))} className="p-1.5 hover:bg-white rounded-lg transition-all text-slate-500 hover:text-slate-800 hover:shadow-sm">
+                    {/* Date Picker (Moved Here) */}
+                    <div className="h-6 w-px bg-slate-200 hidden md:block mx-1"></div>
+
+                    <div className="flex items-center bg-slate-100/50 hover:bg-slate-100 rounded-xl p-1 transition-colors border border-slate-200/50 relative">
+                        <button 
+                            onClick={() => setCurrentDate(subDays(currentDate, 7))}
+                            className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-white rounded-lg shadow-sm transition-all"
+                        >
                             <ChevronLeft size={16} />
                         </button>
                         
-                        <div className="relative">
-                            <button 
-                                onClick={() => setIsDatePickerOpen(!isDatePickerOpen)}
-                                className="flex items-center gap-2 px-3 py-1 text-sm font-semibold text-slate-700 hover:bg-white rounded-lg transition-all"
-                            >
-                                <CalendarIcon size={14} className="text-slate-400" />
-                                <span>{format(currentDate, 'yyyy年 M月')}</span>
-                            </button>
-                            
-                            {isDatePickerOpen && (
-                                <DatePicker 
-                                    currentDate={currentDate} 
-                                    onDateSelect={(d) => setCurrentDate(d)} 
-                                    onClose={() => setIsDatePickerOpen(false)} 
-                                />
-                            )}
-                        </div>
+                        <button 
+                            onClick={() => setIsDatePickerOpen(!isDatePickerOpen)}
+                            className="flex items-center gap-2 px-3 py-1 text-sm font-semibold text-slate-700 w-[140px] justify-center hover:text-indigo-600 transition-colors"
+                        >
+                            <CalendarIcon size={14} className="mb-0.5" />
+                            {format(currentDate, 'yyyy年 M月')}
+                        </button>
 
-                        <button onClick={() => setCurrentDate(addDays(currentDate, 7))} className="p-1.5 hover:bg-white rounded-lg transition-all text-slate-500 hover:text-slate-800 hover:shadow-sm">
+                        <button 
+                            onClick={() => setCurrentDate(addDays(currentDate, 7))}
+                            className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-white rounded-lg shadow-sm transition-all"
+                        >
                             <ChevronRight size={16} />
                         </button>
+                        
+                        {isDatePickerOpen && (
+                             <DatePicker 
+                                currentDate={currentDate} 
+                                onDateSelect={setCurrentDate}
+                                onClose={() => setIsDatePickerOpen(false)}
+                             />
+                        )}
                     </div>
                 </div>
 
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-3 md:gap-5">
+                    {/* NEW BUTTON: Primary Create Button */}
                     <button 
-                        onClick={() => setIsSettingsOpen(true)}
-                        className="p-2 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-full transition-colors"
-                        title="设置"
-                    >
-                        <Settings size={20} />
-                    </button>
-                    
-                    <div className="relative">
-                        <button 
-                            onClick={() => setIsNotificationOpen(!isNotificationOpen)}
-                            className="p-2 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-full transition-colors relative"
-                        >
-                            <Bell size={20} />
-                            {notifications.some(n => !n.read) && (
-                                <span className="absolute top-2 right-2 w-2 h-2 bg-rose-500 rounded-full ring-2 ring-white"></span>
-                            )}
-                        </button>
-                        <NotificationCenter 
-                            isOpen={isNotificationOpen}
-                            onClose={() => setIsNotificationOpen(false)}
-                            notifications={notifications}
-                            onMarkRead={(id) => setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true } : n))}
-                            onClearAll={() => setNotifications([])}
-                            onDelete={(id) => setNotifications(prev => prev.filter(n => n.id !== id))}
-                            onItemClick={(n) => { 
-                                if (n.planId) {
-                                    const p = plans.find(p => p.id === n.planId);
-                                    if (p) handlePlanClick(p);
-                                }
-                                setIsNotificationOpen(false);
-                            }}
-                        />
-                    </div>
-
-                    <div className="h-6 w-px bg-slate-200 mx-1"></div>
-
-                    <div className="flex items-center gap-2 cursor-pointer p-1 pr-2 hover:bg-slate-100 rounded-full transition-colors">
-                        <div className="w-8 h-8 rounded-full bg-slate-200 flex items-center justify-center overflow-hidden border border-white shadow-sm">
-                            <User size={16} className="text-slate-500" />
-                        </div>
-                        <span className="text-sm font-medium text-slate-700 hidden lg:block">Alex</span>
-                    </div>
-
-                    <button 
-                        onClick={() => {
-                            const now = new Date();
-                            now.setSeconds(0, 0);
-                            handleSlotClick(now);
-                        }}
-                        className="hidden lg:flex bg-slate-900 hover:bg-black text-white px-4 py-1.5 rounded-full text-sm font-medium shadow-lg shadow-slate-900/10 transition-transform active:scale-95 items-center gap-2 ml-2"
+                        onClick={() => handleSlotClick(new Date())}
+                        className="flex items-center gap-1.5 bg-slate-900 hover:bg-black text-white px-3 py-1.5 rounded-lg text-sm font-medium shadow-sm hover:shadow-md transition-all active:scale-95"
                     >
                         <Plus size={16} />
-                        <span>新建</span>
+                        <span className="hidden sm:inline">新建日程</span>
                     </button>
+
+                    <div className="flex items-center gap-2">
+                        <div className="relative">
+                            <button 
+                                onClick={() => setIsNotificationOpen(!isNotificationOpen)}
+                                className="p-2 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-full transition-colors relative"
+                            >
+                                <Bell size={20} />
+                                {notifications.some(n => !n.read) && (
+                                    <span className="absolute top-2 right-2 w-2 h-2 bg-rose-500 rounded-full border border-white"></span>
+                                )}
+                            </button>
+                            <NotificationCenter 
+                                isOpen={isNotificationOpen}
+                                onClose={() => setIsNotificationOpen(false)}
+                                notifications={notifications}
+                                onMarkRead={(id) => setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true } : n))}
+                                onClearAll={() => setNotifications([])}
+                                onDelete={(id) => setNotifications(prev => prev.filter(n => n.id !== id))}
+                                onItemClick={(n) => {
+                                    if (n.planId) {
+                                        const plan = plans.find(p => p.id === n.planId);
+                                        if (plan) {
+                                            handlePlanClick(plan);
+                                            setIsNotificationOpen(false);
+                                        }
+                                    }
+                                }}
+                            />
+                        </div>
+
+                        <button 
+                            onClick={() => setIsSettingsOpen(true)}
+                            className="p-2 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-full transition-colors"
+                        >
+                            <Settings size={20} />
+                        </button>
+                        
+                        <div className="w-8 h-8 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white shadow-lg shadow-indigo-500/20 cursor-pointer hover:scale-105 transition-transform">
+                            <User size={16} />
+                        </div>
+                    </div>
                 </div>
            </header>
-           
-           {/* Weekly Calendar */}
-           <div className="flex-1 overflow-hidden">
-               <WeeklyCalendar 
-                   currentDate={currentDate}
-                   plans={plans}
-                   onPlanClick={handlePlanClick}
-                   onSlotClick={handleSlotClick}
-                   onPlanUpdate={handleUpdatePlan}
-                   onDeletePlan={handleDeletePlan}
-                   onDateSelect={setCurrentDate}
-                   onDragCreate={(startDate, durationMinutes) => {
-                       const newPlan: WorkPlan = {
-                           id: crypto.randomUUID(),
-                           title: '新建日程',
-                           startDate: startDate.toISOString(),
-                           endDate: new Date(startDate.getTime() + durationMinutes * 60000).toISOString(),
-                           status: PlanStatus.TODO,
-                           tags: [],
-                           color: 'blue',
-                           links: []
-                       };
-                       setEditingPlan(newPlan);
-                       setIsPlanModalOpen(true);
-                   }}
-               />
+
+           {/* Calendar Area */}
+           <div className="flex-1 overflow-hidden relative p-4">
+              <WeeklyCalendar 
+                currentDate={currentDate}
+                plans={plans}
+                onPlanClick={handlePlanClick}
+                onSlotClick={handleSlotClick}
+                onPlanUpdate={handleUpdatePlan}
+                onDeletePlan={handleDeletePlan}
+                onDateSelect={setCurrentDate}
+                onDragCreate={(startDate, duration) => {
+                    const newPlan: WorkPlan = {
+                        id: crypto.randomUUID(),
+                        title: '新建日程',
+                        startDate: startDate.toISOString(),
+                        endDate: new Date(startDate.getTime() + duration * 60000).toISOString(),
+                        status: PlanStatus.TODO,
+                        tags: [],
+                        color: 'blue',
+                        links: []
+                    };
+                    setEditingPlan(newPlan);
+                    setIsPlanModalOpen(true);
+                }}
+              />
            </div>
-           
-           {/* Smart Input */}
+
+           {/* Smart Input (Floating) */}
            <SmartInput 
-               onSubmit={handleSmartInput}
-               onStop={() => { setIsProcessingAI(false); }}
-               isProcessing={isProcessingAI}
-               onSuggestionClick={handleSuggestionClick}
-               suggestions={smartSuggestions}
+                onSubmit={handleSmartInput}
+                onStop={() => {}} // No cancel implemented for fetch yet
+                onSuggestionClick={handleSuggestionClick}
+                isProcessing={isProcessingAI}
+                suggestions={smartSuggestions}
            />
        </div>
 
        {/* Modals */}
        <PlanModal 
-           isOpen={isPlanModalOpen}
-           plan={editingPlan}
-           onClose={() => setIsPlanModalOpen(false)}
-           onSave={handleSavePlan}
-           onDelete={handleDeletePlan}
+          plan={editingPlan}
+          isOpen={isPlanModalOpen}
+          onClose={() => setIsPlanModalOpen(false)}
+          onSave={handleSavePlan}
+          onDelete={handleDeletePlan}
        />
        
        <SettingsModal 
-           isOpen={isSettingsOpen}
-           settings={settings}
-           onClose={() => setIsSettingsOpen(false)}
-           onSave={handleSettingsSave}
-           onExport={handleExport}
-           onImport={handleImport}
+          isOpen={isSettingsOpen}
+          onClose={() => setIsSettingsOpen(false)}
+          settings={settings}
+          onSave={handleSettingsSave}
+          onExport={handleExport}
+          onImport={handleImport}
        />
-       
+
+       <WeeklyReportModal 
+          isOpen={isReportModalOpen}
+          onClose={() => setIsReportModalOpen(false)}
+          data={reportData}
+       />
+
+       {/* Global Command Palette */}
        <FlashCommand 
-           plans={plans}
-           settings={settings}
-           onPlanCreated={(p) => {
-               handleSavePlan(p);
-               setCurrentDate(new Date(p.startDate));
-           }}
+          plans={plans}
+          settings={settings}
+          onPlanCreated={(plan) => {
+              handleSavePlan(plan);
+          }}
        />
     </div>
   );
 };
-
-export default App;
