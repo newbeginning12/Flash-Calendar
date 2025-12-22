@@ -120,7 +120,6 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onSubmit, onStop, onSugg
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
         const target = e.target as Node;
-        // Check if click is inside Main Input Container OR Suggestions Container
         const isInsideInput = containerRef.current && containerRef.current.contains(target);
         const isInsideSuggestions = suggestionsRef.current && suggestionsRef.current.contains(target);
 
@@ -139,7 +138,6 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onSubmit, onStop, onSugg
   // Focus management
   useEffect(() => {
       if (isExpanded && inputRef.current) {
-          // Small delay to match animation start
           setTimeout(() => inputRef.current?.focus(), 100);
       }
   }, [isExpanded]);
@@ -159,8 +157,12 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onSubmit, onStop, onSugg
     }
     if (!value.trim()) return;
     
-    await onSubmit(value);
-    setValue('');
+    try {
+        await onSubmit(value);
+        setValue('');
+    } catch (e) {
+        console.error("Submit failed", e);
+    }
   };
 
   const handleKeyDown = async (e: React.KeyboardEvent) => {
@@ -240,7 +242,7 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onSubmit, onStop, onSugg
   };
 
   return (
-    <div className="fixed bottom-6 left-1/2 transform -translate-x-1/2 w-full max-w-3xl flex flex-col items-center justify-end z-50 pointer-events-none">
+    <div className="fixed bottom-6 left-1/2 transform -translate-x-1/2 w-full max-w-3xl flex flex-col items-center justify-end z-[100] pointer-events-none">
       
       {/* Suggestions (Float above) */}
       <div 
@@ -320,7 +322,7 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onSubmit, onStop, onSugg
         {/* Expanded Content */}
         <div 
             className={`absolute inset-0 pl-[56px] pr-2 flex items-center transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)]
-                ${isExpanded ? 'opacity-100 scale-100' : 'opacity-0 scale-95 pointer-events-none'}
+                ${isExpanded ? 'opacity-100 scale-100 z-40' : 'opacity-0 scale-95 pointer-events-none'}
             `}
         >
             <div className="relative flex-1 h-full flex items-center">
@@ -367,7 +369,7 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onSubmit, onStop, onSugg
                    className={`
                        w-9 h-9 flex items-center justify-center rounded-full transition-all duration-300
                        ${(value.trim() || isListening || isProcessing) 
-                           ? 'bg-slate-900 text-white scale-100 shadow-md hover:bg-black hover:scale-105' 
+                           ? 'bg-slate-900 text-white scale-100 shadow-md hover:bg-black hover:scale-105 active:scale-95' 
                            : 'bg-slate-100 text-slate-300 scale-90 cursor-not-allowed'
                        }
                    `}

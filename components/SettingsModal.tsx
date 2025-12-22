@@ -23,7 +23,8 @@ const PROVIDERS = [
 
 const PRESETS = {
   [AIProvider.GOOGLE]: [
-    { name: 'gemini-2.5-flash', label: 'Flash 2.5' },
+    // fix: Update model presets to gemini-3 series
+    { name: 'gemini-3-flash-preview', label: 'Flash 3 Preview' },
     { name: 'gemini-3-pro-preview', label: 'Pro 3 Preview' },
   ],
   [AIProvider.DEEPSEEK]: [
@@ -119,7 +120,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, s
   const isCustomProvider = localSettings.provider !== AIProvider.GOOGLE;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
       <div 
         className="absolute inset-0 bg-slate-900/20 backdrop-blur-sm transition-opacity" 
         onClick={onClose}

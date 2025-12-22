@@ -70,7 +70,7 @@ export const FlashCommand: React.FC<FlashCommandProps> = ({ plans, settings, onP
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-start justify-center pt-[20vh] px-4">
+    <div className="fixed inset-0 z-[110] flex items-start justify-center pt-[20vh] px-4">
       <div 
         className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm transition-opacity duration-200"
         onClick={() => setIsOpen(false)}

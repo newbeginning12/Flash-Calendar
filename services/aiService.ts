@@ -1,3 +1,4 @@
+
 import { GoogleGenAI, Type } from "@google/genai";
 import { WorkPlan, PlanStatus, AISettings, AIProvider, WeeklyReportData, AIProcessingResult } from "../types";
 import { startOfWeek, endOfWeek, addWeeks, format, isWithinInterval, parseISO } from "date-fns";
@@ -7,7 +8,8 @@ const googleAI = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
 const COLORS = ['blue', 'indigo', 'purple', 'rose', 'orange', 'emerald'];
 
-export const DEFAULT_MODEL = "gemini-2.5-flash";
+// fix: Use recommended gemini-3-flash-preview for text-based scheduling tasks
+export const DEFAULT_MODEL = "gemini-3-flash-preview";
 
 const getRandomColor = () => COLORS[Math.floor(Math.random() * COLORS.length)];
 
@@ -167,6 +169,42 @@ export const processUserIntent = async (
   return handleIntentRequest(userInput, currentPlans, settings, signal);
 };
 
+// Helper: Common Plan Creation Logic
+const createPlanFromRaw = (rawPlan: any): AIProcessingResult => {
+    const title = rawPlan.title || "AI 识别日程";
+
+    // Date Fallback Logic
+    let startISO = parseDate(rawPlan.startDate);
+    let endISO = parseDate(rawPlan.endDate);
+    
+    if (!startISO) {
+        const nextHour = new Date();
+        nextHour.setHours(nextHour.getHours() + 1, 0, 0, 0);
+        startISO = nextHour.toISOString();
+    }
+
+    if (!endISO) {
+        const start = new Date(startISO!); 
+        const end = new Date(start.getTime() + 60 * 60 * 1000);
+        endISO = end.toISOString();
+    }
+
+    return {
+      type: 'CREATE_PLAN',
+      data: {
+        id: crypto.randomUUID(),
+        title: title,
+        description: rawPlan.description || "",
+        startDate: startISO!,
+        endDate: endISO!,
+        status: determineStatus(startISO!, endISO!),
+        tags: (rawPlan.tags || []).slice(0, 3),
+        color: getRandomColor(),
+        links: []
+      }
+    };
+}
+
 
 // Unified Handler
 const handleIntentRequest = async (
@@ -269,7 +307,9 @@ const handleIntentRequest = async (
   if (settings.provider === AIProvider.GOOGLE) {
     try {
       // Construct parts
-      const parts: any[] = [{ text: `Strict Plans Data: ${plansContextJSON}\nUser Input: "${textInput}"` }];
+      const parts: any[] = [];
+      
+      parts.push({ text: `Strict Plans Data: ${plansContextJSON}\nUser Input: "${textInput}"` });
       
       const response = await googleAI.models.generateContent({
         model: settings.model,
@@ -309,6 +349,7 @@ const handleIntentRequest = async (
       });
       
       if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+      // fix: Correctly access the response.text property (not a method)
       rawResponseText = response.text;
     } catch (e: any) {
       if (signal?.aborted || e.name === 'AbortError') throw e;
@@ -322,7 +363,7 @@ const handleIntentRequest = async (
       return null;
     }
   } else {
-    // OpenAI Compatible (Qwen-VL / DeepSeek) - Text Only now
+    // OpenAI Compatible (Qwen-VL / DeepSeek) - Text Only now (Extend for vision later if needed)
     const messages: OpenAICompatibleMessage[] = [
       { role: 'system', content: systemInstructionText + " IMPORTANT: Only return the JSON object. No markdown, no thinking." },
       { role: 'user', content: `Strict Plans Data: ${plansContextJSON}\nUser Input: "${textInput}"` }
@@ -343,44 +384,7 @@ const handleIntentRequest = async (
 
   // Handle CREATE intent (with heavy fallback logic)
   if (data.intent === 'CREATE') {
-    const rawPlan = data.planData || {};
-    
-    // 1. Title Fallback
-    const title = rawPlan.title || "AI 识别日程";
-
-    // 2. Date Fallback Logic
-    let startISO = parseDate(rawPlan.startDate);
-    let endISO = parseDate(rawPlan.endDate);
-    
-    // If start date is missing or invalid, default to next hour
-    if (!startISO) {
-        console.warn("AI returned invalid start date, defaulting to next hour.");
-        const nextHour = new Date();
-        nextHour.setHours(nextHour.getHours() + 1, 0, 0, 0);
-        startISO = nextHour.toISOString();
-    }
-
-    // If end date is missing or invalid, default to start + 1 hour
-    if (!endISO) {
-        const start = new Date(startISO!); // assert non-null because we just set it
-        const end = new Date(start.getTime() + 60 * 60 * 1000); // +1 hour
-        endISO = end.toISOString();
-    }
-
-    return {
-      type: 'CREATE_PLAN',
-      data: {
-        id: crypto.randomUUID(),
-        title: title,
-        description: rawPlan.description || "",
-        startDate: startISO!,
-        endDate: endISO!,
-        status: determineStatus(startISO!, endISO!),
-        tags: (rawPlan.tags || []).slice(0, 3),
-        color: getRandomColor(),
-        links: []
-      }
-    };
+    return createPlanFromRaw(data.planData || {});
   }
 
   return null;
@@ -445,6 +449,7 @@ export const generateSmartSuggestions = async (
           systemInstruction: systemPrompt
         }
       });
+      // fix: Correctly access the response.text property (not a method)
       rawResponseText = response.text;
     } catch (e: any) {
       if (e.status === 429 || e.status === 'RESOURCE_EXHAUSTED' || e?.error?.code === 429) {

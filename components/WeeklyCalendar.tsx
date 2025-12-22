@@ -1,8 +1,9 @@
 
-import React, { useState, useRef, useEffect, useMemo, useCallback, useLayoutEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { WorkPlan, PlanStatus } from '../types';
 import { format, addDays, isSameDay, getHours, getMinutes, differenceInMinutes, addMinutes, startOfWeek } from 'date-fns';
-import { Edit2, Trash2, CheckCircle2, Circle, Plus, PlayCircle, ZoomIn, ZoomOut, RotateCcw } from 'lucide-react';
+import { Plus, Clock, Move, Tag, CheckCircle2, Circle, PlayCircle, Edit2, Trash2, AlignLeft } from 'lucide-react';
 
 interface WeeklyCalendarProps {
   currentDate: Date;
@@ -12,42 +13,23 @@ interface WeeklyCalendarProps {
   onPlanUpdate: (plan: WorkPlan) => void;
   onDeletePlan: (id: string) => void;
   onDateSelect: (date: Date) => void;
-  onDragCreate: (startDate: Date, durationMinutes: number) => void;
+  onDragCreate: (startDate: Date, durationMinutes: number, title?: string, color?: string, tags?: string[]) => void;
 }
 
 const HOURS = Array.from({ length: 24 }, (_, i) => i);
 const DAYS_TO_SHOW = 7;
 const WEEKDAYS_ZH = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
-const SIDEBAR_WIDTH = 64; 
+const SIDEBAR_WIDTH = 60; 
+const COLORS = ['blue', 'indigo', 'purple', 'rose', 'orange', 'emerald'];
 
-// Zoom Constraints
-const MIN_ROW_HEIGHT = 40;
-const MAX_ROW_HEIGHT = 180;
 const DEFAULT_ROW_HEIGHT = 48;
+const BASE_COL_MIN_WIDTH = 130; 
 
-interface DragState {
-  plan: WorkPlan;
-  durationMinutes: number;
-  offsetX: number; 
-  offsetY: number;
-  startX: number;
-  startY: number;
-  pointerX: number; 
-  pointerY: number; 
-  currentClientX: number; 
-  currentClientY: number; 
-  gridWidth: number; 
-  isDragging: boolean;
-  originalRowHeight: number; // Capture row height at start of drag
-}
-
-interface ContextMenuState {
-  x: number;
-  y: number;
-  type: 'PLAN' | 'SLOT';
-  plan?: WorkPlan;
-  date?: Date;
-}
+const STATUS_LABELS = {
+  [PlanStatus.TODO]: '待办',
+  [PlanStatus.IN_PROGRESS]: '执行中',
+  [PlanStatus.DONE]: '已完成',
+};
 
 export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({ 
   currentDate, 
@@ -55,774 +37,409 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
   onPlanClick, 
   onSlotClick, 
   onPlanUpdate, 
-  onDeletePlan, 
+  onDeletePlan,
   onDateSelect,
   onDragCreate
 }) => {
   const [now, setNow] = useState(new Date());
-  const [dragState, setDragState] = useState<DragState | null>(null);
-  const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
-  const gridRef = useRef<HTMLDivElement>(null);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; date?: Date; timeStr?: string; plan?: WorkPlan } | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
   
-  // --- Zoom State ---
-  const [rowHeight, setRowHeight] = useState<number>(() => {
+  const [dragInfo, setDragInfo] = useState<{
+      planId?: string;
+      durationMins: number;
+      color: string;
+      activeDay: Date | null;
+      activeMinutes: number;
+      isNew?: boolean;
+      title?: string;
+      tags?: string[];
+  } | null>(null);
+
+  const rowHeight = DEFAULT_ROW_HEIGHT;
+  const colMinWidth = BASE_COL_MIN_WIDTH;
+
+  const createDragGhost = (title: string) => {
+    const ghost = document.createElement('div');
+    ghost.className = "fixed -top-[1000px] left-0 bg-slate-900/90 text-white px-3 py-1.5 rounded-lg text-xs font-bold shadow-2xl pointer-events-none z-[9999] flex items-center gap-2";
+    ghost.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="m5 9 7-7 7 7"/><path d="M12 2v15"/><path d="m19 17-7 7-7-7"/></svg> ${title}`;
+    document.body.appendChild(ghost);
+    return ghost;
+  };
+
+  const handleDragStartExisting = (e: React.DragEvent, plan: WorkPlan) => {
+    const duration = differenceInMinutes(new Date(plan.endDate), new Date(plan.startDate));
+    setDragInfo({
+        planId: plan.id,
+        durationMins: duration,
+        color: plan.color,
+        activeDay: null,
+        activeMinutes: 0,
+        isNew: false,
+        title: plan.title,
+        tags: plan.tags
+    });
+
+    const ghost = createDragGhost(plan.title);
+    e.dataTransfer.setDragImage(ghost, 0, 0);
+    setTimeout(() => document.body.removeChild(ghost), 0);
+
+    e.dataTransfer.setData('application/json', JSON.stringify({ type: 'MOVE_PLAN', planId: plan.id }));
+    e.dataTransfer.effectAllowed = 'move';
+  };
+
+  const handleDragOver = (e: React.DragEvent, day: Date) => {
+    e.preventDefault();
+    const template = (window as any).__ACTIVE_DRAG_TEMPLATE__;
+    e.dataTransfer.dropEffect = template ? 'copy' : 'move';
+    
+    const rect = e.currentTarget.getBoundingClientRect();
+    const rawMinutes = ((e.clientY - rect.top) / rowHeight) * 60;
+    const snappedMinutes = Math.floor(rawMinutes / 15) * 15;
+
+    setDragInfo(prev => {
+        if (!prev) {
+            return {
+                durationMins: template?.minutes || 60,
+                color: template?.color || 'blue',
+                activeDay: day,
+                activeMinutes: snappedMinutes,
+                isNew: true,
+                title: template?.title || '新日程',
+                tags: template?.tags || []
+            };
+        }
+        return { 
+            ...prev, 
+            activeDay: day, 
+            activeMinutes: snappedMinutes,
+            durationMins: template?.minutes || prev.durationMins,
+            color: template?.color || prev.color,
+            title: template?.title || prev.title,
+            tags: template?.tags || prev.tags,
+            isNew: !!template
+        };
+    });
+  };
+
+  const handleDrop = (e: React.DragEvent, day: Date) => {
+    e.preventDefault();
+    setDragInfo(null);
     try {
-        const saved = localStorage.getItem('zhihui_calendar_row_height');
-        return saved ? Math.max(MIN_ROW_HEIGHT, Math.min(MAX_ROW_HEIGHT, parseInt(saved))) : DEFAULT_ROW_HEIGHT;
-    } catch {
-        return DEFAULT_ROW_HEIGHT;
-    }
-  });
+        const jsonStr = e.dataTransfer.getData('application/json');
+        const textStr = e.dataTransfer.getData('text/plain');
+        const rect = e.currentTarget.getBoundingClientRect();
+        const snappedMinutes = Math.floor(((e.clientY - rect.top) / rowHeight) * 60 / 15) * 15;
+        const targetStart = new Date(day);
+        targetStart.setHours(0, snappedMinutes, 0, 0);
 
-  // Keep a ref of current rowHeight for event handlers to access the latest value without re-binding
-  const rowHeightRef = useRef(rowHeight);
-  useEffect(() => { rowHeightRef.current = rowHeight; }, [rowHeight]);
+        let data: any = null;
+        if (jsonStr) { try { data = JSON.parse(jsonStr); } catch (e) {} }
+        if (!data && textStr) { try { data = JSON.parse(textStr); } catch (e) {} }
+        if (!data) { data = (window as any).__ACTIVE_DRAG_TEMPLATE__; }
 
-  // Store the anchor point for zoom operations: { time (hours from 0:00), offset (pixels from top of viewport) }
-  const zoomAnchorRef = useRef<{ time: number; offset: number } | null>(null);
+        if (data && data.type === 'PRESET_DURATION') {
+            onDragCreate(targetStart, data.minutes, data.title, data.color, data.tags);
+        } else if (data && (data.type === 'MOVE_PLAN' || data.planId)) {
+            const planId = data.planId;
+            const plan = plans.find(p => p.id === planId);
+            if (plan) {
+                const duration = differenceInMinutes(new Date(plan.endDate), new Date(plan.startDate));
+                onPlanUpdate({
+                    ...plan,
+                    startDate: targetStart.toISOString(),
+                    endDate: addMinutes(targetStart, duration).toISOString()
+                });
+            }
+        }
+        (window as any).__ACTIVE_DRAG_TEMPLATE__ = null;
+    } catch (err) { console.error("Drop process failed:", err); }
+  };
 
-  // Save zoom preference
-  useEffect(() => {
-    localStorage.setItem('zhihui_calendar_row_height', rowHeight.toString());
-  }, [rowHeight]);
+  const weekStart = startOfWeek(currentDate, { weekStartsOn: 1 });
+  const weekDays = Array.from({ length: DAYS_TO_SHOW }, (_, i) => addDays(weekStart, i));
 
   useEffect(() => {
     const interval = setInterval(() => setNow(new Date()), 60000);
     return () => clearInterval(interval);
   }, []);
 
-  // Unified Zoom Handler
-  // anchorY: relative Y position in the grid container (e.g., mouse position or center). If undefined, defaults to center.
-  const handleZoom = useCallback((newHeight: number, anchorY?: number) => {
-     const currentHeight = rowHeightRef.current;
-     const clamped = Math.max(MIN_ROW_HEIGHT, Math.min(MAX_ROW_HEIGHT, newHeight));
-     
-     if (clamped === currentHeight || !gridRef.current) return;
-     
-     const container = gridRef.current;
-     let offset = anchorY;
-     
-     // If no specific anchor is provided (e.g. slider/button), use the center of the viewport
-     if (offset === undefined) {
-         offset = container.clientHeight / 2;
-     }
-
-     // Calculate the "Time" at the anchor point.
-     // Formula: (ScrollTop + Offset) = TotalPixelsFromTop = Time * RowHeight
-     // So: Time = (ScrollTop + Offset) / RowHeight
-     const time = (container.scrollTop + offset) / currentHeight;
-     
-     // Store this anchor so we can restore it after the render updates the height
-     zoomAnchorRef.current = { time, offset };
-     
-     setRowHeight(clamped);
-  }, []);
-
-  // Use Layout Effect to restore scroll position BEFORE the browser paints
-  useLayoutEffect(() => {
-     if (gridRef.current && zoomAnchorRef.current) {
-         const { time, offset } = zoomAnchorRef.current;
-         // Calculate new ScrollTop to keep the 'time' at the same 'offset'
-         // NewScrollTop + Offset = Time * NewRowHeight
-         const newScroll = time * rowHeight - offset;
-         
-         gridRef.current.scrollTop = newScroll;
-         zoomAnchorRef.current = null;
-     }
-  }, [rowHeight]);
-
-  // --- Wheel Zoom Logic ---
-  const handleWheel = useCallback((e: WheelEvent) => {
-    if (e.ctrlKey || e.metaKey) {
-        e.preventDefault();
-        if (!gridRef.current) return;
-
-        // Calculate mouse position relative to the scrolling container
-        const rect = gridRef.current.getBoundingClientRect();
-        const mouseRelY = e.clientY - rect.top;
-        const currentRH = rowHeightRef.current;
-        
-        const delta = e.deltaY > 0 ? -4 : 4;
-        handleZoom(currentRH + delta, mouseRelY);
-    }
-  }, [handleZoom]);
+  const currentTimeTop = (getHours(now) * 60 + getMinutes(now)) / 60 * rowHeight;
 
   useEffect(() => {
-      const el = gridRef.current;
-      if (el) {
-          el.addEventListener('wheel', handleWheel, { passive: false });
-      }
-      return () => {
-          if (el) el.removeEventListener('wheel', handleWheel);
-      }
-  }, [handleWheel]);
-
-  // Use reliable startOfWeek from date-fns (Monday start)
-  const weekStart = startOfWeek(currentDate, { weekStartsOn: 1 });
-  const weekDays = Array.from({ length: DAYS_TO_SHOW }, (_, i) => addDays(weekStart, i));
-
-  // --- Helper: Duration Display ---
-  const getDurationString = (startStr: string, endStr: string) => {
-    const start = new Date(startStr);
-    const end = new Date(endStr);
-    const diff = Math.abs(differenceInMinutes(end, start));
-    const h = Math.floor(diff / 60);
-    const m = diff % 60;
-    
-    if (h > 0 && m > 0) return `${h}小时${m}分`;
-    if (h > 0) return `${h}小时`;
-    return `${m}分钟`;
-  };
-
-  // --- Layout Algorithm for Overlapping Events ---
-  const calculateLayout = (dayPlans: WorkPlan[]) => {
-    // 1. Sort by start time, then duration
-    const sorted = [...dayPlans].sort((a, b) => {
-        const startDiff = new Date(a.startDate).getTime() - new Date(b.startDate).getTime();
-        if (startDiff !== 0) return startDiff;
-        const durA = new Date(a.endDate).getTime() - new Date(a.startDate).getTime();
-        const durB = new Date(b.endDate).getTime() - new Date(b.startDate).getTime();
-        return durB - durA;
-    });
-
-    const layoutMap = new Map<string, { left: string; width: string }>();
-    if (sorted.length === 0) return layoutMap;
-
-    const clusters: WorkPlan[][] = [];
-    let currentCluster: WorkPlan[] = [sorted[0]];
-    let clusterEnd = new Date(sorted[0].endDate).getTime();
-
-    for (let i = 1; i < sorted.length; i++) {
-        const plan = sorted[i];
-        const start = new Date(plan.startDate).getTime();
-        const end = new Date(plan.endDate).getTime();
-
-        if (start < clusterEnd) {
-            currentCluster.push(plan);
-            clusterEnd = Math.max(clusterEnd, end);
-        } else {
-            clusters.push(currentCluster);
-            currentCluster = [plan];
-            clusterEnd = end;
-        }
-    }
-    clusters.push(currentCluster);
-
-    clusters.forEach(cluster => {
-        const columns: WorkPlan[][] = [];
-        cluster.forEach(plan => {
-            let placed = false;
-            for (let i = 0; i < columns.length; i++) {
-                const lastPlanInCol = columns[i][columns[i].length - 1];
-                if (new Date(lastPlanInCol.endDate).getTime() <= new Date(plan.startDate).getTime()) {
-                    columns[i].push(plan);
-                    placed = true;
-                    break;
-                }
-            }
-            if (!placed) {
-                columns.push([plan]);
-            }
-        });
-
-        const count = columns.length;
-        columns.forEach((col, colIndex) => {
-            col.forEach(plan => {
-                layoutMap.set(plan.id, {
-                    left: `${(colIndex / count) * 100}%`,
-                    width: `${(1 / count) * 100}%`
-                });
-            });
-        });
-    });
-
-    return layoutMap;
-  };
-
-  // --- Auto Scroll Logic ---
-  // We only run this when the currentDate changes to avoid fighting with user scrolling/zooming
-  useEffect(() => {
-    if (!gridRef.current) return;
-
-    const isToday = isSameDay(currentDate, new Date());
-    const selectedDateStr = format(currentDate, 'yyyy-MM-dd');
-    const dayPlans = plans.filter(p => format(new Date(p.startDate), 'yyyy-MM-dd') === selectedDateStr);
-
-    let targetMinutes = 8 * 60; // Default to 08:00
-
-    if (dayPlans.length > 0) {
-      if (isToday) {
-        const now = new Date();
-        const nowMinutes = getHours(now) * 60 + getMinutes(now);
-        let closestPlan = dayPlans[0];
-        let minDiff = Infinity;
-        dayPlans.forEach(p => {
-          const start = new Date(p.startDate);
-          const startMins = getHours(start) * 60 + getMinutes(start);
-          const diff = Math.abs(startMins - nowMinutes);
-          if (diff < minDiff) {
-            minDiff = diff;
-            closestPlan = p;
-          }
-        });
-        const start = new Date(closestPlan.startDate);
-        targetMinutes = getHours(start) * 60 + getMinutes(start);
-      } else {
-        const sorted = [...dayPlans].sort((a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime());
-        const start = new Date(sorted[0].startDate);
-        targetMinutes = getHours(start) * 60 + getMinutes(start);
-      }
-    } else if (isToday) {
-        const now = new Date();
-        targetMinutes = getHours(now) * 60 + getMinutes(now);
-    }
-
-    const top = (targetMinutes / 60) * rowHeight;
-    const padding = rowHeight; // One hour padding
-    
-    // Only scroll if we haven't scrolled manually yet (simplification: actually we scroll whenever date changes)
-    // To prevent this from running on zoom, we must ensure it depends only on currentDate
-    gridRef.current.scrollTo({
-      top: Math.max(0, top - padding),
-      behavior: 'smooth'
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentDate]); 
-
-  // --- Drag & Drop (Internal Moving) Logic ---
-  const handleMouseDown = (e: React.MouseEvent, plan: WorkPlan) => {
-    if (e.button !== 0) return;
-
-    e.stopPropagation();
-    e.preventDefault();
-    if (!gridRef.current) return;
-
-    const eventEl = e.currentTarget as HTMLElement;
-    const eventRect = eventEl.getBoundingClientRect();
-    const gridRect = gridRef.current.getBoundingClientRect();
-    
-    const start = new Date(plan.startDate);
-    const end = new Date(plan.endDate);
-    const duration = differenceInMinutes(end, start);
-
-    setDragState({
-      plan,
-      durationMinutes: duration,
-      offsetX: e.clientX - eventRect.left,
-      offsetY: e.clientY - eventRect.top,
-      startX: e.clientX,
-      startY: e.clientY,
-      pointerX: e.clientX - gridRect.left,
-      pointerY: e.clientY - gridRect.top + gridRef.current.scrollTop,
-      currentClientX: e.clientX,
-      currentClientY: e.clientY,
-      gridWidth: gridRect.width,
-      isDragging: false,
-      originalRowHeight: rowHeight
-    });
-    
-    setContextMenu(null);
-  };
-
-  const calculateSnap = (state: DragState, days: Date[], currentRH: number) => {
-    const columnsWidth = state.gridWidth - SIDEBAR_WIDTH;
-    const colWidth = columnsWidth / DAYS_TO_SHOW;
-    const xInCols = Math.max(0, state.pointerX - SIDEBAR_WIDTH);
-    const colIndex = Math.min(DAYS_TO_SHOW - 1, Math.floor(xInCols / colWidth));
-    const snapDay = days[colIndex];
-
-    const rawTop = state.pointerY - state.offsetY;
-    const rawMinutes = (rawTop / currentRH) * 60;
-    const snappedMinutes = Math.max(0, Math.round(rawMinutes / 15) * 15);
-    
-    const snapDate = new Date(snapDay);
-    snapDate.setHours(0, 0, 0, 0);
-    snapDate.setMinutes(snappedMinutes);
-
-    return { snapDate, snapDay, colIndex, snappedMinutes };
-  };
-
-  useEffect(() => {
-    if (!dragState) return;
-
-    const handleMouseMove = (e: MouseEvent) => {
-      if (!gridRef.current) return;
-      
-      const gridRect = gridRef.current.getBoundingClientRect();
-      const dist = Math.sqrt(Math.pow(e.clientX - dragState.startX, 2) + Math.pow(e.clientY - dragState.startY, 2));
-
-      setDragState(prev => prev ? ({
-        ...prev,
-        pointerX: e.clientX - gridRect.left,
-        pointerY: e.clientY - gridRect.top + gridRef.current.scrollTop,
-        currentClientX: e.clientX,
-        currentClientY: e.clientY,
-        isDragging: prev.isDragging || dist > 3
-      }) : null);
-    };
-
-    const handleMouseUp = () => {
-      if (dragState) {
-        if (!dragState.isDragging) {
-          onPlanClick(dragState.plan);
-        } else {
-          // Use the row height from state or the one captured? 
-          // Using current state is better for responsive updates
-          const { snapDate } = calculateSnap(dragState, weekDays, rowHeight);
-          const newStart = new Date(snapDate);
-          const newEnd = addMinutes(newStart, dragState.durationMinutes);
-
-          onPlanUpdate({
-            ...dragState.plan,
-            startDate: newStart.toISOString(),
-            endDate: newEnd.toISOString()
-          });
-        }
-        setDragState(null);
+    const handleClickOutside = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setContextMenu(null);
       }
     };
-
-    window.addEventListener('mousemove', handleMouseMove);
-    window.addEventListener('mouseup', handleMouseUp);
+    if (contextMenu) {
+        document.addEventListener('mousedown', handleClickOutside);
+        window.addEventListener('scroll', () => setContextMenu(null), true);
+    }
     return () => {
-      window.removeEventListener('mousemove', handleMouseMove);
-      window.removeEventListener('mouseup', handleMouseUp);
+        document.removeEventListener('mousedown', handleClickOutside);
+        window.removeEventListener('scroll', () => setContextMenu(null), true);
     };
-  }, [dragState, weekDays, onPlanUpdate, onPlanClick, rowHeight]);
+  }, [contextMenu]);
 
-  // --- External Drag & Drop Logic (Smart Create) ---
-  const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault(); 
-    e.dataTransfer.dropEffect = 'copy';
-  };
-
-  const handleDrop = (e: React.DragEvent, day: Date) => {
-      e.preventDefault();
-      try {
-          const data = e.dataTransfer.getData('application/json');
-          if (!data) return;
-          
-          const { type, minutes } = JSON.parse(data);
-          
-          if (type === 'PRESET_DURATION' && minutes) {
-             const rect = e.currentTarget.getBoundingClientRect();
-             const y = e.clientY - rect.top; 
-             
-             // Convert Y to minutes using dynamic rowHeight
-             const rawMinutes = (y / rowHeight) * 60;
-             const snappedMinutes = Math.floor(rawMinutes / 15) * 15;
-             
-             const startDate = new Date(day);
-             startDate.setHours(0, 0, 0, 0);
-             startDate.setMinutes(snappedMinutes);
-             
-             onDragCreate(startDate, minutes);
-          }
-      } catch (err) {
-          console.error("Drop failed", err);
-      }
-  };
-
-  // --- Context Menu Logic ---
-  useEffect(() => {
-    const handleClickOutside = () => setContextMenu(null);
-    window.addEventListener('click', handleClickOutside);
-    window.addEventListener('scroll', handleClickOutside, true);
-    return () => {
-        window.removeEventListener('click', handleClickOutside);
-        window.removeEventListener('scroll', handleClickOutside, true);
-    };
-  }, []);
-
-  const handlePlanContextMenu = (e: React.MouseEvent, plan: WorkPlan) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setContextMenu({
-      x: e.clientX,
-      y: e.clientY,
-      type: 'PLAN',
-      plan
-    });
-  };
-
-  const handleSlotContextMenu = (e: React.MouseEvent, day: Date) => {
-    e.preventDefault();
-    e.stopPropagation();
-    
-    const rect = e.currentTarget.getBoundingClientRect();
-    const y = e.clientY - rect.top;
-    // Dynamic calculation
-    const minutes = (y / rowHeight) * 60;
-    const snappedMinutes = Math.floor(minutes / 15) * 15;
-    
-    const date = new Date(day);
-    date.setHours(0, 0, 0, 0);
-    date.setMinutes(snappedMinutes);
-
-    setContextMenu({
-      x: e.clientX,
-      y: e.clientY,
-      type: 'SLOT',
-      date
-    });
-  };
-
-  const handleMenuAction = (action: string) => {
-    if (!contextMenu) return;
-
-    if (action === 'NEW' && contextMenu.date) {
-      onSlotClick(contextMenu.date);
-    }
-    
-    if (contextMenu.plan) {
-      if (action === 'EDIT') {
-        onPlanClick(contextMenu.plan);
-      } else if (action === 'DELETE') {
-        onDeletePlan(contextMenu.plan.id);
-      } else if (action === 'TOGGLE_STATUS') {
-        const newStatus = contextMenu.plan.status === PlanStatus.DONE ? PlanStatus.TODO : PlanStatus.DONE;
-        onPlanUpdate({ ...contextMenu.plan, status: newStatus });
-      }
-    }
-    setContextMenu(null);
-  };
-
-  // --- Rendering Helpers ---
-  const getEventStyle = (plan: WorkPlan) => {
-    const start = new Date(plan.startDate);
-    const end = new Date(plan.endDate);
-    const startMinutes = getHours(start) * 60 + getMinutes(start);
-    const durationMinutes = differenceInMinutes(end, start);
-    
-    const top = (startMinutes / 60) * rowHeight; 
-    const height = (durationMinutes / 60) * rowHeight;
-
-    const colors: Record<string, string> = {
-        blue: 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100',
-        indigo: 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100',
-        purple: 'bg-purple-50 text-purple-700 border-purple-200 hover:bg-purple-100',
-        rose: 'bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100',
-        orange: 'bg-orange-50 text-orange-700 border-orange-200 hover:bg-orange-100',
-        emerald: 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100',
-    };
-    
-    // Check if height is too small for full details
-    const isSmall = height < 30;
-
-    return {
-      top: `${top}px`,
-      height: `${Math.max(height, 20)}px`, 
-      // IMPORTANT: Removed 'transition-all' to prevent jitter during zoom. 
-      // Added specific transitions for visual flair only.
-      className: `absolute rounded-lg border px-1.5 ${isSmall ? 'py-0 flex items-center' : 'py-1'} text-xs font-medium cursor-grab active:cursor-grabbing select-none overflow-hidden transition-colors transition-shadow shadow-sm hover:z-20 hover:shadow-md ${colors[plan.color] || colors.blue}`
-    };
-  };
-
-  const currentMinutes = getHours(now) * 60 + getMinutes(now);
-  const currentTimeTop = (currentMinutes / 60) * rowHeight;
-
-  let ghostData = null;
-  if (dragState && dragState.isDragging) {
-    const { snapDate, colIndex } = calculateSnap(dragState, weekDays, rowHeight);
-    const startMinutes = getHours(snapDate) * 60 + getMinutes(snapDate);
-    ghostData = {
-        colIndex,
-        top: (startMinutes / 60) * rowHeight,
-        height: (dragState.durationMinutes / 60) * rowHeight,
-        start: snapDate,
-        end: addMinutes(snapDate, dragState.durationMinutes)
-    };
-  }
-
-  const renderStatusIcon = (status: PlanStatus) => {
+  const getSimpleStatusIcon = (status: PlanStatus, color: string, size: number = 12) => {
     switch (status) {
-        case PlanStatus.DONE:
-            return <CheckCircle2 size={12} className="flex-shrink-0 text-emerald-600 fill-emerald-50" strokeWidth={2.5} />;
-        case PlanStatus.IN_PROGRESS:
-            return <PlayCircle size={12} className="flex-shrink-0 text-blue-600 fill-blue-50" strokeWidth={2.5} />;
-        case PlanStatus.TODO:
-        default:
-             return <Circle size={12} className="flex-shrink-0 text-slate-400" strokeWidth={2} />;
+        case PlanStatus.DONE: return <CheckCircle2 size={size} className="text-emerald-500" />;
+        case PlanStatus.IN_PROGRESS: return <PlayCircle size={size} className="text-blue-500 animate-pulse" />;
+        default: return <Circle size={size} className="text-slate-400" />;
     }
+  };
+
+  const handleCardContextMenu = (e: React.MouseEvent, plan: WorkPlan) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setContextMenu({ x: e.clientX, y: e.clientY, plan });
   };
 
   return (
-    <div className="flex flex-col h-full bg-white rounded-3xl shadow-[0_2px_20px_rgb(0,0,0,0.02)] border border-slate-100 overflow-hidden relative group/calendar" onContextMenu={(e) => e.preventDefault()}>
-      
-      {/* Header */}
-      <div className="flex border-b border-slate-100 bg-white/80 backdrop-blur-md sticky top-0 z-20">
-        <div className="w-16 flex-shrink-0 border-r border-slate-50"></div> 
-        <div className="flex flex-1">
-          {weekDays.map((day) => {
-            const isToday = isSameDay(day, new Date());
-            const isSelected = isSameDay(day, currentDate);
-            const key = format(day, 'yyyy-MM-dd');
-
-            return (
-              <div 
-                key={key} 
-                className={`flex-1 py-4 flex flex-col items-center justify-center cursor-pointer group transition-colors ${
-                    isSelected ? 'bg-blue-50/40' : 'hover:bg-slate-50/50'
-                }`}
-                onClick={() => onDateSelect(day)}
-              >
-                <span className={`text-xs font-semibold uppercase tracking-wider mb-1 ${
-                    isToday ? 'text-blue-600' : 'text-slate-400 group-hover:text-slate-600'
-                }`}>
-                  {WEEKDAYS_ZH[day.getDay()]}
-                </span>
-                <div className={`
-                    w-8 h-8 flex items-center justify-center rounded-full text-sm font-medium transition-all
-                    ${isSelected 
-                        ? (isToday ? 'bg-blue-600 text-white shadow-md shadow-blue-600/30' : 'bg-slate-900 text-white shadow-md') 
-                        : (isToday ? 'text-blue-600 bg-blue-50' : 'text-slate-800 group-hover:bg-slate-100')
-                    }
-                `}>
-                  {format(day, 'd')}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* Grid */}
-      <div className="flex-1 overflow-y-auto custom-scrollbar relative bg-slate-50/20" ref={gridRef}>
-        <div className="flex relative" style={{ minHeight: `${24 * rowHeight}px` }}>
-          
-          {/* Timeline Sidebar */}
-          <div className="w-16 flex-shrink-0 border-r border-slate-100 bg-white sticky left-0 z-10 select-none">
-            {HOURS.map((hour) => (
-              <div key={hour} className="relative w-full" style={{ height: `${rowHeight}px` }}>
-                <span className="absolute -top-2.5 right-3 text-[10px] text-slate-400 font-medium font-mono">
-                  {hour.toString().padStart(2, '0')}:00
-                </span>
-              </div>
-            ))}
-            
-             <div 
-                className="absolute right-0 z-20 -translate-y-1/2 pointer-events-none pr-1 flex items-center justify-end w-full"
-                style={{ top: `${currentTimeTop}px` }}
-            >
-                <div className="text-[10px] font-bold text-rose-500 bg-white/90 backdrop-blur-sm border border-rose-100 px-1.5 py-0.5 rounded shadow-sm font-mono">
-                    {format(now, 'HH:mm')}
+    <div className="flex flex-col h-full bg-white rounded-3xl shadow-[0_4px_30px_rgb(0,0,0,0.03)] border border-slate-100 overflow-hidden relative">
+      <div ref={containerRef} className="flex-1 overflow-auto custom-scrollbar relative bg-slate-50/10">
+        <div className="min-w-max flex flex-col">
+            <div className="sticky top-0 z-40 flex border-b border-slate-200/60 bg-white">
+                <div className="sticky left-0 z-50 bg-white border-r border-slate-50" style={{ width: SIDEBAR_WIDTH }}></div>
+                <div className="flex flex-1">
+                    {weekDays.map((day) => {
+                        const isSelected = isSameDay(day, currentDate);
+                        return (
+                            <div key={day.toISOString()} className={`flex-1 py-3 flex flex-col items-center justify-center cursor-pointer transition-colors border-r border-slate-100/50 hover:bg-slate-50 ${isSelected ? 'bg-blue-50/20' : ''}`} style={{ minWidth: colMinWidth }} onClick={() => onDateSelect(day)}>
+                                <span className={`text-[10px] font-bold uppercase tracking-widest mb-1 ${isSameDay(day, new Date()) ? 'text-blue-600' : 'text-slate-400'}`}>{WEEKDAYS_ZH[day.getDay()]}</span>
+                                <div className={`w-8 h-8 flex items-center justify-center rounded-xl text-sm font-bold transition-all ${isSelected ? 'bg-slate-900 text-white' : (isSameDay(day, new Date()) ? 'text-blue-600 bg-blue-50' : 'text-slate-800')}`}>{format(day, 'd')}</div>
+                            </div>
+                        );
+                    })}
                 </div>
             </div>
-          </div>
 
-          {/* Main Grid Columns */}
-          <div className="flex flex-1 relative">
-             <div className="absolute inset-0 flex flex-col pointer-events-none">
-                {HOURS.map((h) => (
-                    <div key={h} className="border-b border-slate-100/60 last:border-none box-border" style={{ height: `${rowHeight}px` }}></div>
-                ))}
-             </div>
-
-            {weekDays.map((day, idx) => {
-              const dayStr = format(day, 'yyyy-MM-dd');
-              const key = dayStr;
-              
-              const dayPlans = plans.filter(p => {
-                  const planDateStr = format(new Date(p.startDate), 'yyyy-MM-dd');
-                  return planDateStr === dayStr && p.id !== dragState?.plan.id;
-              });
-
-              // Calculate layout for overlaps
-              const layoutMap = calculateLayout(dayPlans);
-
-              const isGhostCol = ghostData && ghostData.colIndex === idx;
-              const isSelectedDay = isSameDay(day, currentDate);
-              const isToday = isSameDay(day, now);
-
-              return (
-                <div 
-                  key={key} 
-                  className={`flex-1 relative border-r border-slate-100/50 last:border-none group transition-colors ${
-                      isSelectedDay ? 'bg-blue-50/30' : 'bg-transparent hover:bg-white/40'
-                  }`}
-                  onContextMenu={(e) => handleSlotContextMenu(e, day)}
-                  onDragOver={handleDragOver}
-                  onDrop={(e) => handleDrop(e, day)}
-                >
-                  {isGhostCol && (
-                      <div 
-                        className="absolute inset-x-1 rounded-lg border-2 border-dashed border-indigo-400 bg-indigo-50/50 z-10 pointer-events-none flex items-center justify-center overflow-hidden"
-                        style={{ top: `${ghostData!.top}px`, height: `${Math.max(ghostData!.height, 24)}px` }}
-                      >
-                         <span className="text-indigo-600 font-bold text-[10px] bg-white/90 px-1.5 py-0.5 rounded shadow-sm backdrop-blur-sm truncate max-w-full">
-                            {format(ghostData!.start, 'HH:mm')} - {format(ghostData!.end, 'HH:mm')}
-                         </span>
-                      </div>
-                  )}
-
-                  {/* Current Time Line */}
-                  {isToday && (
-                      <div 
-                        className="absolute left-0 right-0 z-30 pointer-events-none flex items-center"
-                        style={{ top: `${currentTimeTop}px` }}
-                      >
-                         <div className="w-1.5 h-1.5 rounded-full bg-rose-500 -ml-[4px] ring-2 ring-white shadow-sm"></div>
-                         <div className="h-px w-full bg-rose-500/50 shadow-[0_1px_2px_rgba(244,63,94,0.1)]"></div>
-                      </div>
-                  )}
-
-                  {dayPlans.map(plan => {
-                    const style = getEventStyle(plan);
-                    const layout = layoutMap.get(plan.id) || { left: '0%', width: '100%' };
-                    const icon = renderStatusIcon(plan.status);
-                    
-                    const isFullWidth = layout.width === '100%';
-                    const heightVal = parseFloat(style.height);
-                    const isTight = heightVal < 30;
-                    
-                    return (
-                      <div
-                        key={plan.id}
-                        style={{ 
-                            ...style, 
-                            left: layout.left, 
-                            width: layout.width 
-                        }}
-                        className={`${style.className} ${isFullWidth ? 'mx-1' : 'px-1'}`}
-                        onMouseDown={(e) => handleMouseDown(e, plan)}
-                        onContextMenu={(e) => handlePlanContextMenu(e, plan)}
-                      >
-                         <div className={`w-full h-full overflow-hidden ${!isFullWidth ? 'border-l-0 border-r-0 rounded-none' : ''}`}>
-                             <div className={`flex items-start gap-1 h-full ${isTight ? 'items-center' : ''}`}>
-                                {icon && <div className={isTight ? "flex-shrink-0" : "mt-0.5 flex-shrink-0"}>{icon}</div>}
-                                <div className="flex-1 min-w-0 flex flex-col">
-                                    <div className={`font-semibold truncate leading-tight text-[11px] ${isTight ? 'mt-0' : ''}`}>
-                                        {plan.title}
-                                    </div>
-                                    {!isTight && (
-                                      <>
-                                          {heightVal > 35 && (
-                                              <div className="text-[9px] opacity-80 truncate mt-0.5 font-mono flex-shrink-0">
-                                                  {format(new Date(plan.startDate), 'HH:mm')} - {format(new Date(plan.endDate), 'HH:mm')}
-                                              </div>
-                                          )}
-                                          
-                                          {heightVal > 60 && plan.tags && plan.tags.length > 0 && (
-                                              <div className="flex flex-wrap gap-1 mt-1.5 overflow-hidden max-h-[18px] flex-shrink-0">
-                                                  {plan.tags.slice(0, 3).map(t => (
-                                                      <span key={t} className="px-1 py-0.5 rounded-sm bg-black/5 text-[9px] leading-none opacity-80 whitespace-nowrap">
-                                                          {t}
-                                                      </span>
-                                                  ))}
-                                              </div>
-                                          )}
-
-                                          {heightVal > 75 && plan.description && (
-                                              <div className="text-[10px] opacity-70 mt-1.5 leading-snug line-clamp-3 overflow-hidden">
-                                                  {plan.description}
-                                              </div>
-                                          )}
-                                      </>
-                                    )}
-                                </div>
-                             </div>
-                         </div>
-                      </div>
-                    );
-                  })}
+            <div className="flex relative">
+                <div className="sticky left-0 z-30 bg-white border-r border-slate-100 flex-shrink-0" style={{ width: SIDEBAR_WIDTH }}>
+                    {HOURS.map((hour) => (
+                        <div key={hour} className="relative w-full" style={{ height: `${rowHeight}px` }}>
+                            <span className="absolute -top-2.5 right-3 text-[10px] text-slate-400 font-bold font-mono opacity-50">{hour.toString().padStart(2, '0')}:00</span>
+                        </div>
+                    ))}
                 </div>
-              );
-            })}
-          </div>
+
+                <div className="flex flex-1 relative">
+                    <div className="absolute inset-0 flex flex-col pointer-events-none">
+                        {HOURS.map((h) => <div key={h} className="border-b border-slate-100/60" style={{ height: `${rowHeight}px` }} />)}
+                    </div>
+
+                    {weekDays.map((day) => {
+                        const dayPlans = plans.filter(p => isSameDay(new Date(p.startDate), day));
+                        const isDraggingOverMe = dragInfo?.activeDay && isSameDay(dragInfo.activeDay, day);
+
+                        return (
+                            <div 
+                                key={day.toISOString()}
+                                className="flex-1 relative border-r border-slate-100/50"
+                                style={{ minWidth: colMinWidth }}
+                                onDragOver={(e) => handleDragOver(e, day)}
+                                onDragLeave={() => setDragInfo(prev => prev ? {...prev, activeDay: null} : null)}
+                                onDrop={(e) => handleDrop(e, day)}
+                                onContextMenu={(e) => {
+                                    if (e.target === e.currentTarget) {
+                                        e.preventDefault();
+                                        const rect = e.currentTarget.getBoundingClientRect();
+                                        const snappedMinutes = Math.floor(((e.clientY - rect.top) / rowHeight) * 60 / 15) * 15;
+                                        const timeDate = new Date(day);
+                                        timeDate.setHours(0, snappedMinutes, 0, 0);
+                                        setContextMenu({ x: e.clientX, y: e.clientY, date: timeDate, timeStr: format(timeDate, 'HH:mm') });
+                                    }
+                                }}
+                            >
+                                {isDraggingOverMe && dragInfo && (
+                                    <div 
+                                        className={`absolute inset-x-1 z-[35] rounded-xl border-2 border-dashed border-${dragInfo.color}-400/60 bg-${dragInfo.color}-100/15 pointer-events-none flex flex-col items-center justify-center transition-all duration-75`}
+                                        style={{ 
+                                            top: `${(dragInfo.activeMinutes / 60) * rowHeight}px`, 
+                                            height: `${(dragInfo.durationMins / 60) * rowHeight}px` 
+                                        }}
+                                    >
+                                        <div 
+                                            className={`
+                                                absolute left-2 bg-slate-900 text-white text-[10px] px-3 py-1.5 rounded-full shadow-[0_12px_35px_rgba(0,0,0,0.4)] 
+                                                font-bold flex items-center gap-2 whitespace-nowrap transition-all duration-200 z-[100]
+                                                ${dragInfo.activeMinutes < 60 ? 'top-3' : '-top-14'}
+                                            `}
+                                        >
+                                            <Clock size={10} className="text-blue-400" />
+                                            <span>
+                                                {format(addMinutes(new Date().setHours(0, dragInfo.activeMinutes, 0, 0), 0), 'HH:mm')} 
+                                                <span className="mx-1 opacity-50">-</span>
+                                                {format(addMinutes(new Date().setHours(0, dragInfo.activeMinutes, 0, 0), dragInfo.durationMins), 'HH:mm')}
+                                            </span>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {isSameDay(day, now) && (
+                                    <div className="absolute left-0 right-0 z-20 pointer-events-none flex items-center" style={{ top: `${currentTimeTop}px` }}>
+                                        <div className="w-2.5 h-2.5 rounded-full bg-rose-500 -ml-1.25 shadow-sm ring-2 ring-white"></div>
+                                        <div className="h-px w-full bg-rose-500"></div>
+                                    </div>
+                                )}
+
+                                {dayPlans.map(plan => {
+                                    const start = new Date(plan.startDate);
+                                    const end = new Date(plan.endDate);
+                                    const top = (getHours(start) * 60 + getMinutes(start)) / 60 * rowHeight;
+                                    const h = Math.max(differenceInMinutes(end, start) / 60 * rowHeight, 18);
+                                    const isDone = plan.status === PlanStatus.DONE;
+                                    const timeRangeStr = `${format(start, 'HH:mm')} - ${format(end, 'HH:mm')}`;
+
+                                    // 智能显示分级逻辑
+                                    // 极小尺寸 (H < 35px): 仅标题+图标
+                                    // 小型尺寸 (35 <= H < 65px): 标题+紧凑起止时间
+                                    // 中型尺寸 (65 <= H < 100px): 标题+状态标签+起止时间
+                                    // 大型尺寸 (100 <= H < 160px): 标题+状态标签+起止时间+标签列表
+                                    // 巨型尺寸 (H >= 160px): 标题+状态标签+起止时间+备注预览+标签列表
+
+                                    return (
+                                        <div
+                                            key={plan.id}
+                                            draggable
+                                            onDragStart={(e) => handleDragStartExisting(e, plan)}
+                                            onDragEnd={() => setDragInfo(null)}
+                                            onContextMenu={(e) => handleCardContextMenu(e, plan)}
+                                            style={{ top: `${top}px`, height: `${h}px` }}
+                                            className={`
+                                                absolute inset-x-1 rounded-xl border z-10 cursor-grab active:cursor-grabbing overflow-hidden transition-all flex flex-col
+                                                shadow-[0_2px_12px_rgba(0,0,0,0.02)] hover:z-30 hover:shadow-lg backdrop-blur-md group
+                                                ${isDone 
+                                                    ? `bg-slate-50/75 border-slate-100 opacity-60` 
+                                                    : `bg-${plan.color}-50/90 border-${plan.color}-200/60 hover:border-${plan.color}-400 hover:bg-${plan.color}-50 text-${plan.color}-900`
+                                                }
+                                                ${dragInfo?.planId === plan.id ? 'opacity-20 scale-95' : ''}
+                                                ${h < 35 ? 'p-1 px-1.5' : h < 100 ? 'p-2' : h < 160 ? 'p-2.5' : 'p-3'}
+                                            `}
+                                            onClick={() => onPlanClick(plan)}
+                                        >
+                                            {h < 35 ? (
+                                                <div className="flex items-center justify-between gap-1 h-full">
+                                                    <span className={`text-[10px] font-bold truncate flex-1 ${isDone ? 'text-slate-400 line-through' : ''}`}>
+                                                        {plan.title}
+                                                    </span>
+                                                    {getSimpleStatusIcon(plan.status, plan.color, 10)}
+                                                </div>
+                                            ) : (
+                                                <div className="flex flex-col h-full">
+                                                    <div className="flex items-start justify-between gap-1.5 mb-1 min-w-0">
+                                                        <div className={`font-bold truncate leading-tight flex-1 ${h >= 160 ? 'text-[15px]' : h >= 65 ? 'text-[13px]' : 'text-[11px]'} ${isDone ? 'text-slate-400 line-through font-normal' : 'text-slate-800'}`}>
+                                                            {plan.title}
+                                                        </div>
+                                                        {h >= 65 ? (
+                                                            <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-md border flex-shrink-0 transition-all
+                                                                ${plan.status === PlanStatus.DONE ? 'bg-emerald-50 text-emerald-600 border-emerald-100' : 
+                                                                  plan.status === PlanStatus.IN_PROGRESS ? 'bg-blue-50 text-blue-600 border-blue-100 animate-pulse' : 
+                                                                  'bg-slate-100 text-slate-500 border-slate-200'}
+                                                            `}>
+                                                                {STATUS_LABELS[plan.status]}
+                                                            </span>
+                                                        ) : (
+                                                            getSimpleStatusIcon(plan.status, plan.color)
+                                                        )}
+                                                    </div>
+
+                                                    <div className={`flex items-center gap-1 font-bold font-mono ${isDone ? 'text-slate-300' : `text-${plan.color}-600/80`}`}>
+                                                        <Clock size={h < 65 ? 10 : 12} strokeWidth={2.5} />
+                                                        <span className={`${h < 65 ? 'text-[9px]' : 'text-[10px]'}`}>
+                                                            {timeRangeStr}
+                                                        </span>
+                                                    </div>
+
+                                                    {h >= 160 && plan.description && (
+                                                        <div className="mt-2 text-[11px] text-slate-500 leading-snug line-clamp-3 opacity-80 flex items-start gap-1.5">
+                                                            <AlignLeft size={10} className="mt-1 flex-shrink-0 opacity-40" />
+                                                            <span className="flex-1">{plan.description}</span>
+                                                        </div>
+                                                    )}
+
+                                                    {h >= 100 && plan.tags && plan.tags.length > 0 && (
+                                                        <div className="flex flex-wrap gap-1 mt-auto pt-2 pb-1 overflow-hidden max-h-[44px]">
+                                                            {plan.tags.slice(0, h >= 160 ? 4 : 2).map(tag => (
+                                                                <span key={tag} className={`px-1.5 py-0.5 rounded-md text-[9px] font-bold border transition-colors whitespace-nowrap ${isDone ? 'bg-slate-100 text-slate-300 border-slate-200' : `bg-${plan.color}-100/50 text-${plan.color}-700 border-${plan.color}-200/50 group-hover:bg-${plan.color}-100 group-hover:border-${plan.color}-200`}`}>
+                                                                    {tag}
+                                                                </span>
+                                                            ))}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            )}
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        );
+                    })}
+                </div>
+            </div>
         </div>
       </div>
 
-      {/* Floating Zoom Control - Positioned bottom right over the grid */}
-      <div className="absolute bottom-6 right-8 z-40 transition-opacity duration-300 opacity-0 group-hover/calendar:opacity-100 hover:opacity-100 flex items-center gap-2 bg-white/90 backdrop-blur-md p-1.5 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] border border-slate-100">
-          <button 
-             onClick={() => handleZoom(rowHeight - 10)}
-             className="w-7 h-7 flex items-center justify-center rounded-xl hover:bg-slate-100 text-slate-500 hover:text-slate-800 transition-colors"
-             title="缩小视图"
-          >
-             <ZoomOut size={14} />
-          </button>
-          
-          <div className="w-20 px-2 flex items-center">
-             <input 
-                type="range" 
-                min={MIN_ROW_HEIGHT} 
-                max={MAX_ROW_HEIGHT} 
-                step={2}
-                value={rowHeight}
-                onChange={(e) => handleZoom(parseInt(e.target.value))}
-                className="w-full h-1 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600 hover:accent-indigo-500"
-             />
-          </div>
-
-          <button 
-             onClick={() => handleZoom(rowHeight + 10)}
-             className="w-7 h-7 flex items-center justify-center rounded-xl hover:bg-slate-100 text-slate-500 hover:text-slate-800 transition-colors"
-             title="放大视图"
-          >
-             <ZoomIn size={14} />
-          </button>
-
-          <div className="w-px h-4 bg-slate-200 mx-0.5"></div>
-
-          <button 
-             onClick={() => handleZoom(DEFAULT_ROW_HEIGHT)}
-             className="w-7 h-7 flex items-center justify-center rounded-xl hover:bg-slate-100 text-slate-400 hover:text-slate-800 transition-colors"
-             title="重置视图"
-          >
-             <RotateCcw size={12} />
-          </button>
-      </div>
-      
-      {/* Draggable Proxy */}
-      {dragState && dragState.isDragging && (
-        <div 
-            className="fixed z-50 pointer-events-none rounded-lg shadow-2xl bg-indigo-600 text-white px-3 py-2 text-xs font-medium opacity-90 ring-2 ring-white/30 backdrop-blur-sm flex flex-col justify-center"
+      {contextMenu && createPortal(
+        <div ref={menuRef} 
+            className="fixed z-[9999] bg-white/90 backdrop-blur-xl rounded-2xl shadow-2xl border border-slate-200/50 p-1.5 w-48 animate-in fade-in zoom-in-95 duration-150 origin-top-left" 
             style={{ 
-                width: 140, 
-                left: dragState.currentClientX, 
-                top: dragState.currentClientY,
-                height: 40,
-                transform: `translate(12px, 12px)`
+                top: Math.min(contextMenu.y, window.innerHeight - 320), 
+                left: Math.min(contextMenu.x, window.innerWidth - 200) 
             }}
         >
-             <div className="font-bold truncate">{dragState.plan.title}</div>
-             <div className="opacity-80 text-[10px] mt-0.5 font-mono">
-               {format(new Date(dragState.plan.startDate), 'HH:mm')} - {format(new Date(dragState.plan.endDate), 'HH:mm')}
-             </div>
-        </div>
-      )}
+            {contextMenu.plan ? (
+                <>
+                    <div className="px-3 py-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider">切换状态 (当前: {STATUS_LABELS[contextMenu.plan.status]})</div>
+                    
+                    {contextMenu.plan.status !== PlanStatus.TODO && (
+                      <button onClick={() => { onPlanUpdate({...contextMenu.plan!, status: PlanStatus.TODO}); setContextMenu(null); }} className="w-full flex items-center gap-2.5 p-2 rounded-lg hover:bg-slate-50 text-slate-600 font-bold text-xs transition-all">
+                          <Circle size={14} /> 设为待办
+                      </button>
+                    )}
+                    {contextMenu.plan.status !== PlanStatus.IN_PROGRESS && (
+                      <button onClick={() => { onPlanUpdate({...contextMenu.plan!, status: PlanStatus.IN_PROGRESS}); setContextMenu(null); }} className="w-full flex items-center gap-2.5 p-2 rounded-lg hover:bg-blue-50 text-blue-600 font-bold text-xs transition-all">
+                          <PlayCircle size={14} /> 标记执行中
+                      </button>
+                    )}
+                    {contextMenu.plan.status !== PlanStatus.DONE && (
+                      <button onClick={() => { onPlanUpdate({...contextMenu.plan!, status: PlanStatus.DONE}); setContextMenu(null); }} className="w-full flex items-center gap-2.5 p-2 rounded-lg hover:bg-emerald-50 text-emerald-600 font-bold text-xs transition-all">
+                          <CheckCircle2 size={14} /> 标记完成
+                      </button>
+                    )}
 
-      {/* Custom Context Menu */}
-      {contextMenu && (
-        <div 
-          className="fixed z-[60] bg-white/95 backdrop-blur-xl rounded-xl shadow-[0_10px_30px_-5px_rgba(0,0,0,0.15)] border border-white/50 w-40 overflow-hidden animate-in fade-in zoom-in-95 duration-100 origin-top-left"
-          style={{ top: Math.min(contextMenu.y, window.innerHeight - 200), left: Math.min(contextMenu.x, window.innerWidth - 170) }}
-        >
-          {contextMenu.type === 'PLAN' ? (
-            <div className="py-1">
-               <button onClick={() => handleMenuAction('EDIT')} className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-blue-50 hover:text-blue-600 flex items-center gap-2 transition-colors">
-                  <Edit2 size={14} /> 编辑
-               </button>
-               <button onClick={() => handleMenuAction('TOGGLE_STATUS')} className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-blue-50 hover:text-blue-600 flex items-center gap-2 transition-colors">
-                  {contextMenu.plan?.status === PlanStatus.DONE ? <Circle size={14} /> : <CheckCircle2 size={14} />}
-                  {contextMenu.plan?.status === PlanStatus.DONE ? '标记未完成' : '标记完成'}
-               </button>
-               <div className="h-px bg-slate-100 my-1"></div>
-               <button onClick={() => handleMenuAction('DELETE')} className="w-full text-left px-4 py-2 text-sm text-rose-500 hover:bg-rose-50 flex items-center gap-2 transition-colors">
-                  <Trash2 size={14} /> 删除
-               </button>
-            </div>
-          ) : (
-            <div className="py-1">
-               <div className="px-4 py-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider border-b border-slate-50 mb-1">
-                  {contextMenu.date && format(contextMenu.date, 'HH:mm')}
-               </div>
-               <button onClick={() => handleMenuAction('NEW')} className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-blue-50 hover:text-blue-600 flex items-center gap-2 transition-colors">
-                  <Plus size={14} /> 在此新建
-               </button>
-            </div>
-          )}
-        </div>
+                    <div className="h-px bg-slate-100 my-1.5 mx-1"></div>
+                    <div className="px-3 py-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider">颜色标签</div>
+                    <div className="grid grid-cols-6 gap-1 px-2 pb-2 mt-1">
+                        {COLORS.map(c => (
+                            <button 
+                                key={c}
+                                onClick={() => { onPlanUpdate({...contextMenu.plan!, color: c}); setContextMenu(null); }}
+                                className={`w-5 h-5 rounded-full bg-${c}-500 hover:scale-125 transition-transform ring-2 ring-transparent hover:ring-white shadow-sm ${contextMenu.plan!.color === c ? 'ring-slate-400' : ''}`}
+                            />
+                        ))}
+                    </div>
+
+                    <div className="h-px bg-slate-100 my-1.5 mx-1"></div>
+                    <button onClick={() => { onDeletePlan(contextMenu.plan!.id); setContextMenu(null); }} className="w-full flex items-center gap-2.5 p-2 rounded-lg hover:bg-rose-50 text-rose-500 font-bold text-xs transition-all">
+                        <Trash2 size={14} /> 删除此日程
+                    </button>
+                </>
+            ) : (
+                <button onClick={() => { onSlotClick(contextMenu.date!); setContextMenu(null); }} className="w-full flex items-center gap-2.5 p-2 rounded-lg hover:bg-slate-100 text-slate-700 font-bold text-xs transition-all group">
+                    <div className="w-7 h-7 flex items-center justify-center bg-indigo-50 text-indigo-600 rounded-md group-hover:bg-indigo-600 group-hover:text-white transition-colors">
+                        <Plus size={16} />
+                    </div>
+                    <div className="flex flex-col text-left">
+                        <span>新建日程</span>
+                        <span className="text-[10px] text-slate-400 font-normal">{contextMenu.timeStr}</span>
+                    </div>
+                </button>
+            )}
+        </div>,
+        document.body
       )}
     </div>
   );

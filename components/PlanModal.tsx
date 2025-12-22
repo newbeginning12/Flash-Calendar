@@ -242,8 +242,6 @@ export const PlanModal: React.FC<PlanModalProps> = ({ plan, isOpen, onClose, onS
                 setNewLinkTitle(hostname);
 
                 // 2. Attempt to fetch real title (Best Effort)
-                // Note: This often fails on client-side due to CORS, but works for some sites
-                // or if the app is served from the same origin.
                 setIsFetchingTitle(true);
                 const controller = new AbortController();
                 const timeoutId = setTimeout(() => controller.abort(), 3000); // 3s timeout
@@ -264,8 +262,7 @@ export const PlanModal: React.FC<PlanModalProps> = ({ plan, isOpen, onClose, onS
                     }
                 }
             } catch (err) {
-                // Ignore CORS errors or network errors, fallback (domain) is already set
-                // console.debug("Auto-fill title fallback to domain due to:", err);
+                // Ignore CORS errors
             } finally {
                 setIsFetchingTitle(false);
             }
@@ -303,7 +300,7 @@ export const PlanModal: React.FC<PlanModalProps> = ({ plan, isOpen, onClose, onS
   const isDefaultTitle = editedPlan.title === '新建日程';
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
       <div 
         className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm transition-opacity" 
         onClick={onClose}
@@ -384,7 +381,6 @@ export const PlanModal: React.FC<PlanModalProps> = ({ plan, isOpen, onClose, onS
                                 onChange={handleEndTimeChange}
                                 minDate={editedPlan.startDate}
                                 isError={!!timeError}
-                                // label="结束时间" // Omitted to use custom label above
                             />
                         </div>
                     </div>
