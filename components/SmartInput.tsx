@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, memo } from 'react';
 import { Sparkles, ArrowUp, Loader2, Mic, Square, StopCircle } from 'lucide-react';
 import { SmartSuggestion } from '../services/aiService';
 
@@ -26,54 +26,161 @@ declare global {
   }
 }
 
-// --- Apple Style AI Icon (Clean, Blue/Cyan, Sparkles) ---
-const AIAssistantIcon = ({ isExpanded, isListening, isProcessing }: { isExpanded: boolean, isListening: boolean, isProcessing: boolean }) => {
+// --- High Fidelity Pro Voice Waveform Component ---
+const VoiceVisualizer = ({ analyser }: { analyser: AnalyserNode | null }) => {
+  const barsRef = useRef<(HTMLDivElement | null)[]>([]);
+  const animationRef = useRef<number | null>(null);
+  const smoothedValues = useRef<number[]>(new Array(19).fill(0));
+
+  useEffect(() => {
+    if (!analyser) return;
+
+    const bufferLength = analyser.frequencyBinCount;
+    const dataArray = new Uint8Array(bufferLength);
+    
+    // Create a symmetric bell curve for spectral mapping
+    // We map different frequency bins to these 19 bars
+    const barCount = 19;
+    
+    const update = () => {
+      analyser.getByteFrequencyData(dataArray);
+      
+      // We sample from the lower-mid range of the frequency spectrum for better visual feedback
+      const step = Math.floor((bufferLength * 0.4) / barCount);
+
+      for (let i = 0; i < barCount; i++) {
+        const bar = barsRef.current[i];
+        if (!bar) continue;
+
+        // Get value from specific frequency bin
+        const rawValue = dataArray[i * step] || 0;
+        
+        // Bell-curve weight: stronger in middle, softer on edges
+        const distFromCenter = Math.abs(i - (barCount - 1) / 2);
+        const weight = Math.exp(-Math.pow(distFromCenter / 5, 2));
+        
+        const targetValue = (rawValue / 255) * 45 * weight; // Max height around 45px
+        
+        // Smoothing algorithm (Lerp) to make it feel organic
+        smoothedValues.current[i] += (targetValue - smoothedValues.current[i]) * 0.25;
+        
+        const val = smoothedValues.current[i];
+        const scale = 1 + val * 0.5;
+        
+        // Apply hardware accelerated transforms
+        bar.style.transform = `scaleY(${scale})`;
+        bar.style.opacity = (0.2 + (val / 10) * 0.8).toString();
+        
+        // Dynamic Glow based on intensity
+        const glowOpacity = Math.min(0.6, val / 15);
+        bar.style.filter = `drop-shadow(0 0 ${val / 2}px rgba(56, 189, 248, ${glowOpacity}))`;
+      }
+
+      animationRef.current = requestAnimationFrame(update);
+    };
+
+    update();
+    return () => {
+      if (animationRef.current) cancelAnimationFrame(animationRef.current);
+    };
+  }, [analyser]);
+
+  return (
+    <div className="flex items-center gap-[4px] h-10 px-4 overflow-visible">
+      {[...Array(19)].map((_, i) => (
+        <div 
+          key={i}
+          ref={el => barsRef.current[i] = el}
+          className="w-1.5 h-1.5 rounded-full bg-gradient-to-t from-indigo-500 via-blue-500 to-cyan-400 origin-center will-change-transform"
+          style={{ 
+            transform: 'scaleY(1)', 
+            transition: 'none',
+            boxShadow: '0 0 8px rgba(99, 102, 241, 0.1)'
+          }}
+        />
+      ))}
+    </div>
+  );
+};
+
+// --- Apple Style AI Icon ---
+const AIAssistantIcon = memo(({ isExpanded, isListening, isProcessing, analyser }: { isExpanded: boolean, isListening: boolean, isProcessing: boolean, analyser: AnalyserNode | null }) => {
   const isActive = isListening || isProcessing;
+  const glowRef = useRef<HTMLDivElement>(null);
+  const animationRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (!isListening || !analyser) {
+        if (glowRef.current) glowRef.current.style.transform = 'scale(0.75)';
+        return;
+    }
+
+    const dataArray = new Uint8Array(analyser.frequencyBinCount);
+    const updateGlow = () => {
+        analyser.getByteFrequencyData(dataArray);
+        let sum = 0;
+        for (let i = 0; i < 30; i++) sum += dataArray[i]; // Focus on low-freq punch
+        const average = sum / 30;
+        const vol = Math.min(100, average * 1.5);
+
+        if (glowRef.current) {
+            const scale = 1.1 + (vol / 100) * 1.0;
+            glowRef.current.style.transform = `scale(${scale})`;
+            glowRef.current.style.opacity = (0.3 + (vol / 100) * 0.4).toString();
+        }
+        animationRef.current = requestAnimationFrame(updateGlow);
+    };
+
+    updateGlow();
+    return () => {
+        if (animationRef.current) cancelAnimationFrame(animationRef.current);
+    };
+  }, [isListening, analyser]);
   
   return (
     <div className={`relative flex items-center justify-center transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] ${isExpanded ? 'w-8 h-8' : 'w-9 h-9'}`}>
       
-      {/* Active Glow - Cyan/Blue (No Purple) */}
-      <div className={`absolute inset-0 rounded-full bg-gradient-to-tr from-cyan-400 via-blue-500 to-sky-400 blur-lg transition-all duration-500 ${isActive ? 'scale-150 opacity-50' : 'scale-75 opacity-0'}`} />
+      {/* Active Glow */}
+      <div 
+        ref={glowRef}
+        className={`absolute inset-0 rounded-full bg-gradient-to-tr from-cyan-400 via-blue-500 to-indigo-500 blur-xl transition-opacity duration-500 ${isActive ? 'opacity-40' : 'opacity-0'}`} 
+        style={{ transform: 'scale(0.75)' }}
+      />
       
       {/* Main Orb Container */}
       <div className={`
           absolute inset-0 rounded-full transition-all duration-500 overflow-hidden
           ${isActive 
-             ? 'bg-gradient-to-br from-blue-500 to-cyan-500 shadow-lg' 
+             ? 'bg-gradient-to-br from-blue-600 to-cyan-500 shadow-[0_4px_15px_rgba(37,99,235,0.3)]' 
              : 'bg-gradient-to-b from-white to-slate-100 border border-slate-200 shadow-[0_2px_4px_rgba(0,0,0,0.05)]'
           }
       `}>
-          {/* Glass Sheen / Reflection */}
-          <div className="absolute inset-0 bg-gradient-to-b from-white/60 to-transparent opacity-60" />
+          <div className="absolute inset-0 bg-gradient-to-b from-white/40 to-transparent opacity-60" />
       </div>
       
       {/* Icon Content */}
-      <div className={`relative z-10 flex items-center justify-center transition-colors duration-300 ${isActive ? 'text-white' : 'text-slate-500'}`}>
+      <div className={`relative z-10 flex items-center justify-center transition-colors duration-300 ${isActive ? 'text-white' : 'text-slate-50'}`}>
          {isProcessing ? (
             <Loader2 className="animate-spin" size={16} strokeWidth={2.5} />
          ) : isListening ? (
-             <div className="flex gap-0.5 items-center h-2.5">
-                <div className="w-0.5 bg-current rounded-full animate-[bounce_1s_infinite] h-2"></div>
-                <div className="w-0.5 bg-current rounded-full animate-[bounce_1.2s_infinite] h-2.5"></div>
+             <div className="flex gap-0.5 items-center h-3">
                 <div className="w-0.5 bg-current rounded-full animate-[bounce_0.8s_infinite] h-2"></div>
+                <div className="w-0.5 bg-current rounded-full animate-[bounce_1s_infinite] h-3"></div>
+                <div className="w-0.5 bg-current rounded-full animate-[bounce_0.7s_infinite] h-2.5"></div>
              </div>
          ) : (
-            // Apple Style AI Sparkles (Double Star)
              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className={`transition-transform duration-500 ${isExpanded ? 'scale-90' : 'scale-100'}`}>
                 <defs>
                    <linearGradient id="ai-gradient" x1="0" y1="0" x2="24" y2="24" gradientUnits="userSpaceOnUse">
-                      <stop offset="0" stopColor="#3b82f6" /> {/* Blue 500 */}
-                      <stop offset="1" stopColor="#06b6d4" /> {/* Cyan 500 */}
+                      <stop offset="0" stopColor="#3b82f6" />
+                      <stop offset="1" stopColor="#06b6d4" />
                    </linearGradient>
                 </defs>
-                {/* Main 4-Point Star */}
                 <path 
                     d="M12 2L14.5 9.5L22 12L14.5 14.5L12 22L9.5 14.5L2 12L9.5 9.5L12 2Z" 
                     fill={isActive ? "currentColor" : "url(#ai-gradient)"}
                     className="drop-shadow-sm"
                 />
-                {/* Secondary Small Star */}
                 <path 
                     d="M19 16L20 18.5L22.5 19.5L20 20.5L19 23L18 20.5L15.5 19.5L18 18.5L19 16Z" 
                     fill={isActive ? "currentColor" : "url(#ai-gradient)"}
@@ -84,7 +191,7 @@ const AIAssistantIcon = ({ isExpanded, isListening, isProcessing }: { isExpanded
       </div>
     </div>
   );
-};
+});
 
 export const SmartInput: React.FC<SmartInputProps> = ({ onSubmit, onStop, onSuggestionClick, isProcessing, suggestions = [] }) => {
   const [value, setValue] = useState('');
@@ -100,6 +207,60 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onSubmit, onStop, onSugg
   const [isListening, setIsListening] = useState(false);
   const recognitionRef = useRef<any>(null);
   const valueBeforeRecording = useRef(''); 
+
+  // Audio Processing state (Minimal)
+  const [analyser, setAnalyser] = useState<AnalyserNode | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+        if (recognitionRef.current) {
+            try {
+                recognitionRef.current.onend = null;
+                recognitionRef.current.stop();
+            } catch (e) {}
+        }
+        stopAudioAnalysis();
+    };
+  }, []);
+
+  // --- Audio Analysis Logic ---
+  const startAudioAnalysis = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      streamRef.current = stream;
+      
+      const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+      audioContextRef.current = audioContext;
+      
+      const analyserNode = audioContext.createAnalyser();
+      analyserNode.fftSize = 512; // Increased resolution
+      analyserNode.smoothingTimeConstant = 0.5; // Smooth input
+      
+      const source = audioContext.createMediaStreamSource(stream);
+      source.connect(analyserNode);
+      
+      setAnalyser(analyserNode);
+    } catch (err) {
+      console.warn("Could not start audio visualization:", err);
+    }
+  };
+
+  const stopAudioAnalysis = () => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current = null;
+    }
+    
+    if (audioContextRef.current) {
+      audioContextRef.current.close();
+      audioContextRef.current = null;
+    }
+    
+    setAnalyser(null);
+  };
 
   // Rotate hints
   useEffect(() => {
@@ -138,7 +299,8 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onSubmit, onStop, onSugg
   // Focus management
   useEffect(() => {
       if (isExpanded && inputRef.current) {
-          setTimeout(() => inputRef.current?.focus(), 100);
+          const timer = setTimeout(() => inputRef.current?.focus(), 100);
+          return () => clearTimeout(timer);
       }
   }, [isExpanded]);
 
@@ -149,17 +311,21 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onSubmit, onStop, onSugg
     }
     if (isListening) {
         stopListening();
-        setTimeout(() => {
-            if (value.trim()) onSubmit(value);
-            setValue('');
-        }, 100);
+        // Give it a tiny bit of time to settle the final result if any
+        setTimeout(async () => {
+            if (value.trim()) {
+                await onSubmit(value);
+                setValue('');
+            }
+        }, 300);
         return;
     }
     if (!value.trim()) return;
     
     try {
-        await onSubmit(value);
+        const toSubmit = value;
         setValue('');
+        await onSubmit(toSubmit);
     } catch (e) {
         console.error("Submit failed", e);
     }
@@ -178,14 +344,16 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onSubmit, onStop, onSugg
     await onSuggestionClick(suggestion);
   };
 
-  // --- Speech Logic ---
+  // --- Optimized Speech Logic ---
   const startListening = () => {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRecognition) {
-      alert('您的浏览器暂不支持语音识别。');
+      alert('您的浏览器暂不支持语音识别。请使用 Chrome 或 Edge 浏览器。');
       return;
     }
-    if (recognitionRef.current && isListening) return;
+
+    if (isListening) return;
+
     valueBeforeRecording.current = value;
     
     try {
@@ -197,54 +365,72 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onSubmit, onStop, onSugg
         recognition.onstart = () => {
           setIsListening(true);
           setIsExpanded(true); 
+          startAudioAnalysis();
         };
         
         recognition.onresult = (event: any) => {
-          let sessionTranscript = '';
-          for (let i = 0; i < event.results.length; ++i) {
-              sessionTranscript += event.results[i][0].transcript;
+          let interimTranscript = '';
+          let finalTranscript = '';
+
+          for (let i = event.resultIndex; i < event.results.length; ++i) {
+              if (event.results[i].isFinal) {
+                  finalTranscript += event.results[i][0].transcript;
+              } else {
+                  interimTranscript += event.results[i][0].transcript;
+              }
           }
-          const prefix = valueBeforeRecording.current;
-          setValue(prefix + sessionTranscript);
+
+          if (finalTranscript) {
+              valueBeforeRecording.current += finalTranscript;
+          }
+          
+          setValue(valueBeforeRecording.current + interimTranscript);
         };
         
         recognition.onerror = (event: any) => {
-           if (event.error !== 'no-speech') {
-               console.warn('Speech error', event.error);
-           }
+           console.error('Speech recognition error:', event.error);
            setIsListening(false);
+           stopListening();
         };
         
         recognition.onend = () => {
           setIsListening(false);
-          inputRef.current?.focus();
+          stopAudioAnalysis();
+          recognitionRef.current = null;
         };
         
         recognitionRef.current = recognition;
         recognition.start();
     } catch (e) {
-        console.error(e);
+        console.error("Speech start failed:", e);
         setIsListening(false);
     }
   };
 
   const stopListening = () => {
     if (recognitionRef.current) {
-      try { recognitionRef.current.stop(); } catch(e) {}
+      try { 
+          recognitionRef.current.stop(); 
+      } catch(e) {}
       recognitionRef.current = null;
     }
     setIsListening(false);
+    stopAudioAnalysis();
   };
 
   const toggleListening = (e: React.MouseEvent) => {
     e.stopPropagation();
-    isListening ? stopListening() : startListening();
+    if (isListening) {
+        stopListening();
+    } else {
+        startListening();
+    }
   };
 
   return (
     <div className="fixed bottom-6 left-1/2 transform -translate-x-1/2 w-full max-w-3xl flex flex-col items-center justify-end z-[100] pointer-events-none">
       
-      {/* Suggestions (Float above) */}
+      {/* Suggestions */}
       <div 
         ref={suggestionsRef}
         className={`
@@ -269,7 +455,7 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onSubmit, onStop, onSugg
         </div>
       </div>
 
-      {/* Main Container - Apple Style Glass Capsule */}
+      {/* Main Container */}
       <div 
         ref={containerRef}
         onClick={() => { if (!isExpanded) setIsExpanded(true); }}
@@ -288,7 +474,7 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onSubmit, onStop, onSugg
                 ${isExpanded ? 'left-3' : 'left-1.5'}
             `}
         >
-             <AIAssistantIcon isExpanded={isExpanded} isListening={isListening} isProcessing={isProcessing} />
+             <AIAssistantIcon isExpanded={isExpanded} isListening={isListening} isProcessing={isProcessing} analyser={analyser} />
         </div>
 
         {/* Collapsed Label */}
@@ -302,7 +488,7 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onSubmit, onStop, onSugg
              </span>
         </div>
 
-        {/* Quick Record Button (Collapsed State) */}
+        {/* Quick Record Button */}
         <button
             onClick={(e) => {
                 e.stopPropagation();
@@ -333,10 +519,19 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onSubmit, onStop, onSugg
                         </span>
                     </div>
                  )}
-                 {isListening && !value && (
-                    <span className="absolute text-blue-500 font-medium animate-pulse text-[15px]">
-                        正在聆听...
-                    </span>
+                 {isListening && (
+                    <div className="absolute inset-0 flex items-center pointer-events-none overflow-visible">
+                        {!value ? (
+                             <div className="flex items-center gap-3 animate-fade-in">
+                                <span className="text-blue-600 font-bold text-[15px] tracking-tight">正在聆听</span>
+                                <VoiceVisualizer analyser={analyser} />
+                             </div>
+                        ) : (
+                             <div className="w-full flex justify-end pr-6 animate-fade-in">
+                                <VoiceVisualizer analyser={analyser} />
+                             </div>
+                        )}
+                    </div>
                  )}
                  <input
                     ref={inputRef}
@@ -345,7 +540,7 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onSubmit, onStop, onSugg
                     onChange={(e) => setValue(e.target.value)}
                     onKeyDown={handleKeyDown}
                     disabled={!isExpanded || isProcessing}
-                    className="w-full h-full bg-transparent border-none outline-none text-[16px] text-slate-800 placeholder-transparent font-medium caret-blue-500"
+                    className={`w-full h-full bg-transparent border-none outline-none text-[16px] text-slate-800 placeholder-transparent font-medium caret-blue-500 transition-opacity ${isListening && !value ? 'opacity-0' : 'opacity-100'}`}
                  />
             </div>
 
@@ -354,13 +549,21 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onSubmit, onStop, onSugg
                  <button
                     onClick={toggleListening}
                     disabled={isProcessing}
+                    title={isListening ? "停止录音" : "语音输入"}
                     className={`w-9 h-9 flex items-center justify-center rounded-full transition-all duration-200 ${
                         isListening 
-                            ? 'bg-rose-50 text-rose-500 ring-2 ring-rose-100' 
+                            ? 'bg-rose-50 text-rose-500 ring-2 ring-rose-100 shadow-sm' 
                             : 'text-slate-400 hover:text-slate-600 hover:bg-slate-100'
                     }`}
                  >
-                     {isListening ? <Square size={12} fill="currentColor" /> : <Mic size={20} strokeWidth={1.5} />}
+                     {isListening ? (
+                         <div className="relative flex items-center justify-center">
+                             <div className="absolute w-8 h-8 bg-rose-500/10 rounded-full animate-ping"></div>
+                             <Square size={12} fill="currentColor" className="relative z-10" />
+                         </div>
+                     ) : (
+                         <Mic size={20} strokeWidth={1.5} />
+                     )}
                  </button>
 
                  <button 
