@@ -16,7 +16,7 @@ const getRandomColor = () => COLORS[Math.floor(Math.random() * COLORS.length)];
 // Helper: Standardize local time format (YYYY-MM-DD HH:mm:ss)
 const formatLocalTime = (date: Date) => {
   const pad = (n: number) => n.toString().padStart(2, '0');
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
 };
 
 // Helper: Determine Plan Status based on time
@@ -47,25 +47,20 @@ const extractJSON = (text: string) => {
     const firstOpenBrace = text.indexOf('{');
     const firstOpenBracket = text.indexOf('[');
 
-    // If Array starts before Object (or there are no objects), try to parse as Array
     if (firstOpenBracket !== -1 && (firstOpenBrace === -1 || firstOpenBracket < firstOpenBrace)) {
         const arrayMatch = text.match(/\[[\s\S]*\]/);
         if (arrayMatch) {
             try {
                 return JSON.parse(arrayMatch[0]);
-            } catch (e) {
-                 // If array parse fails, fall through to try object or raw
-            }
+            } catch (e) {}
         }
     }
 
-    // 3. Try to find the first valid outer object {...}
     const objectMatch = text.match(/\{[\s\S]*\}/);
     if (objectMatch) {
         return JSON.parse(objectMatch[0]);
     }
     
-    // 4. Fallback to raw text
     return JSON.parse(text);
   } catch (e) {
     console.error("JSON Extraction Failed:", text);
@@ -96,8 +91,6 @@ export interface SmartSuggestion {
   }
 }
 
-// --- OpenAI Compatible Adapter (DeepSeek / Qwen) ---
-// Support for Multimodal Messages (Vision)
 interface OpenAITextContent {
   type: 'text';
   text: string;
@@ -115,11 +108,9 @@ const callOpenAICompatible = async (
   signal?: AbortSignal
 ): Promise<string | null> => {
   if (!settings.apiKey || !settings.baseUrl) {
-    console.error("Missing API Key or Base URL for custom provider");
     return null;
   }
 
-  // Remove trailing slashes from baseUrl to prevent double slashes (e.g. .com//chat)
   const cleanBaseUrl = settings.baseUrl.replace(/\/+$/, '');
 
   try {
@@ -132,33 +123,21 @@ const callOpenAICompatible = async (
       body: JSON.stringify({
         model: settings.model,
         messages: messages,
-        temperature: 0.7,
+        temperature: 0.1, // Lower temperature for more stable output
         stream: false,
-        // Some providers support response_format: { type: "json_object" }, but not all. 
-        // We rely on system prompt for JSON structure.
         response_format: jsonMode ? { type: "json_object" } : undefined
       }),
       signal: signal
     });
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error(`API Error (${settings.provider}):`, response.status, errorText);
-      return null;
-    }
-
+    if (!response.ok) return null;
     const data = await response.json();
     return data.choices?.[0]?.message?.content || null;
   } catch (e: any) {
-    if (e.name === 'AbortError') {
-        throw e; // Re-throw abort error to be handled by caller
-    }
-    console.error(`Network Error (${settings.provider}):`, e);
+    if (e.name === 'AbortError') throw e;
     return null;
   }
 };
-
-// --- Main Service Functions ---
 
 export const processUserIntent = async (
   userInput: string, 
@@ -169,11 +148,9 @@ export const processUserIntent = async (
   return handleIntentRequest(userInput, currentPlans, settings, signal);
 };
 
-// Helper: Common Plan Creation Logic
 const createPlanFromRaw = (rawPlan: any): AIProcessingResult => {
-    const title = rawPlan.title || "AI 识别日程";
+    const title = (rawPlan.title || "新日程").substring(0, 20); // Force title length
 
-    // Date Fallback Logic
     let startISO = parseDate(rawPlan.startDate);
     let endISO = parseDate(rawPlan.endDate);
     
@@ -198,15 +175,13 @@ const createPlanFromRaw = (rawPlan: any): AIProcessingResult => {
         startDate: startISO!,
         endDate: endISO!,
         status: determineStatus(startISO!, endISO!),
-        tags: (rawPlan.tags || []).slice(0, 3),
+        tags: (rawPlan.tags || []).slice(0, 2), // Keep tags minimal
         color: getRandomColor(),
         links: []
       }
     };
 }
 
-
-// Unified Handler
 const handleIntentRequest = async (
   textInput: string,
   currentPlans: WorkPlan[],
@@ -214,90 +189,55 @@ const handleIntentRequest = async (
   signal?: AbortSignal
 ): Promise<AIProcessingResult> => {
   const now = new Date();
-  const thisWeekStart = startOfWeek(now, { weekStartsOn: 1 });
-  const thisWeekEnd = endOfWeek(now, { weekStartsOn: 1 });
-  const nextWeekStart = startOfWeek(addWeeks(now, 1), { weekStartsOn: 1 });
-  const nextWeekEnd = endOfWeek(addWeeks(now, 1), { weekStartsOn: 1 });
-  
-  const dateFormat = 'yyyy-MM-dd';
   const localTimeContext = format(now, 'yyyy-MM-dd HH:mm:ss');
-  
-  // Explicitly format ranges for the AI
-  const thisWeekRangeStr = `${format(thisWeekStart, dateFormat)} 至 ${format(thisWeekEnd, dateFormat)}`;
-  const nextWeekRangeStr = `${format(nextWeekStart, dateFormat)} 至 ${format(nextWeekEnd, dateFormat)}`;
-
-  // Logic Improvement: Pre-filter plans into strict buckets
-  const thisWeekPlans = currentPlans.filter(p => 
-    isWithinInterval(parseISO(p.startDate), { start: thisWeekStart, end: thisWeekEnd })
-  );
-  
-  const nextWeekPlans = currentPlans.filter(p => 
-    isWithinInterval(parseISO(p.startDate), { start: nextWeekStart, end: nextWeekEnd })
-  );
-
-  const dateContext = `
-    时间上下文:
-    - 当前时间: ${localTimeContext}
-    - **本周范围 (This Week)**: ${thisWeekRangeStr} (含)
-    - **下周范围 (Next Week)**: ${nextWeekRangeStr} (含)
-  `;
-
-  // Context plans (Optimized for tokens)
-  const mapPlan = (p: WorkPlan) => ({
-    title: p.title,
-    date: p.startDate.split('T')[0], // Give AI the date string to be sure
-    status: p.status,
-    desc: p.description?.substring(0, 50)
-  });
-
-  // Strict separation in the payload
-  const plansContextJSON = JSON.stringify({
-    LIST_A_THIS_WEEK: thisWeekPlans.map(mapPlan),
-    LIST_B_NEXT_WEEK: nextWeekPlans.map(mapPlan)
-  });
+  const todayDate = format(now, 'yyyy-MM-dd');
 
   const systemInstructionText = `
-    你是一个专业的工作计划助手 (AI Agent)。
+    你是一个专业且干练的日程管理助手。
     
-    ${dateContext}
+    【核心环境】
+    - 当前时间: ${localTimeContext} (今天是 ${todayDate})
+    - 语言: 中文
 
-    **任务目标**: 
-    分析用户输入，提取核心任务信息，并生成 JSON 格式的日程安排。
+    【任务目标】
+    分析用户输入，提取日程信息或生成报告，返回严格的 JSON。
 
-    **功能规则**:
-    1. **创建日程 (CREATE)**: 用户想安排具体事项时。
-    2. **分析/周报 (ANALYZE)**: 用户询问安排、生成周报或总结时。
+    【解析规则 - 非常重要】
+    1. **意图判断**:
+       - “周报”、“总结”、“回顾” -> "ANALYZE"。
+       - “周会”、“下午开会”、“明天XX” -> "CREATE"。
+       - “周会”是一个会议事件，必须设为 "CREATE"。
 
-    **周报生成严格规则 (ANALYZE)**:
-    用户请求周报时，你是一个数据格式化员，而非决策者。必须严格遵守以下数据来源规则：
-    
-    1. **本周工作 (Achievements)**:
-       - **只能** 从提供的 "LIST_A_THIS_WEEK" 列表中提取数据。
-       - 即使 "LIST_A_THIS_WEEK" 中的某个任务日期是本周五（属于未来），它依然属于**本周工作计划**，**绝对不能**放到下周。
-    
-    2. **下周计划 (Next Week)**:
-       - **只能** 从提供的 "LIST_B_NEXT_WEEK" 列表中提取数据。
-       - 如果 "LIST_B_NEXT_WEEK" 为空，请输出 "暂无具体安排，建议根据本周进度规划"。
-       - **严禁** 将 "LIST_A_THIS_WEEK" 中的任何任务挪到下周计划中，即使它们还没完成。
+    2. **标题提取 (title)**:
+       - 必须精简！2-15 个字符。
+       - 例如：用户说“下午两点开周会”，标题应为“周会”。
 
-    **输出格式要求 (Strict JSON)**:
-    直接返回 JSON 对象，不要包含 \`\`\`json 标记，**严禁包含任何思考过程或解释性文字**。
+    3. **标签提取 (tags)**:
+       - **核心要求**: 从用户输入中提取 1-2 个最相关的关键词作为标签。
+       - **严禁发散**: 不要生成用户没提到的标签。只保留如“会议”、“开发”、“设计”、“个人”等基础词。
+       - 示例：输入“写代码” -> tags: ["开发"]；输入“下午有个会” -> tags: ["会议"]。
 
+    4. **时间解析 (startDate/endDate)**:
+       - 基于 ${todayDate} 偏移。
+       - 如果未说明时长，默认 1 小时。
+
+    【输出格式】
+    直接返回 JSON 对象，严禁任何解释。
     Schema:
     {
       "intent": "CREATE" | "ANALYZE",
       "planData": {
-        "title": "简练的任务标题",
-        "description": "详细的任务背景 (清洗后的纯文本)",
-        "startDate": "YYYY-MM-DDTHH:mm:ss (ISO 8601)",
-        "endDate": "YYYY-MM-DDTHH:mm:ss (ISO 8601)",
+        "title": "精简标题",
+        "description": "详细备注",
+        "startDate": "YYYY-MM-DDTHH:mm:ss",
+        "endDate": "YYYY-MM-DDTHH:mm:ss",
         "tags": ["标签1", "标签2"]
       },
       "reportData": {
-        "achievements": ["完成事项1 (MM-DD)", "进行中事项2 (MM-DD)"],
-        "summary": "一段简练的本周工作总结 (50-100字)",
-        "nextWeekPlans": ["下周事项1", "下周事项2"],
-        "risks": "一段关于风险或需协调事项的描述，如果没有则写'无'"
+        "achievements": [],
+        "summary": "",
+        "nextWeekPlans": [],
+        "risks": ""
       }
     }
   `;
@@ -306,16 +246,12 @@ const handleIntentRequest = async (
 
   if (settings.provider === AIProvider.GOOGLE) {
     try {
-      // Construct parts
-      const parts: any[] = [];
-      
-      parts.push({ text: `Strict Plans Data: ${plansContextJSON}\nUser Input: "${textInput}"` });
-      
       const response = await googleAI.models.generateContent({
         model: settings.model,
-        contents: { parts },
+        contents: { parts: [{ text: `用户输入: "${textInput}"` }] },
         config: {
           responseMimeType: "application/json",
+          temperature: 0.1,
           responseSchema: {
             type: Type.OBJECT,
             properties: {
@@ -349,32 +285,21 @@ const handleIntentRequest = async (
       });
       
       if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
-      // fix: Correctly access the response.text property (not a method)
       rawResponseText = response.text;
     } catch (e: any) {
       if (signal?.aborted || e.name === 'AbortError') throw e;
-      
-      if (e.status === 429 || e.status === 'RESOURCE_EXHAUSTED' || e?.error?.code === 429) {
-         console.warn("Google AI Quota Exceeded (429).");
-         return null; 
-      }
-      
-      console.error("Google AI Error:", e);
+      console.error("AI API Error:", e);
       return null;
     }
   } else {
-    // OpenAI Compatible (Qwen-VL / DeepSeek) - Text Only now (Extend for vision later if needed)
     const messages: OpenAICompatibleMessage[] = [
-      { role: 'system', content: systemInstructionText + " IMPORTANT: Only return the JSON object. No markdown, no thinking." },
-      { role: 'user', content: `Strict Plans Data: ${plansContextJSON}\nUser Input: "${textInput}"` }
+      { role: 'system', content: systemInstructionText },
+      { role: 'user', content: `用户输入: "${textInput}"` }
     ];
-
     rawResponseText = await callOpenAICompatible(settings, messages, true, signal);
   }
 
-  // --- Common Processing ---
   if (!rawResponseText) return null;
-  
   const data = extractJSON(rawResponseText);
   if (!data) return null;
 
@@ -382,7 +307,6 @@ const handleIntentRequest = async (
     return { type: 'ANALYSIS', data: data.reportData };
   }
 
-  // Handle CREATE intent (with heavy fallback logic)
   if (data.intent === 'CREATE') {
     return createPlanFromRaw(data.planData || {});
   }
@@ -395,26 +319,9 @@ export const generateSmartSuggestions = async (
   settings: AISettings
 ): Promise<SmartSuggestion[]> => {
   const localTimeContext = formatLocalTime(new Date());
-  
-  // Also limit history for suggestions
-  const plansSummary = currentPlans
-    .slice(0, 15) 
-    .map(p => `${p.startDate.slice(0, 16)}: ${p.title}`)
-    .join('; ');
+  const plansSummary = currentPlans.slice(0, 10).map(p => `${p.startDate.slice(11, 16)} ${p.title}`).join(', ');
 
-  const systemPrompt = `
-    你是一个日程规划专家。
-    当前时间: ${localTimeContext}
-    已有日程: ${plansSummary}
-    
-    生成 3 个基于当前时间或空档的智能日程建议。
-    返回一个 JSON 数组 (Array)，每个元素包含:
-    1. "label": 简短文本（如“下午3点组会”）。
-    2. "planData": { "title": "...", "startDate": "YYYY-MM-DDTHH:mm:ss", "endDate": "...", "tags": [], "description": "" }
-    
-    tags 请仅生成 1 个最相关的短标签（如"会议"）。
-    确保时间格式准确。默认时长1小时。
-  `;
+  const systemPrompt = `你是一个日程建议专家。基于当前时间 ${localTimeContext} 和已有日程 ${plansSummary}，返回3个简短的 JSON 建议。标题不超过6个字。格式: [{"label": "建议文案", "planData": {...}}]`;
 
   let rawResponseText: string | undefined | null = null;
 
@@ -422,9 +329,10 @@ export const generateSmartSuggestions = async (
     try {
       const response = await googleAI.models.generateContent({
         model: settings.model,
-        contents: "生成建议",
+        contents: "建议",
         config: {
           responseMimeType: "application/json",
+          temperature: 0.7,
           responseSchema: {
             type: Type.ARRAY,
             items: {
@@ -435,35 +343,23 @@ export const generateSmartSuggestions = async (
                   type: Type.OBJECT,
                   properties: {
                     title: { type: Type.STRING },
-                    description: { type: Type.STRING, nullable: true },
                     startDate: { type: Type.STRING },
                     endDate: { type: Type.STRING },
-                    tags: { type: Type.ARRAY, items: { type: Type.STRING }, nullable: true }
                   },
                   required: ["title", "startDate", "endDate"]
                 }
-              },
-              required: ["label", "planData"]
+              }
             }
           },
           systemInstruction: systemPrompt
         }
       });
-      // fix: Correctly access the response.text property (not a method)
       rawResponseText = response.text;
-    } catch (e: any) {
-      if (e.status === 429 || e.status === 'RESOURCE_EXHAUSTED' || e?.error?.code === 429) {
-          console.warn("Google AI Quota Exceeded for Suggestions. Skipping.");
-          return [];
-      }
-      console.error("Google AI Suggestion Error:", e);
-      return [];
-    }
+    } catch (e) { return []; }
   } else {
-     // OpenAI compatible simple text call (no image)
      const messages: OpenAICompatibleMessage[] = [
-      { role: 'system', content: systemPrompt + " IMPORTANT: Return only the JSON array." },
-      { role: 'user', content: "生成建议" }
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: "建议" }
     ];
     rawResponseText = await callOpenAICompatible(settings, messages, true);
   }
@@ -475,10 +371,9 @@ export const generateSmartSuggestions = async (
           label: item.label,
           planData: {
             title: item.planData?.title || "建议日程",
-            description: item.planData?.description || "",
             startDate: parseDate(item.planData?.startDate) || new Date().toISOString(),
             endDate: parseDate(item.planData?.endDate) || new Date().toISOString(),
-            tags: (item.planData?.tags || []).slice(0, 1) // Enforce max 1 tag for suggestions
+            tags: []
           }
       }));
     }
