@@ -1,4 +1,3 @@
-
 import React, { useMemo, useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { WorkPlan, PlanStatus } from '../types';
@@ -24,9 +23,24 @@ interface ContextMenuState {
 const COLORS = ['blue', 'indigo', 'purple', 'rose', 'orange', 'emerald'];
 
 const STATUS_CONFIG = {
-  [PlanStatus.TODO]: { label: '待办', icon: Circle, color: 'slate' },
-  [PlanStatus.IN_PROGRESS]: { label: '进行中', icon: PlayCircle, color: 'blue' },
-  [PlanStatus.DONE]: { label: '已完成', icon: CheckCircle2, color: 'emerald' },
+  [PlanStatus.TODO]: { 
+    label: '待办', 
+    icon: Circle, 
+    color: 'slate',
+    badgeClass: 'bg-slate-50 text-slate-400 border-slate-100'
+  },
+  [PlanStatus.IN_PROGRESS]: { 
+    label: '进行中', 
+    icon: PlayCircle, 
+    color: 'blue',
+    badgeClass: 'bg-blue-50 text-blue-600 border-blue-100'
+  },
+  [PlanStatus.DONE]: { 
+    label: '已完成', 
+    icon: CheckCircle2, 
+    color: 'emerald',
+    badgeClass: 'bg-emerald-50 text-emerald-600 border-emerald-100'
+  },
 };
 
 const TASK_TEMPLATES = [
@@ -89,27 +103,28 @@ export const TaskSidebar: React.FC<TaskSidebarProps> = ({
   return (
     <div className="w-full h-full flex flex-col bg-white border-r border-slate-200/60 flex-shrink-0 z-20 overflow-hidden relative">
       
-      {/* 侧边栏顶部：仅保留统计，按钮移至页眉 */}
-      <div className="p-5 flex-none bg-slate-50/30">
+      {/* 侧边栏顶部：紧凑后的今日任务汇总 */}
+      <div className="p-5 pt-6 flex-none bg-slate-50/30">
         <div className="flex items-center justify-between mb-3">
-            <h2 className="text-xs font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                <Target className="text-indigo-600" size={14} />
-                今日任务汇总
+            <h2 className="text-[12px] font-black text-slate-400 flex items-center gap-2 uppercase tracking-widest">
+                <Target className="text-indigo-500" size={16} />
+                今日汇总
             </h2>
-            <div className="text-[10px] text-indigo-600 font-black bg-indigo-50 px-2 py-0.5 rounded-full border border-indigo-100">
+            <div className="text-[11px] text-indigo-600 font-black bg-indigo-50 px-2 py-0.5 rounded-full border border-indigo-100/50">
                 {stats.done}/{stats.total}
             </div>
         </div>
         
         <div className="flex items-center gap-3">
-          <div className="flex-1 bg-slate-200 rounded-full h-1.5 overflow-hidden">
-              <div className="bg-indigo-500 h-full transition-all duration-700 ease-[cubic-bezier(0.16,1,0.3,1)]" style={{ width: `${stats.progress}%` }}></div>
+          <div className="flex-1 bg-slate-200/60 rounded-full h-1 overflow-hidden">
+              <div className="bg-indigo-500 h-full transition-all duration-1000 ease-[cubic-bezier(0.16,1,0.3,1)]" style={{ width: `${stats.progress}%` }}></div>
           </div>
-          <span className="text-[10px] font-black text-slate-500 w-8 text-right">{stats.progress}%</span>
+          <span className="text-[10px] font-black text-slate-400 w-7 text-right">{stats.progress}%</span>
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto custom-scrollbar p-4 pt-5 space-y-2.5">
+      {/* 列表区：压缩垂直间距 */}
+      <div className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-2">
         {dailyPlans.length > 0 ? (
           dailyPlans.map(plan => {
             const isDone = plan.status === PlanStatus.DONE;
@@ -118,60 +133,69 @@ export const TaskSidebar: React.FC<TaskSidebarProps> = ({
             return (
               <div key={plan.id} onClick={() => onPlanClick(plan)}
                 onContextMenu={(e) => { e.preventDefault(); setContextMenu({ x: e.clientX, y: e.clientY, plan }); }}
-                className={`group flex items-start gap-3 p-3.5 rounded-2xl border transition-all cursor-pointer hover:shadow-lg select-none ${isDone ? 'bg-slate-50 border-slate-100' : 'bg-white border-slate-200/80 hover:border-indigo-300'}`}
+                className={`group relative flex items-center gap-3 p-3.5 rounded-xl border transition-all cursor-pointer select-none hover:shadow-[0_4px_15px_-5px_rgba(0,0,0,0.05)] ${isDone ? 'bg-slate-50/50 border-slate-100' : 'bg-white border-slate-100 hover:border-indigo-100'}`}
               >
-                <button onClick={(e) => handleToggleStatus(e, plan)} className={`mt-0.5 flex-shrink-0 transition-all duration-300 ${isDone ? 'text-emerald-500 scale-110' : 'text-slate-300 hover:text-indigo-500 hover:scale-110'}`}>
-                    <StatusIconComp size={18} className={isDone ? 'fill-emerald-50' : ''} />
+                {/* 左侧选择圈 */}
+                <button onClick={(e) => handleToggleStatus(e, plan)} className={`flex-shrink-0 transition-all duration-300 ${isDone ? 'text-emerald-500' : 'text-slate-200 group-hover:text-indigo-400'}`}>
+                    <StatusIconComp size={22} strokeWidth={2} className={isDone ? 'fill-emerald-50' : ''} />
                 </button>
+
+                {/* 中间信息：紧凑排列 */}
                 <div className="flex-1 min-w-0">
-                    <div className="flex items-center justify-between gap-2 mb-1">
-                        <div className={`text-[13px] font-bold leading-tight truncate ${isDone ? 'text-slate-400 line-through' : 'text-slate-700'}`}>{plan.title}</div>
-                        <span className={`text-[9px] font-black px-1.5 py-0.5 rounded-md bg-${statusInfo.color}-50 text-${statusInfo.color}-600 border border-${statusInfo.color}-100 flex-shrink-0 uppercase`}>
-                            {statusInfo.label}
-                        </span>
+                    <div className={`text-[14px] font-bold tracking-tight truncate leading-none mb-1.5 ${isDone ? 'text-slate-300 line-through' : 'text-slate-700'}`}>
+                        {plan.title}
                     </div>
-                    <div className="text-[10px] text-slate-400 mt-1 flex items-center gap-1.5 font-bold font-mono opacity-60">
-                        <Clock size={11} className="text-slate-300" />
-                        {format(new Date(plan.startDate), 'HH:mm')} - {format(new Date(plan.endDate), 'HH:mm')}
-                        <span className={`w-1.5 h-1.5 rounded-full bg-${plan.color}-400 ml-1`}></span>
+                    <div className="flex items-center gap-2">
+                        <div className="text-[11px] text-slate-400 font-bold flex items-center gap-1 opacity-80">
+                            <Clock size={11} strokeWidth={3} />
+                            {format(new Date(plan.startDate), 'HH:mm')} - {format(new Date(plan.endDate), 'HH:mm')}
+                        </div>
+                        {/* 颜色圆点 */}
+                        <div className={`w-1 h-1 rounded-full bg-${plan.color}-400`}></div>
                     </div>
+                </div>
+
+                {/* 右上角状态标签：差异化色彩方案 */}
+                <div className="absolute top-3 right-3">
+                    <span className={`text-[9px] font-black px-1.5 py-0.5 rounded-md flex-shrink-0 uppercase tracking-tighter border transition-colors ${statusInfo.badgeClass}`}>
+                        {statusInfo.label}
+                    </span>
                 </div>
               </div>
             );
           })
         ) : (
-          <div className="h-40 flex flex-col items-center justify-center text-slate-300 space-y-3 border-2 border-dashed border-slate-50 rounded-3xl m-2 opacity-60">
-             <CalendarDays size={28} className="opacity-20" />
-             <div className="flex flex-col items-center gap-1">
-                <span className="text-[11px] font-bold">今日暂无安排</span>
-             </div>
+          <div className="h-32 flex flex-col items-center justify-center text-slate-300 space-y-3 border border-dashed border-slate-100 rounded-2xl opacity-60">
+             <CalendarDays size={24} className="opacity-20" />
+             <span className="text-[10px] font-bold uppercase tracking-widest">暂无日程安排</span>
           </div>
         )}
       </div>
 
-      <div className="border-t border-slate-100 bg-slate-50/40 flex-none p-4 pb-6">
+      {/* 底部模版区域：压缩内边距 */}
+      <div className="border-t border-slate-100 bg-slate-50/30 flex-none p-4">
         <button 
             onClick={() => setIsTemplatesExpanded(!isTemplatesExpanded)}
-            className="w-full flex items-center justify-between px-1 py-2 hover:bg-slate-100 rounded-lg transition-colors group mb-3"
+            className="w-full flex items-center justify-between py-1 hover:bg-white rounded-lg transition-all group mb-3 px-1"
         >
             <div className="flex items-center gap-2">
-                <Zap size={14} className="text-amber-500 fill-amber-500" />
+                <Zap size={12} className="text-amber-500 fill-amber-500" />
                 <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">原子模版</span>
             </div>
             {isTemplatesExpanded ? <ChevronDown size={14} className="text-slate-300" /> : <ChevronUp size={14} className="text-slate-300" />}
         </button>
 
         {isTemplatesExpanded && (
-            <div className="grid grid-cols-2 gap-2.5">
+            <div className="grid grid-cols-2 gap-2">
                 {TASK_TEMPLATES.map((template) => (
-                    <div key={template.title} draggable onDragStart={(e) => handleDragStart(e, template)} onClick={() => onQuickAdd(template.title, template.minutes, template.color)} className="flex flex-col p-3 rounded-2xl border border-slate-200 bg-white cursor-grab active:cursor-grabbing transition-all hover:border-indigo-400 hover:shadow-xl hover:shadow-indigo-500/5 group">
-                        <div className="flex items-center justify-between mb-1.5">
-                            <div className={`w-7 h-7 flex items-center justify-center rounded-xl bg-${template.color}-50 text-${template.color}-600 group-hover:bg-${template.color}-500 group-hover:text-white transition-all duration-300`}>
+                    <div key={template.title} draggable onDragStart={(e) => handleDragStart(e, template)} onClick={() => onQuickAdd(template.title, template.minutes, template.color)} className="flex flex-col p-3 rounded-xl border border-slate-100 bg-white cursor-grab active:cursor-grabbing transition-all hover:border-indigo-200 hover:shadow-lg hover:shadow-indigo-500/5 group">
+                        <div className="flex items-center justify-between mb-2">
+                            <div className={`w-7 h-7 flex items-center justify-center rounded-lg bg-${template.color}-50 text-${template.color}-600 group-hover:bg-${template.color}-500 group-hover:text-white transition-all duration-300`}>
                                 <template.icon size={14} />
                             </div>
-                            <span className="text-[9px] font-black text-slate-400 bg-slate-50 px-1 rounded-md">{template.label}</span>
+                            <span className="text-[9px] font-black text-slate-400 bg-slate-50 px-1.5 py-0.5 rounded-md">{template.label}</span>
                         </div>
-                        <div className="text-[11px] font-bold text-slate-700 truncate mt-1">{template.title}</div>
+                        <div className="text-[11px] font-bold text-slate-600 truncate">{template.title}</div>
                     </div>
                 ))}
             </div>

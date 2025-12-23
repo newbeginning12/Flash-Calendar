@@ -35,7 +35,7 @@ const GRID_TOP_OFFSET = 24; // 增加顶部间距，防止 00:00 被遮挡
 
 const STATUS_LABELS = {
   [PlanStatus.TODO]: '待办',
-  [PlanStatus.IN_PROGRESS]: '执行中',
+  [PlanStatus.IN_PROGRESS]: '进行中',
   [PlanStatus.DONE]: '已完成',
 };
 
@@ -663,7 +663,7 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
                     )}
                     {contextMenu.plan.status !== PlanStatus.IN_PROGRESS && (
                       <button onClick={() => { onPlanUpdate({...contextMenu.plan!, status: PlanStatus.IN_PROGRESS}); setContextMenu(null); }} className="w-full flex items-center gap-2.5 p-2 rounded-lg hover:bg-blue-50 text-blue-600 font-bold text-xs transition-all">
-                          <PlayCircle size={14} /> 标记执行中
+                          <PlayCircle size={14} /> 标记进行中
                       </button>
                     )}
                     {contextMenu.plan.status !== PlanStatus.DONE && (
