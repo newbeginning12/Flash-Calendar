@@ -118,6 +118,34 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onSubmit, onStop, onSugg
     await onSubmit(toSubmit);
   };
 
+  // 核心：处理智能 Enter 键逻辑
+  const handleEnterKey = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      
+      // 1. 如果正在 AI 处理中，停止它
+      if (isProcessing) {
+        onStop();
+        return;
+      }
+
+      // 2. 如果正在录音中，停止录音（此时文字已在输入框内）
+      if (isListening) {
+        stopListening();
+        return;
+      }
+
+      // 3. 如果输入框为空，则发起录音
+      if (!searchValue.trim()) {
+        startListening();
+        return;
+      }
+
+      // 4. 如果输入框有文字，则提交
+      handleSubmit();
+    }
+  };
+
   const startListening = () => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SpeechRecognition || isListening) return;
@@ -241,7 +269,7 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onSubmit, onStop, onSugg
               onChange={(e) => onSearchChange?.(e.target.value)}
               onFocus={() => setIsFocused(true)}
               onBlur={() => setTimeout(() => setIsFocused(false), 200)}
-              onKeyDown={(e) => e.key === 'Enter' && handleSubmit()}
+              onKeyDown={handleEnterKey}
               className={`w-full h-full bg-transparent border-none outline-none text-sm font-bold text-slate-800 tracking-tight transition-all duration-300 ${isListening && !searchValue ? 'opacity-0' : 'opacity-100'}`}
            />
         </div>

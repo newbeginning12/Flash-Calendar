@@ -275,30 +275,30 @@ export const App: React.FC = () => {
 
                 {/* 右侧：AI 搜索 + 新建按钮 + 系统操作 (Tool Group) */}
                 <div className="flex items-center gap-4 justify-end flex-1">
-                    {/* 功能簇：搜索框 + 新建按钮 */}
-                    <div className="flex items-center gap-2 p-1 bg-slate-100/40 rounded-2xl border border-slate-200/50 ml-auto">
-                        <div className="w-[300px] lg:w-[380px] transition-all duration-300">
-                            <SmartInput 
-                                onSubmit={handleSmartInput} 
-                                onStop={handleStopAI} 
-                                onSuggestionClick={handleSuggestionClick} 
-                                isProcessing={isProcessingAI} 
-                                suggestions={smartSuggestions}
-                                layout="header"
-                                searchValue={searchTerm}
-                                onSearchChange={setSearchTerm}
-                                searchResults={filteredResults}
-                                onSearchResultClick={handleResultClick}
-                            />
-                        </div>
-                        <button 
-                            onClick={() => handleSlotClick(new Date())}
-                            className="h-10 flex items-center justify-center gap-2 px-4 bg-slate-900 hover:bg-black text-white rounded-xl shadow-md active:scale-95 transition-all group whitespace-nowrap"
-                        >
-                            <PlusCircle size={16} className="group-hover:rotate-90 transition-transform duration-300" />
-                            <span className="text-sm font-bold tracking-tight">新建日程</span>
-                        </button>
+                    {/* 搜索框 - 分离后的容器 */}
+                    <div className="w-[300px] lg:w-[420px] transition-all duration-300 ml-auto">
+                        <SmartInput 
+                            onSubmit={handleSmartInput} 
+                            onStop={handleStopAI} 
+                            onSuggestionClick={handleSuggestionClick} 
+                            isProcessing={isProcessingAI} 
+                            suggestions={smartSuggestions}
+                            layout="header"
+                            searchValue={searchTerm}
+                            onSearchChange={setSearchTerm}
+                            searchResults={filteredResults}
+                            onSearchResultClick={handleResultClick}
+                        />
                     </div>
+
+                    {/* 新建按钮 - 独立放置 */}
+                    <button 
+                        onClick={() => handleSlotClick(new Date())}
+                        className="h-10 flex items-center justify-center gap-2 px-5 bg-slate-900 hover:bg-black text-white rounded-xl shadow-md active:scale-95 transition-all group whitespace-nowrap flex-shrink-0"
+                    >
+                        <PlusCircle size={16} className="group-hover:rotate-90 transition-transform duration-300" />
+                        <span className="text-sm font-bold tracking-tight">新建日程</span>
+                    </button>
 
                     <div className="h-6 w-px bg-slate-200/60 mx-1"></div>
 

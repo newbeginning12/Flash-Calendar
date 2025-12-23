@@ -165,9 +165,9 @@ export const TaskSidebar: React.FC<TaskSidebarProps> = ({
             );
           })
         ) : (
-          <div className="h-32 flex flex-col items-center justify-center text-slate-300 space-y-3 border border-dashed border-slate-100 rounded-2xl opacity-60">
-             <CalendarDays size={24} className="opacity-20" />
-             <span className="text-[10px] font-bold uppercase tracking-widest">暂无日程安排</span>
+          <div className="h-32 flex flex-col items-center justify-center text-slate-500 space-y-3 border border-dashed border-slate-200 rounded-2xl bg-slate-50/50">
+             <CalendarDays size={24} className="opacity-40" />
+             <span className="text-[11px] font-bold uppercase tracking-widest">暂无日程安排</span>
           </div>
         )}
       </div>

@@ -1,71 +1,47 @@
+
 import { GoogleGenAI, Type } from "@google/genai";
 import { WorkPlan, PlanStatus, AISettings, AIProvider, WeeklyReportData, AIProcessingResult } from "../types";
-// fix: remove unused and missing startOfWeek, parseISO imports
-import { endOfWeek, addWeeks, format, isWithinInterval } from "date-fns";
+import { endOfWeek, addWeeks, format, isWithinInterval, startOfWeek } from "date-fns";
 
 const COLORS = ['blue', 'indigo', 'purple', 'rose', 'orange', 'emerald'];
 
-// fix: Use recommended gemini-3-flash-preview for text-based scheduling tasks
 export const DEFAULT_MODEL = "gemini-3-flash-preview";
 
 const getRandomColor = () => COLORS[Math.floor(Math.random() * COLORS.length)];
 
-// Helper: Standardize local time format (YYYY-MM-DD HH:mm:ss)
 const formatLocalTime = (date: Date) => {
   const pad = (n: number) => n.toString().padStart(2, '0');
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
 };
 
-// Helper: Determine Plan Status based on time
 const determineStatus = (startDateStr: string, endDateStr: string): PlanStatus => {
   const now = new Date();
   const start = new Date(startDateStr);
   const end = new Date(endDateStr);
 
-  if (end <= now) {
-    return PlanStatus.DONE;
-  }
-  if (start <= now && end > now) {
-    return PlanStatus.IN_PROGRESS;
-  }
+  if (end <= now) return PlanStatus.DONE;
+  if (start <= now && end > now) return PlanStatus.IN_PROGRESS;
   return PlanStatus.TODO;
 };
 
-// Helper: Extract JSON from markdown code blocks or raw text
 const extractJSON = (text: string) => {
   try {
-    // 1. Try to find JSON inside ```json ... ``` blocks
     const codeBlockMatch = text.match(/```json\s*([\s\S]*?)\s*```/);
-    if (codeBlockMatch) {
-      return JSON.parse(codeBlockMatch[1]);
-    }
-
-    // 2. intelligent detection: Array vs Object
+    if (codeBlockMatch) return JSON.parse(codeBlockMatch[1]);
     const firstOpenBrace = text.indexOf('{');
     const firstOpenBracket = text.indexOf('[');
-
     if (firstOpenBracket !== -1 && (firstOpenBrace === -1 || firstOpenBracket < firstOpenBrace)) {
         const arrayMatch = text.match(/\[[\s\S]*\]/);
-        if (arrayMatch) {
-            try {
-                return JSON.parse(arrayMatch[0]);
-            } catch (e) {}
-        }
+        if (arrayMatch) return JSON.parse(arrayMatch[0]);
     }
-
     const objectMatch = text.match(/\{[\s\S]*\}/);
-    if (objectMatch) {
-        return JSON.parse(objectMatch[0]);
-    }
-    
+    if (objectMatch) return JSON.parse(objectMatch[0]);
     return JSON.parse(text);
   } catch (e) {
-    console.error("JSON Extraction Failed:", text);
     return null;
   }
 };
 
-// Helper: Parse dates
 const parseDate = (dateStr: string | undefined): string | null => {
   if (!dateStr) return null;
   try {
@@ -82,20 +58,15 @@ export interface SmartSuggestion {
   planData: {
     title: string;
     description?: string;
-    startDate: string; // ISO
-    endDate: string;   // ISO
+    startDate: string;
+    endDate: string;
     tags?: string[];
   }
 }
 
-interface OpenAITextContent {
-  type: 'text';
-  text: string;
-}
-
 interface OpenAICompatibleMessage {
   role: 'system' | 'user' | 'assistant';
-  content: string | OpenAITextContent[];
+  content: string;
 }
 
 const callOpenAICompatible = async (
@@ -104,12 +75,8 @@ const callOpenAICompatible = async (
   jsonMode: boolean = true,
   signal?: AbortSignal
 ): Promise<string | null> => {
-  if (!settings.apiKey || !settings.baseUrl) {
-    return null;
-  }
-
+  if (!settings.apiKey || !settings.baseUrl) return null;
   const cleanBaseUrl = settings.baseUrl.replace(/\/+$/, '');
-
   try {
     const response = await fetch(`${cleanBaseUrl}/chat/completions`, {
       method: 'POST',
@@ -120,13 +87,12 @@ const callOpenAICompatible = async (
       body: JSON.stringify({
         model: settings.model,
         messages: messages,
-        temperature: 0.1, // Lower temperature for more stable output
+        temperature: 0.1,
         stream: false,
         response_format: jsonMode ? { type: "json_object" } : undefined
       }),
       signal: signal
     });
-
     if (!response.ok) return null;
     const data = await response.json();
     return data.choices?.[0]?.message?.content || null;
@@ -136,33 +102,27 @@ const callOpenAICompatible = async (
   }
 };
 
-export const processUserIntent = async (
-  userInput: string, 
-  currentPlans: WorkPlan[], 
-  settings: AISettings,
-  signal?: AbortSignal
-): Promise<AIProcessingResult> => {
-  return handleIntentRequest(userInput, currentPlans, settings, signal);
+const formatPlansForContext = (plans: WorkPlan[]) => {
+    return plans.map(p => {
+        const statusMap = { [PlanStatus.DONE]: '已完成', [PlanStatus.IN_PROGRESS]: '进行中', [PlanStatus.TODO]: '待办' };
+        return `- 【${statusMap[p.status]}】${p.title} (${p.startDate.slice(0, 10)}) ${p.description || ''}`;
+    }).join('\n');
 };
 
 const createPlanFromRaw = (rawPlan: any): AIProcessingResult => {
-    const title = (rawPlan.title || "新日程").substring(0, 20); // Force title length
-
+    const title = (rawPlan.title || "新日程").substring(0, 20);
     let startISO = parseDate(rawPlan.startDate);
     let endISO = parseDate(rawPlan.endDate);
-    
     if (!startISO) {
         const nextHour = new Date();
         nextHour.setHours(nextHour.getHours() + 1, 0, 0, 0);
         startISO = nextHour.toISOString();
     }
-
     if (!endISO) {
         const start = new Date(startISO!); 
         const end = new Date(start.getTime() + 60 * 60 * 1000);
         endISO = end.toISOString();
     }
-
     return {
       type: 'CREATE_PLAN',
       data: {
@@ -172,82 +132,67 @@ const createPlanFromRaw = (rawPlan: any): AIProcessingResult => {
         startDate: startISO!,
         endDate: endISO!,
         status: determineStatus(startISO!, endISO!),
-        tags: (rawPlan.tags || []).slice(0, 2), // Keep tags minimal
+        tags: (rawPlan.tags || []).slice(0, 2),
         color: getRandomColor(),
         links: []
       }
     };
 }
 
-const handleIntentRequest = async (
-  textInput: string,
-  currentPlans: WorkPlan[],
+export const processUserIntent = async (
+  userInput: string, 
+  currentPlans: WorkPlan[], 
   settings: AISettings,
   signal?: AbortSignal
 ): Promise<AIProcessingResult> => {
   const now = new Date();
   const localTimeContext = format(now, 'yyyy-MM-dd HH:mm:ss');
   const todayDate = format(now, 'yyyy-MM-dd');
+  
+  // 仅筛选本周和下周的日程作为上下文，避免 Token 过多
+  const relevantPlans = currentPlans.filter(p => {
+      const pDate = new Date(p.startDate);
+      const start = startOfWeek(now, { weekStartsOn: 1 });
+      const end = addWeeks(start, 2);
+      return pDate >= start && pDate <= end;
+  });
+
+  const planContext = formatPlansForContext(relevantPlans);
 
   const systemInstructionText = `
-    你是一个专业且干练的日程管理助手。
+    你是一个专业且干练的日程管理与办公助手。
+    当前时间: ${localTimeContext} (今天是 ${todayDate})。
     
-    【核心环境】
-    - 当前时间: ${localTimeContext} (今天是 ${todayDate})
-    - 语言: 中文
+    你必须根据用户输入切换到对应的处理模式：
 
-    【任务目标】
-    分析用户输入，提取日程信息或生成报告，返回严格的 JSON。
+    ### 模式 A：创建日程 (Intent: CREATE)
+    当用户想要“开会”、“预约”、“明天做某事”时进入此模式。
+    1. 标题提取 (title): 2-15字，精简有力。
+    2. 时间解析 (startDate/endDate): 基于 ${todayDate} 偏移。默认时长1小时。
+    3. 标签提取 (tags): 从输入中提取1-2个核心关键词。
 
-    【解析规则 - 非常重要】
-    1. **意图判断**:
-       - “周报”、“总结”、“回顾” -> "ANALYZE"。
-       - “周会”、“下午开会”、“明天XX” -> "CREATE"。
-       - “周会”是一个会议事件，必须设为 "CREATE"。
+    ### 模式 B：生成周报 (Intent: ANALYZE)
+    当用户提到“周报”、“总结”、“回顾”时进入此模式。
+    你必须基于提供的【现有日程上下文】来总结。钉钉周报格式要求如下：
+    1. achievements (本周完成工作): 列出状态为“已完成”或“进行中”的重点事项。
+    2. summary (本周工作总结): 对本周产出进行一段话的概括。
+    3. nextWeekPlans (下周工作计划): 列出状态为“待办”或未来日期的事项。
+    4. risks (需协调与帮助): 识别可能的风险或阻塞点，若无则写“无”。
 
-    2. **标题提取 (title)**:
-       - 必须精简！2-15 个字符。
-       - 例如：用户说“下午两点开周会”，标题应为“周会”。
+    【现有日程上下文】:
+    ${planContext || "（暂无现有日程，请基于通用逻辑生成空框架）"}
 
-    3. **标签提取 (tags)**:
-       - **核心要求**: 从用户输入中提取 1-2 个最相关的关键词作为标签。
-       - **严禁发散**: 不要生成用户没提到的标签。只保留如“会议”、“开发”、“设计”、“个人”等基础词。
-       - 示例：输入“写代码” -> tags: ["开发"]；输入“下午有个会” -> tags: ["会议"]。
-
-    4. **时间解析 (startDate/endDate)**:
-       - 基于 ${todayDate} 偏移。
-       - 如果未说明时长，默认 1 小时。
-
-    【输出格式】
     直接返回 JSON 对象，严禁任何解释。
-    Schema:
-    {
-      "intent": "CREATE" | "ANALYZE",
-      "planData": {
-        "title": "精简标题",
-        "description": "详细备注",
-        "startDate": "YYYY-MM-DDTHH:mm:ss",
-        "endDate": "YYYY-MM-DDTHH:mm:ss",
-        "tags": ["标签1", "标签2"]
-      },
-      "reportData": {
-        "achievements": [],
-        "summary": "",
-        "nextWeekPlans": [],
-        "risks": ""
-      }
-    }
   `;
 
   let rawResponseText: string | undefined | null = null;
 
   if (settings.provider === AIProvider.GOOGLE) {
     try {
-      // fix: Create fresh GoogleGenAI instance before call to ensure latest API key
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       const response = await ai.models.generateContent({
         model: settings.model,
-        contents: { parts: [{ text: `用户输入: "${textInput}"` }] },
+        contents: { parts: [{ text: `用户输入: "${userInput}"` }] },
         config: {
           responseMimeType: "application/json",
           temperature: 0.1,
@@ -282,18 +227,16 @@ const handleIntentRequest = async (
           systemInstruction: systemInstructionText
         }
       });
-      
       if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
       rawResponseText = response.text;
     } catch (e: any) {
       if (signal?.aborted || e.name === 'AbortError') throw e;
-      console.error("AI API Error:", e);
       return null;
     }
   } else {
     const messages: OpenAICompatibleMessage[] = [
       { role: 'system', content: systemInstructionText },
-      { role: 'user', content: `用户输入: "${textInput}"` }
+      { role: 'user', content: `用户输入: "${userInput}"` }
     ];
     rawResponseText = await callOpenAICompatible(settings, messages, true, signal);
   }
@@ -305,11 +248,9 @@ const handleIntentRequest = async (
   if (data.intent === 'ANALYZE' && data.reportData) {
     return { type: 'ANALYSIS', data: data.reportData };
   }
-
   if (data.intent === 'CREATE') {
     return createPlanFromRaw(data.planData || {});
   }
-
   return null;
 };
 
@@ -319,14 +260,11 @@ export const generateSmartSuggestions = async (
 ): Promise<SmartSuggestion[]> => {
   const localTimeContext = formatLocalTime(new Date());
   const plansSummary = currentPlans.slice(0, 10).map(p => `${p.startDate.slice(11, 16)} ${p.title}`).join(', ');
-
-  const systemPrompt = `你是一个日程建议专家。基于当前时间 ${localTimeContext} 和已有日程 ${plansSummary}，返回3个简短的 JSON 建议。标题不超过6个字。格式: [{"label": "建议文案", "planData": {...}}]`;
+  const systemPrompt = `你是一个日程建议专家。基于当前时间 ${localTimeContext} 和已有日程 ${plansSummary}，返回3个简短的 JSON 建议。格式: [{"label": "建议文案", "planData": {...}}]`;
 
   let rawResponseText: string | undefined | null = null;
-
   if (settings.provider === AIProvider.GOOGLE) {
     try {
-      // fix: Create fresh GoogleGenAI instance before call
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       const response = await ai.models.generateContent({
         model: settings.model,
