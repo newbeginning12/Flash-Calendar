@@ -1,7 +1,9 @@
 
 import React, { useState, useEffect, useRef, memo } from 'react';
-import { Sparkles, ArrowUp, Loader2, Mic, Square, StopCircle } from 'lucide-react';
+import { Sparkles, ArrowUp, Loader2, Mic, Square, StopCircle, X, Search, Clock, Calendar } from 'lucide-react';
 import { SmartSuggestion } from '../services/aiService';
+import { WorkPlan } from '../types';
+import { format } from 'date-fns';
 
 interface SmartInputProps {
   onSubmit: (input: string) => Promise<void>;
@@ -9,580 +11,277 @@ interface SmartInputProps {
   onSuggestionClick: (suggestion: SmartSuggestion) => Promise<void>;
   isProcessing: boolean;
   suggestions?: SmartSuggestion[];
+  layout?: 'default' | 'sidebar' | 'header';
+  searchValue?: string;
+  onSearchChange?: (val: string) => void;
+  searchResults?: WorkPlan[];
+  onSearchResultClick?: (plan: WorkPlan) => void;
 }
 
-const PLACEHOLDER_HINTS = [
-  "生成本周工作周报",
-  "帮我规划下周的开发计划",
-  "查询下周三有什么安排？",
-  "周五晚上8点提醒我健身"
-];
-
-// Extend Window interface for Web Speech API
-declare global {
-  interface Window {
-    webkitSpeechRecognition: any;
-    SpeechRecognition: any;
-  }
-}
-
-// --- High Fidelity Pro Voice Waveform Component ---
-const VoiceVisualizer = ({ analyser }: { analyser: AnalyserNode | null }) => {
+const VoiceVisualizer = ({ analyser, isHeader }: { analyser: AnalyserNode | null, isHeader?: boolean }) => {
   const barsRef = useRef<(HTMLDivElement | null)[]>([]);
   const animationRef = useRef<number | null>(null);
-  const smoothedValues = useRef<number[]>(new Array(19).fill(0));
+  const barCount = isHeader ? 20 : 12;
+  const smoothedValues = useRef<number[]>(new Array(barCount).fill(0));
 
   useEffect(() => {
     if (!analyser) return;
-
     const bufferLength = analyser.frequencyBinCount;
     const dataArray = new Uint8Array(bufferLength);
-    
-    // Create a symmetric bell curve for spectral mapping
-    // We map different frequency bins to these 19 bars
-    const barCount = 19;
-    
     const update = () => {
       analyser.getByteFrequencyData(dataArray);
-      
-      // We sample from the lower-mid range of the frequency spectrum for better visual feedback
       const step = Math.floor((bufferLength * 0.4) / barCount);
-
       for (let i = 0; i < barCount; i++) {
         const bar = barsRef.current[i];
         if (!bar) continue;
-
-        // Get value from specific frequency bin
         const rawValue = dataArray[i * step] || 0;
-        
-        // Bell-curve weight: stronger in middle, softer on edges
         const distFromCenter = Math.abs(i - (barCount - 1) / 2);
-        const weight = Math.exp(-Math.pow(distFromCenter / 5, 2));
-        
-        const targetValue = (rawValue / 255) * 45 * weight; // Max height around 45px
-        
-        // Smoothing algorithm (Lerp) to make it feel organic
+        const weight = Math.exp(-Math.pow(distFromCenter / (isHeader ? 6 : 4), 2));
+        const targetValue = (rawValue / 255) * (isHeader ? 30 : 25) * weight; 
         smoothedValues.current[i] += (targetValue - smoothedValues.current[i]) * 0.25;
-        
         const val = smoothedValues.current[i];
-        const scale = 1 + val * 0.5;
-        
-        // Apply hardware accelerated transforms
-        bar.style.transform = `scaleY(${scale})`;
-        bar.style.opacity = (0.2 + (val / 10) * 0.8).toString();
-        
-        // Dynamic Glow based on intensity
-        const glowOpacity = Math.min(0.6, val / 15);
-        bar.style.filter = `drop-shadow(0 0 ${val / 2}px rgba(56, 189, 248, ${glowOpacity}))`;
+        bar.style.transform = `scaleY(${1 + val * 0.5})`;
+        bar.style.opacity = (0.3 + (val / 10) * 0.7).toString();
       }
-
       animationRef.current = requestAnimationFrame(update);
     };
-
     update();
-    return () => {
-      if (animationRef.current) cancelAnimationFrame(animationRef.current);
-    };
-  }, [analyser]);
+    return () => { if (animationRef.current) cancelAnimationFrame(animationRef.current); };
+  }, [analyser, barCount, isHeader]);
 
   return (
-    <div className="flex items-center gap-[4px] h-10 px-4 overflow-visible">
-      {[...Array(19)].map((_, i) => (
-        <div 
-          key={i}
-          // fix: React 19 ref callback should not return assigned value
-          ref={el => { barsRef.current[i] = el; }}
-          className="w-1.5 h-1.5 rounded-full bg-gradient-to-t from-indigo-500 via-blue-500 to-cyan-400 origin-center will-change-transform"
-          style={{ 
-            transform: 'scaleY(1)', 
-            transition: 'none',
-            boxShadow: '0 0 8px rgba(99, 102, 241, 0.1)'
-          }}
-        />
+    <div className="flex items-center gap-[2.5px] h-6 px-1.5 overflow-visible">
+      {[...Array(barCount)].map((_, i) => (
+        <div key={i} ref={el => { barsRef.current[i] = el; }} className="w-0.5 h-1.5 rounded-full bg-indigo-500 origin-center will-change-transform" />
       ))}
     </div>
   );
 };
 
-// --- Apple Style AI Icon ---
-const AIAssistantIcon = memo(({ isExpanded, isListening, isProcessing, analyser }: { isExpanded: boolean, isListening: boolean, isProcessing: boolean, analyser: AnalyserNode | null }) => {
+const AIAssistantIcon = memo(({ isListening, isProcessing, analyser, size = 18 }: { isListening: boolean, isProcessing: boolean, analyser: AnalyserNode | null, size?: number }) => {
   const isActive = isListening || isProcessing;
-  const glowRef = useRef<HTMLDivElement>(null);
-  const animationRef = useRef<number | null>(null);
-
-  useEffect(() => {
-    if (!isListening || !analyser) {
-        if (glowRef.current) glowRef.current.style.transform = 'scale(0.75)';
-        return;
-    }
-
-    const dataArray = new Uint8Array(analyser.frequencyBinCount);
-    const updateGlow = () => {
-        analyser.getByteFrequencyData(dataArray);
-        let sum = 0;
-        for (let i = 0; i < 30; i++) sum += dataArray[i]; // Focus on low-freq punch
-        const average = sum / 30;
-        const vol = Math.min(100, average * 1.5);
-
-        if (glowRef.current) {
-            const scale = 1.1 + (vol / 100) * 1.0;
-            glowRef.current.style.transform = `scale(${scale})`;
-            glowRef.current.style.opacity = (0.3 + (vol / 100) * 0.4).toString();
-        }
-        animationRef.current = requestAnimationFrame(updateGlow);
-    };
-
-    updateGlow();
-    return () => {
-        if (animationRef.current) cancelAnimationFrame(animationRef.current);
-    };
-  }, [isListening, analyser]);
-  
   return (
-    <div className={`relative flex items-center justify-center transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] ${isExpanded ? 'w-8 h-8' : 'w-9 h-9'}`}>
-      
-      {/* Active Glow */}
-      <div 
-        ref={glowRef}
-        className={`absolute inset-0 rounded-full bg-gradient-to-tr from-cyan-400 via-blue-500 to-indigo-500 blur-xl transition-opacity duration-500 ${isActive ? 'opacity-40' : 'opacity-0'}`} 
-        style={{ transform: 'scale(0.75)' }}
-      />
-      
-      {/* Main Orb Container */}
-      <div className={`
-          absolute inset-0 rounded-full transition-all duration-500 overflow-hidden
-          ${isActive 
-             ? 'bg-gradient-to-br from-blue-600 to-cyan-500 shadow-[0_4px_15px_rgba(37,99,235,0.3)]' 
-             : 'bg-gradient-to-b from-white to-slate-100 border border-slate-200 shadow-[0_2px_4px_rgba(0,0,0,0.05)]'
-          }
-      `}>
-          <div className="absolute inset-0 bg-gradient-to-b from-white/40 to-transparent opacity-60" />
-      </div>
-      
-      {/* Icon Content */}
-      <div className={`relative z-10 flex items-center justify-center transition-colors duration-300 ${isActive ? 'text-white' : 'text-slate-50'}`}>
-         {isProcessing ? (
-            <Loader2 className="animate-spin" size={16} strokeWidth={2.5} />
-         ) : isListening ? (
-             <div className="flex gap-0.5 items-center h-3">
-                <div className="w-0.5 bg-current rounded-full animate-[bounce_0.8s_infinite] h-2"></div>
-                <div className="w-0.5 bg-current rounded-full animate-[bounce_1s_infinite] h-3"></div>
-                <div className="w-0.5 bg-current rounded-full animate-[bounce_0.7s_infinite] h-2.5"></div>
-             </div>
-         ) : (
-             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className={`transition-transform duration-500 ${isExpanded ? 'scale-90' : 'scale-100'}`}>
-                <defs>
-                   <linearGradient id="ai-gradient" x1="0" y1="0" x2="24" y2="24" gradientUnits="userSpaceOnUse">
-                      <stop offset="0" stopColor="#3b82f6" />
-                      <stop offset="1" stopColor="#06b6d4" />
-                   </linearGradient>
-                </defs>
-                <path 
-                    d="M12 2L14.5 9.5L22 12L14.5 14.5L12 22L9.5 14.5L2 12L9.5 9.5L12 2Z" 
-                    fill={isActive ? "currentColor" : "url(#ai-gradient)"}
-                    className="drop-shadow-sm"
-                />
-                <path 
-                    d="M19 16L20 18.5L22.5 19.5L20 20.5L19 23L18 20.5L15.5 19.5L18 18.5L19 16Z" 
-                    fill={isActive ? "currentColor" : "url(#ai-gradient)"}
-                    opacity={isActive ? "0.8" : "0.7"}
-                />
-             </svg>
-         )}
+    <div className="relative flex items-center justify-center" style={{ width: size + 10, height: size + 10 }}>
+      <div className={`absolute inset-0 rounded-full bg-indigo-500 blur-lg transition-opacity duration-500 ${isActive ? 'opacity-30 animate-pulse' : 'opacity-0'}`} />
+      <div className={`absolute inset-0 rounded-full transition-all duration-500 ${isActive ? 'bg-indigo-600 shadow-lg' : 'bg-slate-100 border border-slate-200'}`} />
+      <div className={`relative z-10 flex items-center justify-center transition-colors duration-300 ${isActive ? 'text-white' : 'text-slate-400'}`}>
+         {isProcessing ? <Loader2 className="animate-spin" size={size - 2} strokeWidth={2.5} /> : <Sparkles size={size - 2} className={isActive ? "fill-white" : ""} />}
       </div>
     </div>
   );
 });
 
-export const SmartInput: React.FC<SmartInputProps> = ({ onSubmit, onStop, onSuggestionClick, isProcessing, suggestions = [] }) => {
-  const [value, setValue] = useState('');
+export const SmartInput: React.FC<SmartInputProps> = ({ onSubmit, onStop, onSuggestionClick, isProcessing, suggestions = [], layout = 'header', searchValue = '', onSearchChange, searchResults = [], onSearchResultClick }) => {
   const [hintIndex, setHintIndex] = useState(0);
-  
-  // Collapsible State
-  const [isExpanded, setIsExpanded] = useState(false);
-  const containerRef = useRef<HTMLDivElement>(null);
+  const [isFocused, setIsFocused] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
-  const suggestionsRef = useRef<HTMLDivElement>(null);
-  
-  // Speech Recognition State
   const [isListening, setIsListening] = useState(false);
   const recognitionRef = useRef<any>(null);
-  const valueBeforeRecording = useRef(''); 
-
-  // Audio Processing state (Minimal)
   const [analyser, setAnalyser] = useState<AnalyserNode | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
 
-  // Cleanup on unmount
   useEffect(() => {
+    const interval = setInterval(() => setHintIndex((prev) => (prev + 1) % 4), 5000);
     return () => {
-        if (recognitionRef.current) {
-            try {
-                recognitionRef.current.onend = null;
-                recognitionRef.current.stop();
-            } catch (e) {}
-        }
+        clearInterval(interval);
+        if (recognitionRef.current) try { recognitionRef.current.stop(); } catch (e) {}
         stopAudioAnalysis();
     };
   }, []);
 
-  // --- Audio Analysis Logic ---
   const startAudioAnalysis = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
-      
       const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
       audioContextRef.current = audioContext;
-      
       const analyserNode = audioContext.createAnalyser();
-      analyserNode.fftSize = 512; // Increased resolution
-      analyserNode.smoothingTimeConstant = 0.5; // Smooth input
-      
       const source = audioContext.createMediaStreamSource(stream);
       source.connect(analyserNode);
-      
       setAnalyser(analyserNode);
-    } catch (err) {
-      console.warn("Could not start audio visualization:", err);
-    }
+    } catch (err) { console.warn(err); }
   };
 
   const stopAudioAnalysis = () => {
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach(track => track.stop());
-      streamRef.current = null;
-    }
-    
-    if (audioContextRef.current) {
-      audioContextRef.current.close();
-      audioContextRef.current = null;
-    }
-    
+    if (streamRef.current) streamRef.current.getTracks().forEach(t => t.stop());
+    if (audioContextRef.current) audioContextRef.current.close();
     setAnalyser(null);
   };
 
-  // Rotate hints
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setHintIndex((prev) => (prev + 1) % PLACEHOLDER_HINTS.length);
-    }, 4000); 
-    return () => clearInterval(interval);
-  }, []);
-
-  // Auto-expand logic
-  useEffect(() => {
-      if (value || isProcessing || isListening) {
-          setIsExpanded(true);
-      }
-  }, [value, isProcessing, isListening]);
-
-  // Click Outside to Collapse
-  useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
-        const target = e.target as Node;
-        const isInsideInput = containerRef.current && containerRef.current.contains(target);
-        const isInsideSuggestions = suggestionsRef.current && suggestionsRef.current.contains(target);
-
-        if (!isInsideInput && !isInsideSuggestions) {
-            if (!value.trim() && !isListening && !isProcessing) {
-                setIsExpanded(false);
-            }
-        }
-    };
-    if (isExpanded) {
-        window.addEventListener('mousedown', handleClickOutside);
-    }
-    return () => window.removeEventListener('mousedown', handleClickOutside);
-  }, [isExpanded, value, isListening, isProcessing]);
-
-  // Focus management
-  useEffect(() => {
-      if (isExpanded && inputRef.current) {
-          const timer = setTimeout(() => inputRef.current?.focus(), 100);
-          return () => clearTimeout(timer);
-      }
-  }, [isExpanded]);
-
   const handleSubmit = async () => {
-    if (isProcessing) {
-        onStop();
-        return;
-    }
-    if (isListening) {
-        stopListening();
-        // Give it a tiny bit of time to settle the final result if any
-        setTimeout(async () => {
-            if (value.trim()) {
-                await onSubmit(value);
-                setValue('');
-            }
-        }, 300);
-        return;
-    }
-    if (!value.trim()) return;
-    
-    try {
-        const toSubmit = value;
-        setValue('');
-        await onSubmit(toSubmit);
-    } catch (e) {
-        console.error("Submit failed", e);
-    }
+    if (isProcessing) { onStop(); return; }
+    if (isListening) { stopListening(); return; }
+    if (!searchValue.trim()) return;
+    const toSubmit = searchValue;
+    onSearchChange?.('');
+    await onSubmit(toSubmit);
   };
 
-  const handleKeyDown = async (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') {
-        e.preventDefault();
-        handleSubmit();
-    }
-  };
-
-  const handleClickSuggestion = async (suggestion: SmartSuggestion) => {
-    if (isProcessing) return;
-    stopListening();
-    await onSuggestionClick(suggestion);
-  };
-
-  // --- Optimized Speech Logic ---
   const startListening = () => {
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SpeechRecognition) {
-      alert('您的浏览器暂不支持语音识别。请使用 Chrome 或 Edge 浏览器。');
-      return;
-    }
-
-    if (isListening) return;
-
-    valueBeforeRecording.current = value;
-    
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition || isListening) return;
     try {
         const recognition = new SpeechRecognition();
         recognition.lang = 'zh-CN';
-        recognition.continuous = true; 
-        recognition.interimResults = true; 
-        
-        recognition.onstart = () => {
-          setIsListening(true);
-          setIsExpanded(true); 
-          startAudioAnalysis();
+        recognition.continuous = true;
+        recognition.interimResults = true;
+        recognition.onstart = () => { setIsListening(true); startAudioAnalysis(); };
+        recognition.onresult = (e: any) => {
+            let text = '';
+            for (let i = e.resultIndex; i < e.results.length; ++i) text += e.results[i][0].transcript;
+            onSearchChange?.(text);
         };
-        
-        recognition.onresult = (event: any) => {
-          let interimTranscript = '';
-          let finalTranscript = '';
-
-          for (let i = event.resultIndex; i < event.results.length; ++i) {
-              if (event.results[i].isFinal) {
-                  finalTranscript += event.results[i][0].transcript;
-              } else {
-                  interimTranscript += event.results[i][0].transcript;
-              }
-          }
-
-          if (finalTranscript) {
-              valueBeforeRecording.current += finalTranscript;
-          }
-          
-          setValue(valueBeforeRecording.current + interimTranscript);
-        };
-        
-        recognition.onerror = (event: any) => {
-           console.error('Speech recognition error:', event.error);
-           setIsListening(false);
-           stopListening();
-        };
-        
-        recognition.onend = () => {
-          setIsListening(false);
-          stopAudioAnalysis();
-          recognitionRef.current = null;
-        };
-        
+        recognition.onerror = () => stopListening();
+        recognition.onend = () => { setIsListening(false); stopAudioAnalysis(); };
         recognitionRef.current = recognition;
         recognition.start();
-    } catch (e) {
-        console.error("Speech start failed:", e);
-        setIsListening(false);
-    }
+    } catch (e) { setIsListening(false); }
   };
 
   const stopListening = () => {
-    if (recognitionRef.current) {
-      try { 
-          recognitionRef.current.stop(); 
-      } catch(e) {}
-      recognitionRef.current = null;
-    }
+    if (recognitionRef.current) try { recognitionRef.current.stop(); } catch(e) {}
     setIsListening(false);
-    stopAudioAnalysis();
   };
 
-  const toggleListening = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (isListening) {
-        stopListening();
-    } else {
-        startListening();
-    }
-  };
+  const isHeader = layout === 'header';
+  const isActive = isFocused || searchValue || isListening || isProcessing;
 
   return (
-    <div className="fixed bottom-6 left-1/2 transform -translate-x-1/2 w-full max-w-3xl flex flex-col items-center justify-end z-[100] pointer-events-none">
+    <div className={`relative flex flex-col group/input transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] w-full`}>
       
-      {/* Suggestions */}
-      <div 
-        ref={suggestionsRef}
-        className={`
-            w-full flex justify-center mb-4 transition-all duration-500 ease-[cubic-bezier(0.32,0.72,0,1)]
-            ${isExpanded && suggestions.length > 0 && !isProcessing 
-                ? 'opacity-100 translate-y-0 pointer-events-auto scale-100' 
-                : 'opacity-0 translate-y-8 pointer-events-none scale-90 h-0 overflow-hidden'
-            }
-        `}
-      >
-        <div className="flex gap-2 px-6 overflow-x-auto custom-scrollbar max-w-full pb-1 justify-center">
-            {suggestions.map((item, idx) => (
-                <button
-                    key={idx}
-                    onClick={() => handleClickSuggestion(item)}
-                    className="flex-shrink-0 flex items-center gap-1.5 px-4 py-2.5 rounded-2xl bg-white/80 backdrop-blur-xl border border-white/60 shadow-lg shadow-slate-200/50 text-xs font-medium text-slate-600 hover:text-indigo-600 hover:bg-white hover:scale-105 transition-all group ring-1 ring-black/5"
+      {/* 建议与搜索结果弹出层 */}
+      {(isFocused || (searchValue && isFocused)) && (
+        <div className="absolute top-full left-0 right-0 mt-3 bg-white/95 backdrop-blur-2xl border border-slate-200/60 shadow-[0_30px_60px_-12px_rgba(0,0,0,0.18)] rounded-3xl overflow-hidden animate-in fade-in slide-in-from-top-3 duration-500 z-[100]">
+          {/* AI 智能建议区块 */}
+          {suggestions.length > 0 && !searchValue && (
+            <div className="p-4 bg-slate-50/50 border-b border-slate-100">
+              <div className="px-3 py-1.5 mb-2.5 flex items-center gap-1.5">
+                <Sparkles size={12} className="text-amber-500 animate-pulse" />
+                <span className="text-[10px] font-black text-slate-400 uppercase tracking-[0.15em]">AI 智能灵感</span>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+                {suggestions.map((item, idx) => (
+                  <button key={idx} onClick={() => onSuggestionClick(item)} className="flex items-center gap-3.5 p-3 rounded-2xl bg-white border border-slate-100 hover:border-indigo-300 hover:bg-indigo-50/30 transition-all text-left group/btn">
+                    <div className="w-9 h-9 rounded-xl bg-indigo-50 flex items-center justify-center text-indigo-500 group-hover/btn:scale-110 group-hover/btn:bg-indigo-500 group-hover/btn:text-white transition-all duration-300">
+                      <Sparkles size={16} />
+                    </div>
+                    <span className="text-xs font-bold text-slate-600 truncate">{item.label}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* 实时搜索结果区块 */}
+          {searchValue && (
+             <div className="max-h-[400px] overflow-y-auto custom-scrollbar p-3">
+                {searchResults.length > 0 ? (
+                    searchResults.map(plan => (
+                        <button key={plan.id} onClick={() => onSearchResultClick?.(plan)} className="w-full flex items-center gap-3.5 p-3 hover:bg-slate-50 rounded-2xl transition-all text-left group">
+                            <div className={`w-11 h-11 flex flex-col items-center justify-center rounded-2xl bg-${plan.color}-50 text-${plan.color}-600 border border-${plan.color}-100 flex-shrink-0 group-hover:bg-${plan.color}-500 group-hover:text-white transition-all duration-300`}>
+                                <span className="text-[9px] font-black leading-none uppercase">{format(new Date(plan.startDate), 'MMM')}</span>
+                                <span className="text-sm font-black mt-0.5 leading-none">{format(new Date(plan.startDate), 'd')}</span>
+                            </div>
+                            <div className="flex-1 min-w-0">
+                                <div className="font-bold text-slate-800 text-[14px] truncate">{plan.title}</div>
+                                <div className="text-[10px] text-slate-400 font-bold flex items-center gap-1.5 mt-1 opacity-70 group-hover:opacity-100 transition-opacity">
+                                    <Clock size={11} /> {format(new Date(plan.startDate), 'HH:mm')} - {format(new Date(plan.endDate), 'HH:mm')}
+                                </div>
+                            </div>
+                        </button>
+                    ))
+                ) : (
+                    <div className="py-12 text-center flex flex-col items-center gap-3 animate-in fade-in duration-500">
+                        <div className="w-14 h-14 rounded-full bg-slate-50 flex items-center justify-center text-slate-200">
+                           <Search size={28} />
+                        </div>
+                        <div className="flex flex-col gap-1">
+                          <span className="text-sm font-bold text-slate-400">未找到相关日程</span>
+                          <span className="text-[11px] text-slate-300">按回车让 AI 帮您直接安排</span>
+                        </div>
+                    </div>
+                )}
+             </div>
+          )}
+        </div>
+      )}
+
+      {/* 主输入区域 */}
+      <div className={`
+        relative flex items-center transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)]
+        ${isHeader 
+          ? 'h-10 rounded-xl bg-slate-100/60 border border-slate-200/50 focus-within:bg-white focus-within:border-indigo-400 focus-within:ring-[6px] focus-within:ring-indigo-500/5' 
+          : 'h-14 rounded-2xl bg-white shadow-xl border border-slate-100 focus-within:ring-4 focus-within:ring-indigo-500/10'
+        }
+      `}>
+        <div className="pl-3 flex items-center gap-3">
+          <AIAssistantIcon isListening={isListening} isProcessing={isProcessing} analyser={analyser} size={14} />
+          <div className={`w-px h-3.5 bg-slate-200 transition-opacity duration-300 ${(isFocused || searchValue) ? 'opacity-100' : 'opacity-0'}`} />
+        </div>
+
+        <div className="flex-1 relative h-full flex items-center ml-2.5">
+           {!searchValue && !isListening && (
+              <span className={`absolute inset-0 flex items-center text-slate-400 text-sm font-bold pointer-events-none truncate transition-all duration-500 ${isFocused ? 'opacity-40' : 'opacity-70'}`}>
+                {isFocused ? ["搜索或创建...", "帮我规划下周", "生成周报"][hintIndex] : "AI 助手 / 搜索日程"}
+              </span>
+           )}
+           
+           {isListening && !searchValue && (
+              <div className="flex items-center gap-2">
+                <span className="text-indigo-600 font-black text-[11px] uppercase tracking-wider">Listening</span>
+                <VoiceVisualizer analyser={analyser} isHeader={isHeader} />
+              </div>
+           )}
+
+           <input
+              ref={inputRef}
+              type="text"
+              value={searchValue}
+              onChange={(e) => onSearchChange?.(e.target.value)}
+              onFocus={() => setIsFocused(true)}
+              onBlur={() => setTimeout(() => setIsFocused(false), 200)}
+              onKeyDown={(e) => e.key === 'Enter' && handleSubmit()}
+              className={`w-full h-full bg-transparent border-none outline-none text-sm font-bold text-slate-800 tracking-tight transition-all duration-300 ${isListening && !searchValue ? 'opacity-0' : 'opacity-100'}`}
+           />
+        </div>
+
+        <div className="flex items-center pr-1 gap-1">
+            {!searchValue && !isProcessing && (
+              <button onClick={isListening ? stopListening : startListening} className={`p-1.5 rounded-lg transition-all ${isListening ? 'text-indigo-600 bg-indigo-50' : 'text-slate-400 hover:text-slate-800 hover:bg-slate-200/50'}`}>
+                <Mic size={16} />
+              </button>
+            )}
+
+            {searchValue && !isProcessing && (
+              <button onClick={() => onSearchChange?.('')} className="p-1.5 text-slate-300 hover:text-rose-500 transition-colors">
+                <X size={15} />
+              </button>
+            )}
+
+            {(searchValue || isProcessing || isListening) && (
+                <button 
+                onClick={handleSubmit}
+                className={`
+                    flex items-center justify-center rounded-lg transition-all w-7 h-7
+                    ${(searchValue.trim() || isListening || isProcessing) 
+                        ? 'bg-slate-900 text-white shadow-lg hover:bg-black active:scale-90' 
+                        : 'bg-slate-100 text-slate-300'
+                    }
+                `}
                 >
-                    <Sparkles size={11} className="text-amber-400 group-hover:text-amber-500 transition-colors" />
-                    {item.label}
+                {isProcessing ? <StopCircle size={14} /> : isListening ? <Square size={10} fill="currentColor" /> : <ArrowUp size={16} strokeWidth={3} />}
                 </button>
-            ))}
+            )}
+            
+            {!searchValue && !isProcessing && !isListening && !isFocused && (
+                <div className="pr-2 hidden lg:block">
+                  <div className="px-1.5 py-0.5 bg-slate-200/40 text-[9px] font-black text-slate-400 rounded-md border border-slate-200/10">
+                      ⌘ K
+                  </div>
+                </div>
+            )}
         </div>
-      </div>
-
-      {/* Main Container */}
-      <div 
-        ref={containerRef}
-        onClick={() => { if (!isExpanded) setIsExpanded(true); }}
-        className={`
-            relative flex items-center shadow-[0_12px_40px_-8px_rgba(0,0,0,0.12)] backdrop-blur-3xl transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] pointer-events-auto
-            ${isExpanded 
-                ? 'w-[90%] max-w-[600px] h-[56px] rounded-[28px] bg-white/95 border border-white/60 cursor-text ring-1 ring-black/5' 
-                : 'w-[160px] h-[46px] rounded-full bg-white/95 border border-white/60 hover:scale-[1.02] cursor-pointer hover:shadow-[0_16px_50px_-10px_rgba(0,0,0,0.15)] ring-1 ring-black/5'
-            }
-        `}
-      >
-        
-        {/* Left Icon Wrapper */}
-        <div 
-            className={`absolute top-1/2 -translate-y-1/2 transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] z-20 flex items-center justify-center
-                ${isExpanded ? 'left-3' : 'left-1.5'}
-            `}
-        >
-             <AIAssistantIcon isExpanded={isExpanded} isListening={isListening} isProcessing={isProcessing} analyser={analyser} />
-        </div>
-
-        {/* Collapsed Label */}
-        <div 
-            className={`absolute inset-0 flex items-center justify-center pointer-events-none transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)]
-                ${!isExpanded ? 'opacity-100 scale-100' : 'opacity-0 translate-x-[-20px] scale-90'}
-            `}
-        >
-             <span className="text-[14px] font-semibold text-slate-600 tracking-tight">
-                闪历 AI
-             </span>
-        </div>
-
-        {/* Quick Record Button */}
-        <button
-            onClick={(e) => {
-                e.stopPropagation();
-                setIsExpanded(true);
-                startListening();
-            }}
-            className={`
-                absolute right-1.5 top-1/2 -translate-y-1/2 w-8 h-8 flex items-center justify-center rounded-full 
-                text-slate-400 hover:text-blue-600 hover:bg-blue-50 transition-all duration-300 z-30
-                ${!isExpanded ? 'opacity-100 scale-100 pointer-events-auto' : 'opacity-0 scale-50 pointer-events-none'}
-            `}
-            title="语音输入"
-        >
-            <Mic size={18} />
-        </button>
-
-        {/* Expanded Content */}
-        <div 
-            className={`absolute inset-0 pl-[56px] pr-2 flex items-center transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)]
-                ${isExpanded ? 'opacity-100 scale-100 z-40' : 'opacity-0 scale-95 pointer-events-none'}
-            `}
-        >
-            <div className="relative flex-1 h-full flex items-center">
-                 {!value && !isListening && (
-                    <div className="absolute inset-0 flex items-center pointer-events-none">
-                        <span className="text-slate-400 text-[15px] truncate animate-fade-in font-normal tracking-wide">
-                            {PLACEHOLDER_HINTS[hintIndex]}
-                        </span>
-                    </div>
-                 )}
-                 {isListening && (
-                    <div className="absolute inset-0 flex items-center pointer-events-none overflow-visible">
-                        {!value ? (
-                             <div className="flex items-center gap-3 animate-fade-in">
-                                <span className="text-blue-600 font-bold text-[15px] tracking-tight">正在聆听</span>
-                                <VoiceVisualizer analyser={analyser} />
-                             </div>
-                        ) : (
-                             <div className="w-full flex justify-end pr-6 animate-fade-in">
-                                <VoiceVisualizer analyser={analyser} />
-                             </div>
-                        )}
-                    </div>
-                 )}
-                 <input
-                    ref={inputRef}
-                    type="text"
-                    value={value}
-                    onChange={(e) => setValue(e.target.value)}
-                    onKeyDown={handleKeyDown}
-                    disabled={!isExpanded || isProcessing}
-                    className={`w-full h-full bg-transparent border-none outline-none text-[16px] text-slate-800 placeholder-transparent font-medium caret-blue-500 transition-opacity ${isListening && !value ? 'opacity-0' : 'opacity-100'}`}
-                 />
-            </div>
-
-            {/* Actions */}
-            <div className="flex items-center gap-1.5 pl-2">
-                 <button
-                    onClick={toggleListening}
-                    disabled={isProcessing}
-                    title={isListening ? "停止录音" : "语音输入"}
-                    className={`w-9 h-9 flex items-center justify-center rounded-full transition-all duration-200 ${
-                        isListening 
-                            ? 'bg-rose-50 text-rose-500 ring-2 ring-rose-100 shadow-sm' 
-                            : 'text-slate-400 hover:text-slate-600 hover:bg-slate-100'
-                    }`}
-                 >
-                     {isListening ? (
-                         <div className="relative flex items-center justify-center">
-                             <div className="absolute w-8 h-8 bg-rose-500/10 rounded-full animate-ping"></div>
-                             <Square size={12} fill="currentColor" className="relative z-10" />
-                         </div>
-                     ) : (
-                         <Mic size={20} strokeWidth={1.5} />
-                     )}
-                 </button>
-
-                 <button 
-                   onClick={(e) => { e.stopPropagation(); handleSubmit(); }}
-                   disabled={!isProcessing && !isListening && !value.trim()}
-                   className={`
-                       w-9 h-9 flex items-center justify-center rounded-full transition-all duration-300
-                       ${(value.trim() || isListening || isProcessing) 
-                           ? 'bg-slate-900 text-white scale-100 shadow-md hover:bg-black hover:scale-105 active:scale-95' 
-                           : 'bg-slate-100 text-slate-300 scale-90 cursor-not-allowed'
-                       }
-                   `}
-                 >
-                   {isProcessing ? <StopCircle size={16} /> : <ArrowUp size={20} strokeWidth={2.5} />}
-                 </button>
-            </div>
-        </div>
-        
       </div>
     </div>
   );

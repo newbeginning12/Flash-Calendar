@@ -59,10 +59,10 @@ export const DatePicker: React.FC<DatePickerProps> = ({ currentDate, onDateSelec
   return (
     <>
       {/* Invisible backdrop to handle click outside */}
-      <div className="fixed inset-0 z-40" onClick={onClose}></div>
+      <div className="fixed inset-0 z-[80]" onClick={onClose}></div>
 
       {/* Calendar Popover */}
-      <div className="absolute top-full left-1/2 transform -translate-x-1/2 mt-2 w-[320px] bg-white/95 backdrop-blur-xl border border-white/60 shadow-[0_10px_40px_-10px_rgba(0,0,0,0.15)] rounded-2xl p-4 z-50 animate-in fade-in zoom-in-95 duration-200 select-none">
+      <div className="absolute top-full left-1/2 transform -translate-x-1/2 mt-3 w-[320px] bg-white/95 backdrop-blur-xl border border-white/60 shadow-[0_15px_45px_-12px_rgba(0,0,0,0.18)] rounded-2xl p-4 z-[90] animate-in fade-in zoom-in-95 duration-200 select-none">
         
         {/* Header */}
         <div className="flex items-center justify-between mb-4 px-1">

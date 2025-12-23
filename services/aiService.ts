@@ -1,11 +1,7 @@
-
 import { GoogleGenAI, Type } from "@google/genai";
 import { WorkPlan, PlanStatus, AISettings, AIProvider, WeeklyReportData, AIProcessingResult } from "../types";
 // fix: remove unused and missing startOfWeek, parseISO imports
 import { endOfWeek, addWeeks, format, isWithinInterval } from "date-fns";
-
-// Initialize Google AI with environment variable (Always used for Google Provider)
-const googleAI = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
 const COLORS = ['blue', 'indigo', 'purple', 'rose', 'orange', 'emerald'];
 
@@ -247,7 +243,9 @@ const handleIntentRequest = async (
 
   if (settings.provider === AIProvider.GOOGLE) {
     try {
-      const response = await googleAI.models.generateContent({
+      // fix: Create fresh GoogleGenAI instance before call to ensure latest API key
+      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+      const response = await ai.models.generateContent({
         model: settings.model,
         contents: { parts: [{ text: `用户输入: "${textInput}"` }] },
         config: {
@@ -328,7 +326,9 @@ export const generateSmartSuggestions = async (
 
   if (settings.provider === AIProvider.GOOGLE) {
     try {
-      const response = await googleAI.models.generateContent({
+      // fix: Create fresh GoogleGenAI instance before call
+      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+      const response = await ai.models.generateContent({
         model: settings.model,
         contents: "建议",
         config: {
