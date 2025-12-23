@@ -202,7 +202,11 @@ export const App: React.FC = () => {
                   setIsReportModalOpen(true);
               }
           }
-      } catch (error: any) { console.error("AI Error:", error); } finally { setIsProcessingAI(false); }
+      } catch (error: any) { 
+          console.error("AI Error:", error); 
+      } finally { 
+          setIsProcessingAI(false); 
+      }
   };
   
   const handleSuggestionClick = async (suggestion: SmartSuggestion) => {
@@ -335,7 +339,15 @@ export const App: React.FC = () => {
        <PlanModal plan={editingPlan} isOpen={isPlanModalOpen} onClose={() => setIsPlanModalOpen(false)} onSave={handleSavePlan} onDelete={handleDeletePlan} />
        <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} settings={settings} onSave={(s) => { setSettings(s); localStorage.setItem('zhihui_settings', JSON.stringify(s)); setIsSettingsOpen(false); }} onExport={() => storageService.exportData(plans, settings)} onImport={handleImport} />
        <WeeklyReportModal isOpen={isReportModalOpen} onClose={() => setIsReportModalOpen(false)} data={reportData} />
-       <FlashCommand plans={plans} settings={settings} onPlanCreated={handleSavePlan} />
+       <FlashCommand 
+          plans={plans} 
+          settings={settings} 
+          onPlanCreated={handleSavePlan} 
+          onAnalysisCreated={(data) => {
+            setReportData(data);
+            setIsReportModalOpen(true);
+          }}
+       />
     </div>
   );
 };

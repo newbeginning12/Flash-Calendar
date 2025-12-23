@@ -1,20 +1,21 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Command, CornerDownLeft, Sparkles, Loader2, X, Calendar, Clock } from 'lucide-react';
-import { WorkPlan, AISettings } from '../types';
+import { Command, CornerDownLeft, Sparkles, Loader2, X, Calendar, Clock, FileText } from 'lucide-react';
+import { WorkPlan, AISettings, WeeklyReportData } from '../types';
 import { processUserIntent } from '../services/aiService';
 
 interface FlashCommandProps {
   plans: WorkPlan[];
   settings: AISettings;
   onPlanCreated: (plan: WorkPlan) => void;
+  onAnalysisCreated: (data: WeeklyReportData) => void;
 }
 
-export const FlashCommand: React.FC<FlashCommandProps> = ({ plans, settings, onPlanCreated }) => {
+export const FlashCommand: React.FC<FlashCommandProps> = ({ plans, settings, onPlanCreated, onAnalysisCreated }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [input, setInput] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
-  const [showSuccess, setShowSuccess] = useState<string | null>(null);
+  const [showSuccess, setShowSuccess] = useState<'plan' | 'report' | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -48,23 +49,35 @@ export const FlashCommand: React.FC<FlashCommandProps> = ({ plans, settings, onP
 
     setIsProcessing(true);
 
-    const result = await processUserIntent(input, plans, settings);
+    try {
+        const result = await processUserIntent(input, plans, settings);
 
-    if (result && result.type === 'CREATE_PLAN' && result.data) {
-        const newPlan = result.data as WorkPlan;
-        onPlanCreated(newPlan);
-        setShowSuccess(newPlan.title);
-        setInput('');
-        
-        setTimeout(() => {
-            setIsOpen(false);
-            setShowSuccess(null);
-        }, 1500);
-    } else {
-        console.error("Failed to parse intent or not a creation intent");
+        if (result) {
+            if (result.type === 'CREATE_PLAN' && result.data) {
+                const newPlan = result.data as WorkPlan;
+                onPlanCreated(newPlan);
+                setShowSuccess('plan');
+                setInput('');
+                setTimeout(() => {
+                    setIsOpen(false);
+                    setShowSuccess(null);
+                }, 1200);
+            } else if (result.type === 'ANALYSIS' && result.data) {
+                onAnalysisCreated(result.data);
+                setShowSuccess('report');
+                setInput('');
+                // 周报生成后立即关闭指令框，以便用户看到弹出的周报 Modal
+                setTimeout(() => {
+                    setIsOpen(false);
+                    setShowSuccess(null);
+                }, 800);
+            }
+        }
+    } catch (error: any) {
+        console.error("Flash Command Error:", error);
+    } finally {
+        setIsProcessing(false);
     }
-
-    setIsProcessing(false);
   };
 
   if (!isOpen) return null;
@@ -93,7 +106,7 @@ export const FlashCommand: React.FC<FlashCommandProps> = ({ plans, settings, onP
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && handleSubmit()}
-                placeholder={showSuccess ? "日程创建成功！" : "输入指令，如：明天下午2点和团队开会..."}
+                placeholder={showSuccess ? (showSuccess === 'plan' ? "日程创建成功！" : "周报生成完毕！") : "输入指令，如：明天下午开会 或 生成本周周报..."}
                 className="flex-1 bg-transparent border-none outline-none text-xl md:text-2xl text-white placeholder-white/30 font-medium h-10"
                 autoComplete="off"
             />
@@ -112,12 +125,18 @@ export const FlashCommand: React.FC<FlashCommandProps> = ({ plans, settings, onP
             <div className="flex items-center gap-4">
                 <span className="flex items-center gap-1.5">
                     <Sparkles size={12} className={isProcessing ? "text-indigo-400 animate-pulse" : ""} />
-                    {isProcessing ? "AI 正在思考..." : "AI 智能指令"}
+                    {isProcessing ? "AI 正在思考..." : "AI 智能指令中心"}
                 </span>
-                {showSuccess && (
+                {showSuccess === 'plan' && (
                      <span className="flex items-center gap-1.5 text-emerald-400 animate-in fade-in slide-in-from-left-2">
                         <Calendar size={12} />
                         已添加到日程
+                     </span>
+                )}
+                {showSuccess === 'report' && (
+                     <span className="flex items-center gap-1.5 text-blue-400 animate-in fade-in slide-in-from-left-2">
+                        <FileText size={12} />
+                        正在展示周报
                      </span>
                 )}
             </div>
@@ -140,8 +159,8 @@ export const FlashCommand: React.FC<FlashCommandProps> = ({ plans, settings, onP
         </div>
 
         {showSuccess && (
-            <div className="absolute inset-0 pointer-events-none flex items-center justify-center bg-emerald-500/5 mix-blend-overlay">
-                <div className="absolute top-0 w-full h-1 bg-gradient-to-r from-emerald-500 via-teal-400 to-emerald-500"></div>
+            <div className="absolute inset-0 pointer-events-none flex items-center justify-center bg-white/5 mix-blend-overlay">
+                <div className={`absolute top-0 w-full h-1 bg-gradient-to-r ${showSuccess === 'plan' ? 'from-emerald-500 via-teal-400 to-emerald-500' : 'from-blue-500 via-indigo-400 to-blue-500'}`}></div>
             </div>
         )}
       </div>
