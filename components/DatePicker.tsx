@@ -1,5 +1,7 @@
+
 import React, { useState, useEffect } from 'react';
-import { format, addMonths, subMonths, startOfMonth, endOfMonth, startOfWeek, endOfWeek, eachDayOfInterval, isSameMonth, isSameDay, isToday } from 'date-fns';
+// fix: remove missing subMonths, startOfMonth, startOfWeek exports; add addDays
+import { format, addMonths, addDays, endOfMonth, endOfWeek, eachDayOfInterval, isSameMonth, isSameDay, isToday } from 'date-fns';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 
 interface DatePickerProps {
@@ -18,7 +20,8 @@ export const DatePicker: React.FC<DatePickerProps> = ({ currentDate, onDateSelec
     setViewDate(currentDate);
   }, [currentDate]);
 
-  const handlePrevMonth = () => setViewDate(subMonths(viewDate, 1));
+  // fix: use addMonths with negative value instead of subMonths
+  const handlePrevMonth = () => setViewDate(addMonths(viewDate, -1));
   const handleNextMonth = () => setViewDate(addMonths(viewDate, 1));
 
   const handleDayClick = (day: Date) => {
@@ -32,10 +35,20 @@ export const DatePicker: React.FC<DatePickerProps> = ({ currentDate, onDateSelec
     onClose();
   };
 
-  // Generate days
-  const monthStart = startOfMonth(viewDate);
+  // fix: manual replacement for startOfMonth and startOfWeek
+  const getMonthStart = (date: Date) => new Date(date.getFullYear(), date.getMonth(), 1);
+  const getWeekStart = (date: Date) => {
+    const d = new Date(date);
+    const day = d.getDay();
+    const diff = (day + 6) % 7;
+    const result = addDays(d, -diff);
+    result.setHours(0, 0, 0, 0);
+    return result;
+  };
+
+  const monthStart = getMonthStart(viewDate);
   const monthEnd = endOfMonth(monthStart);
-  const startDate = startOfWeek(monthStart, { weekStartsOn: 1 });
+  const startDate = getWeekStart(monthStart);
   const endDate = endOfWeek(monthEnd, { weekStartsOn: 1 });
 
   const days = eachDayOfInterval({

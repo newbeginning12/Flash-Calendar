@@ -90,7 +90,8 @@ const VoiceVisualizer = ({ analyser }: { analyser: AnalyserNode | null }) => {
       {[...Array(19)].map((_, i) => (
         <div 
           key={i}
-          ref={el => barsRef.current[i] = el}
+          // fix: React 19 ref callback should not return assigned value
+          ref={el => { barsRef.current[i] = el; }}
           className="w-1.5 h-1.5 rounded-full bg-gradient-to-t from-indigo-500 via-blue-500 to-cyan-400 origin-center will-change-transform"
           style={{ 
             transform: 'scaleY(1)', 

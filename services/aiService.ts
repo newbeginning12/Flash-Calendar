@@ -1,7 +1,8 @@
 
 import { GoogleGenAI, Type } from "@google/genai";
 import { WorkPlan, PlanStatus, AISettings, AIProvider, WeeklyReportData, AIProcessingResult } from "../types";
-import { startOfWeek, endOfWeek, addWeeks, format, isWithinInterval, parseISO } from "date-fns";
+// fix: remove unused and missing startOfWeek, parseISO imports
+import { endOfWeek, addWeeks, format, isWithinInterval } from "date-fns";
 
 // Initialize Google AI with environment variable (Always used for Google Provider)
 const googleAI = new GoogleGenAI({ apiKey: process.env.API_KEY });

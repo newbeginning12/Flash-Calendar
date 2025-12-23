@@ -1,9 +1,9 @@
 
-import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useMemo, useCallback, useLayoutEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { WorkPlan, PlanStatus } from '../types';
-import { format, addDays, isSameDay, getHours, getMinutes, differenceInMinutes, addMinutes, startOfWeek } from 'date-fns';
-import { Plus, Clock, Move, Tag, CheckCircle2, Circle, PlayCircle, Edit2, Trash2, AlignLeft } from 'lucide-react';
+import { format, addDays, isSameDay, getHours, getMinutes, differenceInMinutes, addMinutes } from 'date-fns';
+import { Plus, Clock, Move, Tag, CheckCircle2, Circle, PlayCircle, Edit2, Trash2, AlignLeft, ZoomIn, ZoomOut, Maximize2, Minimize2, Search, RotateCcw } from 'lucide-react';
 
 interface WeeklyCalendarProps {
   currentDate: Date;
@@ -16,19 +16,79 @@ interface WeeklyCalendarProps {
   onDragCreate: (startDate: Date, durationMinutes: number, title?: string, color?: string, tags?: string[]) => void;
 }
 
+interface PositionedPlan extends WorkPlan {
+  column: number;
+  totalColumns: number;
+}
+
 const HOURS = Array.from({ length: 24 }, (_, i) => i);
 const DAYS_TO_SHOW = 7;
 const WEEKDAYS_ZH = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
 const SIDEBAR_WIDTH = 60; 
 const COLORS = ['blue', 'indigo', 'purple', 'rose', 'orange', 'emerald'];
 
-const DEFAULT_ROW_HEIGHT = 48;
+// 基础常量
+const BASE_ROW_HEIGHT = 48;
 const BASE_COL_MIN_WIDTH = 130; 
 
 const STATUS_LABELS = {
   [PlanStatus.TODO]: '待办',
   [PlanStatus.IN_PROGRESS]: '执行中',
   [PlanStatus.DONE]: '已完成',
+};
+
+const getPositionedPlans = (dayPlans: WorkPlan[]): PositionedPlan[] => {
+  if (dayPlans.length === 0) return [];
+
+  const sorted = [...dayPlans].sort((a, b) => {
+    const startA = new Date(a.startDate).getTime();
+    const startB = new Date(b.startDate).getTime();
+    if (startA !== startB) return startA - startB;
+    const endA = new Date(a.endDate).getTime();
+    const endB = new Date(b.endDate).getTime();
+    return endB - endA;
+  });
+
+  const positioned: PositionedPlan[] = [];
+  const columns: WorkPlan[][] = [];
+
+  sorted.forEach(plan => {
+    let colIndex = 0;
+    const planStart = new Date(plan.startDate).getTime();
+
+    while (true) {
+      if (!columns[colIndex]) {
+        columns[colIndex] = [];
+        break;
+      }
+      const lastInCol = columns[colIndex][columns[colIndex].length - 1];
+      const lastEnd = new Date(lastInCol.endDate).getTime();
+      
+      if (planStart >= lastEnd) {
+        break;
+      }
+      colIndex++;
+    }
+
+    columns[colIndex].push(plan);
+    positioned.push({ ...plan, column: colIndex, totalColumns: 0 });
+  });
+
+  positioned.forEach(p1 => {
+    const s1 = new Date(p1.startDate).getTime();
+    const e1 = new Date(p1.endDate).getTime();
+    
+    const overlapping = positioned.filter(p2 => {
+      const s2 = new Date(p2.startDate).getTime();
+      const e2 = new Date(p2.endDate).getTime();
+      return s1 < e2 && e1 > s2;
+    });
+
+    const maxColInCluster = Math.max(...overlapping.map(o => o.column)) + 1;
+    p1.totalColumns = maxColInCluster;
+  });
+
+  return positioned;
 };
 
 export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({ 
@@ -43,6 +103,11 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
 }) => {
   const [now, setNow] = useState(new Date());
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; date?: Date; timeStr?: string; plan?: WorkPlan } | null>(null);
+  
+  // 缩放状态控制
+  const [zoomScale, setZoomScale] = useState(1.0);
+  const zoomAnchorRef = useRef<{ xRatio: number; yRatio: number } | null>(null);
+  
   const containerRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   
@@ -57,8 +122,47 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
       tags?: string[];
   } | null>(null);
 
-  const rowHeight = DEFAULT_ROW_HEIGHT;
-  const colMinWidth = BASE_COL_MIN_WIDTH;
+  // 动态尺寸计算
+  const rowHeight = BASE_ROW_HEIGHT * zoomScale;
+  const colMinWidth = BASE_COL_MIN_WIDTH * zoomScale;
+
+  // 关键：锚点缩放补偿
+  // 在 DOM 绘制前调整滚动条位置，确保视觉上“原地缩放”
+  useLayoutEffect(() => {
+    const container = containerRef.current;
+    if (!container || !zoomAnchorRef.current) return;
+
+    const { xRatio, yRatio } = zoomAnchorRef.current;
+    const { clientWidth, clientHeight, scrollWidth, scrollHeight } = container;
+
+    // 计算新的滚动位置：按原本记录的比例还原
+    const newLeft = xRatio * scrollWidth - clientWidth / 2;
+    const newTop = yRatio * scrollHeight - clientHeight / 2;
+
+    container.scrollLeft = newLeft;
+    container.scrollTop = newTop;
+    
+    // 消费后重置锚点
+    zoomAnchorRef.current = null;
+  }, [zoomScale]);
+
+  const handleZoomUpdate = (newScale: number) => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const clampedScale = Math.max(0.6, Math.min(2.5, newScale));
+    if (clampedScale === zoomScale) return;
+
+    // 缩放前：记录当前视口中心点在整个滚动区域的百分比比例
+    const { scrollLeft, scrollTop, clientWidth, clientHeight, scrollWidth, scrollHeight } = container;
+    
+    zoomAnchorRef.current = {
+      xRatio: (scrollLeft + clientWidth / 2) / scrollWidth,
+      yRatio: (scrollTop + clientHeight / 2) / scrollHeight
+    };
+
+    setZoomScale(clampedScale);
+  };
 
   const createDragGhost = (title: string) => {
     const ghost = document.createElement('div');
@@ -157,7 +261,16 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
     } catch (err) { console.error("Drop process failed:", err); }
   };
 
-  const weekStart = startOfWeek(currentDate, { weekStartsOn: 1 });
+  const calculateWeekStart = (date: Date) => {
+    const d = new Date(date);
+    const day = d.getDay();
+    const diff = (day + 6) % 7;
+    const monday = addDays(d, -diff);
+    monday.setHours(0, 0, 0, 0);
+    return monday;
+  };
+
+  const weekStart = calculateWeekStart(currentDate);
   const weekDays = Array.from({ length: DAYS_TO_SHOW }, (_, i) => addDays(weekStart, i));
 
   useEffect(() => {
@@ -198,8 +311,57 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
   };
 
   return (
-    <div className="flex flex-col h-full bg-white rounded-3xl shadow-[0_4px_30px_rgb(0,0,0,0.03)] border border-slate-100 overflow-hidden relative">
-      <div ref={containerRef} className="flex-1 overflow-auto custom-scrollbar relative bg-slate-50/10">
+    <div className="flex flex-col h-full bg-white rounded-3xl shadow-[0_4px_30px_rgb(0,0,0,0.03)] border border-slate-100 overflow-hidden relative group/calendar">
+      
+      {/* 工业级缩放控制器 - Apple 风格悬浮窗 */}
+      <div className="absolute bottom-6 right-6 z-[60] flex items-center gap-1 bg-white/70 backdrop-blur-2xl border border-white/60 shadow-[0_15px_45px_-12px_rgba(0,0,0,0.15)] rounded-2xl p-2 opacity-0 group-hover/calendar:opacity-100 transition-all duration-300 scale-95 group-hover/calendar:scale-100 select-none">
+          <button 
+            onClick={() => handleZoomUpdate(zoomScale - 0.2)}
+            className="w-8 h-8 flex items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 active:scale-90 transition-all"
+            title="缩小"
+          >
+            <ZoomOut size={16} />
+          </button>
+          
+          <div className="flex items-center gap-2 px-2 group/slider">
+            <input 
+              type="range"
+              min="0.6"
+              max="2.5"
+              step="0.05"
+              value={zoomScale}
+              onChange={(e) => handleZoomUpdate(parseFloat(e.target.value))}
+              className="w-24 h-1 bg-slate-200 rounded-full appearance-none cursor-pointer accent-indigo-600 focus:outline-none"
+            />
+            <span 
+              className="text-[10px] font-bold font-mono text-slate-400 w-9 text-right cursor-pointer hover:text-indigo-600"
+              onDoubleClick={() => handleZoomUpdate(1.0)}
+              title="双击恢复默认"
+            >
+              {Math.round(zoomScale * 100)}%
+            </span>
+          </div>
+
+          <button 
+            onClick={() => handleZoomUpdate(zoomScale + 0.2)}
+            className="w-8 h-8 flex items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 active:scale-90 transition-all"
+            title="放大"
+          >
+            <ZoomIn size={16} />
+          </button>
+          
+          <div className="w-px h-4 bg-slate-200 mx-1"></div>
+          
+          <button 
+            onClick={() => handleZoomUpdate(1.0)}
+            className={`w-8 h-8 flex items-center justify-center rounded-lg transition-all ${zoomScale === 1.0 ? 'text-slate-300 pointer-events-none' : 'text-slate-500 hover:bg-indigo-50 hover:text-indigo-600 active:scale-90'}`}
+            title="重置缩放"
+          >
+            <RotateCcw size={14} />
+          </button>
+      </div>
+
+      <div ref={containerRef} className="flex-1 overflow-auto custom-scrollbar relative bg-slate-50/10 scroll-smooth">
         <div className="min-w-max flex flex-col">
             <div className="sticky top-0 z-40 flex border-b border-slate-200/60 bg-white">
                 <div className="sticky left-0 z-50 bg-white border-r border-slate-50" style={{ width: SIDEBAR_WIDTH }}></div>
@@ -207,9 +369,10 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
                     {weekDays.map((day) => {
                         const isSelected = isSameDay(day, currentDate);
                         return (
-                            <div key={day.toISOString()} className={`flex-1 py-3 flex flex-col items-center justify-center cursor-pointer transition-colors border-r border-slate-100/50 hover:bg-slate-50 ${isSelected ? 'bg-blue-50/20' : ''}`} style={{ minWidth: colMinWidth }} onClick={() => onDateSelect(day)}>
-                                <span className={`text-[10px] font-bold uppercase tracking-widest mb-1 ${isSameDay(day, new Date()) ? 'text-blue-600' : 'text-slate-400'}`}>{WEEKDAYS_ZH[day.getDay()]}</span>
-                                <div className={`w-8 h-8 flex items-center justify-center rounded-xl text-sm font-bold transition-all ${isSelected ? 'bg-slate-900 text-white' : (isSameDay(day, new Date()) ? 'text-blue-600 bg-blue-50' : 'text-slate-800')}`}>{format(day, 'd')}</div>
+                            <div key={day.toISOString()} className={`flex-1 py-3 flex flex-col items-center justify-center cursor-pointer transition-all border-r border-slate-100/50 hover:bg-slate-50 ${isSelected ? 'bg-blue-50/20' : ''}`} style={{ minWidth: colMinWidth }} onClick={() => onDateSelect(day)}>
+                                {/* fix: Replace non-standard style property 'originX' with 'transformOrigin' */}
+                                <span className={`text-[10px] font-bold uppercase tracking-widest mb-1 ${isSameDay(day, new Date()) ? 'text-blue-600' : 'text-slate-400'}`} style={{ transform: `scale(${Math.max(0.85, zoomScale > 1.2 ? 1.1 : zoomScale)})`, transformOrigin: 'center' }}>{WEEKDAYS_ZH[day.getDay()]}</span>
+                                <div className={`w-8 h-8 flex items-center justify-center rounded-xl text-sm font-bold transition-all ${isSelected ? 'bg-slate-900 text-white' : (isSameDay(day, new Date()) ? 'text-blue-600 bg-blue-50' : 'text-slate-800')}`} style={{ transform: `scale(${Math.max(0.9, Math.min(1.2, zoomScale))})` }}>{format(day, 'd')}</div>
                             </div>
                         );
                     })}
@@ -220,7 +383,7 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
                 <div className="sticky left-0 z-30 bg-white border-r border-slate-100 flex-shrink-0" style={{ width: SIDEBAR_WIDTH }}>
                     {HOURS.map((hour) => (
                         <div key={hour} className="relative w-full" style={{ height: `${rowHeight}px` }}>
-                            <span className="absolute -top-2.5 right-3 text-[10px] text-slate-400 font-bold font-mono opacity-50">{hour.toString().padStart(2, '0')}:00</span>
+                            <span className="absolute -top-2.5 right-3 text-[10px] text-slate-400 font-bold font-mono opacity-50 transition-all origin-right" style={{ transform: `scale(${Math.max(0.8, Math.min(1.1, zoomScale))})` }}>{hour.toString().padStart(2, '0')}:00</span>
                         </div>
                     ))}
                 </div>
@@ -231,7 +394,8 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
                     </div>
 
                     {weekDays.map((day) => {
-                        const dayPlans = plans.filter(p => isSameDay(new Date(p.startDate), day));
+                        const dayPlansRaw = plans.filter(p => isSameDay(new Date(p.startDate), day));
+                        const dayPlans = getPositionedPlans(dayPlansRaw);
                         const isDraggingOverMe = dragInfo?.activeDay && isSameDay(dragInfo.activeDay, day);
 
                         return (
@@ -293,12 +457,8 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
                                     const isDone = plan.status === PlanStatus.DONE;
                                     const timeRangeStr = `${format(start, 'HH:mm')} - ${format(end, 'HH:mm')}`;
 
-                                    // 智能显示分级逻辑
-                                    // 极小尺寸 (H < 35px): 仅标题+图标
-                                    // 小型尺寸 (35 <= H < 65px): 标题+紧凑起止时间
-                                    // 中型尺寸 (65 <= H < 100px): 标题+状态标签+起止时间
-                                    // 大型尺寸 (100 <= H < 160px): 标题+状态标签+起止时间+标签列表
-                                    // 巨型尺寸 (H >= 160px): 标题+状态标签+起止时间+备注预览+标签列表
+                                    const widthPct = 100 / plan.totalColumns;
+                                    const leftPct = plan.column * widthPct;
 
                                     return (
                                         <div
@@ -307,9 +467,16 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
                                             onDragStart={(e) => handleDragStartExisting(e, plan)}
                                             onDragEnd={() => setDragInfo(null)}
                                             onContextMenu={(e) => handleCardContextMenu(e, plan)}
-                                            style={{ top: `${top}px`, height: `${h}px` }}
+                                            style={{ 
+                                                top: `${top}px`, 
+                                                height: `${h}px`,
+                                                left: `${leftPct}%`,
+                                                width: `${widthPct}%`,
+                                                paddingLeft: '4px',
+                                                paddingRight: '4px'
+                                            }}
                                             className={`
-                                                absolute inset-x-1 rounded-xl border z-10 cursor-grab active:cursor-grabbing overflow-hidden transition-all flex flex-col
+                                                absolute z-10 cursor-grab active:cursor-grabbing overflow-hidden transition-all flex flex-col
                                                 shadow-[0_2px_12px_rgba(0,0,0,0.02)] hover:z-30 hover:shadow-lg backdrop-blur-md group
                                                 ${isDone 
                                                     ? `bg-slate-50/75 border-slate-100 opacity-60` 
@@ -317,6 +484,7 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
                                                 }
                                                 ${dragInfo?.planId === plan.id ? 'opacity-20 scale-95' : ''}
                                                 ${h < 35 ? 'p-1 px-1.5' : h < 100 ? 'p-2' : h < 160 ? 'p-2.5' : 'p-3'}
+                                                rounded-xl border
                                             `}
                                             onClick={() => onPlanClick(plan)}
                                         >
@@ -333,7 +501,7 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
                                                         <div className={`font-bold truncate leading-tight flex-1 ${h >= 160 ? 'text-[15px]' : h >= 65 ? 'text-[13px]' : 'text-[11px]'} ${isDone ? 'text-slate-400 line-through font-normal' : 'text-slate-800'}`}>
                                                             {plan.title}
                                                         </div>
-                                                        {h >= 65 ? (
+                                                        {h >= 65 && plan.totalColumns < 3 ? (
                                                             <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-md border flex-shrink-0 transition-all
                                                                 ${plan.status === PlanStatus.DONE ? 'bg-emerald-50 text-emerald-600 border-emerald-100' : 
                                                                   plan.status === PlanStatus.IN_PROGRESS ? 'bg-blue-50 text-blue-600 border-blue-100 animate-pulse' : 
@@ -353,14 +521,14 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
                                                         </span>
                                                     </div>
 
-                                                    {h >= 160 && plan.description && (
+                                                    {h >= 160 && plan.description && plan.totalColumns < 2 && (
                                                         <div className="mt-2 text-[11px] text-slate-500 leading-snug line-clamp-3 opacity-80 flex items-start gap-1.5">
                                                             <AlignLeft size={10} className="mt-1 flex-shrink-0 opacity-40" />
                                                             <span className="flex-1">{plan.description}</span>
                                                         </div>
                                                     )}
 
-                                                    {h >= 100 && plan.tags && plan.tags.length > 0 && (
+                                                    {h >= 100 && plan.tags && plan.tags.length > 0 && plan.totalColumns < 3 && (
                                                         <div className="flex flex-wrap gap-1 mt-auto pt-2 pb-1 overflow-hidden max-h-[44px]">
                                                             {plan.tags.slice(0, h >= 160 ? 4 : 2).map(tag => (
                                                                 <span key={tag} className={`px-1.5 py-0.5 rounded-md text-[9px] font-bold border transition-colors whitespace-nowrap ${isDone ? 'bg-slate-100 text-slate-300 border-slate-200' : `bg-${plan.color}-100/50 text-${plan.color}-700 border-${plan.color}-200/50 group-hover:bg-${plan.color}-100 group-hover:border-${plan.color}-200`}`}>

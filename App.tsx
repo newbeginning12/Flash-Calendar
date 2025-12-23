@@ -21,7 +21,8 @@ import {
   processUserIntent, generateSmartSuggestions, DEFAULT_MODEL, SmartSuggestion
 } from './services/aiService';
 import { storageService, BackupData } from './services/storageService';
-import { format, addDays, subDays, isSameDay, addMinutes, differenceInMinutes, startOfDay, endOfDay } from 'date-fns';
+// fix: remove missing subDays, startOfDay exports
+import { format, addDays, isSameDay, addMinutes, differenceInMinutes, endOfDay } from 'date-fns';
 
 const MIN_SIDEBAR_WIDTH = 240;
 const DEFAULT_SIDEBAR_WIDTH = 280;
@@ -241,7 +242,8 @@ export const App: React.FC = () => {
                     <h1 className="text-xl font-bold bg-gradient-to-r from-slate-800 to-slate-600 bg-clip-text text-transparent tracking-tight">闪历</h1>
                     <div className="h-6 w-px bg-slate-200 hidden md:block mx-1"></div>
                     <div className="flex items-center bg-slate-100/50 hover:bg-slate-100 rounded-xl p-1 transition-colors border border-slate-200/50 relative">
-                        <button onClick={() => setCurrentDate(subDays(currentDate, 7))} className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-white rounded-lg shadow-sm transition-all"><ChevronLeft size={16} /></button>
+                        {/* fix: use addDays with negative value instead of subDays */}
+                        <button onClick={() => setCurrentDate(addDays(currentDate, -7))} className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-white rounded-lg shadow-sm transition-all"><ChevronLeft size={16} /></button>
                         <button onClick={() => setIsDatePickerOpen(!isDatePickerOpen)} className="flex items-center gap-2 px-3 py-1 text-sm font-semibold text-slate-700 w-[140px] justify-center hover:text-indigo-600 transition-colors"><CalendarIcon size={14} className="mb-0.5" />{format(currentDate, 'yyyy年 M月')}</button>
                         <button onClick={() => setCurrentDate(addDays(currentDate, 7))} className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-white rounded-lg shadow-sm transition-all"><ChevronRight size={16} /></button>
                         {isDatePickerOpen && <DatePicker currentDate={currentDate} onDateSelect={setCurrentDate} onClose={() => setIsDatePickerOpen(false)} />}
