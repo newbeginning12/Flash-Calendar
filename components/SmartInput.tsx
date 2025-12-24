@@ -118,30 +118,21 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onSubmit, onStop, onSugg
     await onSubmit(toSubmit);
   };
 
-  // 核心：处理智能 Enter 键逻辑
   const handleEnterKey = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter') {
       e.preventDefault();
-      
-      // 1. 如果正在 AI 处理中，停止它
       if (isProcessing) {
         onStop();
         return;
       }
-
-      // 2. 如果正在录音中，停止录音（此时文字已在输入框内）
       if (isListening) {
         stopListening();
         return;
       }
-
-      // 3. 如果输入框为空，则发起录音
       if (!searchValue.trim()) {
         startListening();
         return;
       }
-
-      // 4. 如果输入框有文字，则提交
       handleSubmit();
     }
   };
@@ -178,10 +169,8 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onSubmit, onStop, onSugg
   return (
     <div className={`relative flex flex-col group/input transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] w-full`}>
       
-      {/* 建议与搜索结果弹出层 */}
       {(isFocused || (searchValue && isFocused)) && (
         <div className="absolute top-full left-0 right-0 mt-3 bg-white/95 backdrop-blur-2xl border border-slate-200/60 shadow-[0_30px_60px_-12px_rgba(0,0,0,0.18)] rounded-3xl overflow-hidden animate-in fade-in slide-in-from-top-3 duration-500 z-[100]">
-          {/* AI 智能建议区块 */}
           {suggestions.length > 0 && !searchValue && (
             <div className="p-4 bg-slate-50/50 border-b border-slate-100">
               <div className="px-3 py-1.5 mb-2.5 flex items-center gap-1.5">
@@ -201,7 +190,6 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onSubmit, onStop, onSugg
             </div>
           )}
 
-          {/* 实时搜索结果区块 */}
           {searchValue && (
              <div className="max-h-[400px] overflow-y-auto custom-scrollbar p-3">
                 {searchResults.length > 0 ? (
@@ -235,11 +223,10 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onSubmit, onStop, onSugg
         </div>
       )}
 
-      {/* 主输入区域 */}
       <div className={`
         relative flex items-center transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)]
         ${isHeader 
-          ? 'h-10 rounded-xl bg-slate-100/60 border border-slate-200/50 focus-within:bg-white focus-within:border-indigo-400 focus-within:ring-[6px] focus-within:ring-indigo-500/5' 
+          ? 'h-9 rounded-xl bg-slate-100/60 border border-slate-200/50 focus-within:bg-white focus-within:border-indigo-400 focus-within:ring-[6px] focus-within:ring-indigo-500/5' 
           : 'h-14 rounded-2xl bg-white shadow-xl border border-slate-100 focus-within:ring-4 focus-within:ring-indigo-500/10'
         }
       `}>
