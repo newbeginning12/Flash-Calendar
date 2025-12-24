@@ -13,23 +13,26 @@ interface WeeklyReportModalProps {
 export const WeeklyReportModal: React.FC<WeeklyReportModalProps> = ({ isOpen, onClose, data }) => {
   const [copied, setCopied] = useState(false);
 
-  if (!isOpen || !data) return null;
+  // 如果没有数据，绝对不渲染
+  if (!data) return null;
+  // 如果 isOpen 为假，由于 React 状态同步可能微秒级延迟，但在 App.tsx 中它们是同步设置的，所以这里主要防误触
+  if (!isOpen) return null;
 
   const handleCopy = () => {
     const text = `
 【本周工作周报】 ${format(new Date(), 'yyyy-MM-dd')}
 
 ### 1. 本周完成工作
-${data.achievements.map(i => `- ${i}`).join('\n')}
+${(data.achievements || []).map(i => `- ${i}`).join('\n')}
 
 ### 2. 本周工作总结
-${data.summary}
+${data.summary || ""}
 
 ### 3. 下周工作计划
-${data.nextWeekPlans.map(i => `- ${i}`).join('\n')}
+${(data.nextWeekPlans || []).map(i => `- ${i}`).join('\n')}
 
 ### 4. 需协调与帮助
-${data.risks}
+${data.risks || "无"}
     `.trim();
 
     navigator.clipboard.writeText(text).then(() => {
@@ -39,7 +42,7 @@ ${data.risks}
   };
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+    <div className="fixed inset-0 z-[120] flex items-center justify-center p-4">
       <div 
         className="absolute inset-0 bg-slate-900/40 backdrop-blur-md transition-opacity duration-300" 
         onClick={onClose}
@@ -78,7 +81,7 @@ ${data.risks}
                     <h3 className="text-sm font-bold text-slate-700">1. 本周完成工作</h3>
                 </div>
                 <div className="bg-white rounded-lg border border-slate-200 p-4 min-h-[80px]">
-                    {data.achievements.length > 0 ? (
+                    {data.achievements && data.achievements.length > 0 ? (
                         <ul className="space-y-2">
                             {data.achievements.map((item, idx) => (
                                 <li key={idx} className="text-sm text-slate-700 flex items-start gap-2.5 leading-relaxed">
@@ -88,7 +91,7 @@ ${data.risks}
                             ))}
                         </ul>
                     ) : (
-                        <div className="text-sm text-slate-400">本周无已完成日程，建议手动补充。</div>
+                        <div className="text-sm text-slate-400 italic">本周无已完成日程，建议手动补充。</div>
                     )}
                 </div>
             </section>
@@ -111,7 +114,7 @@ ${data.risks}
                     <h3 className="text-sm font-bold text-slate-700">3. 下周工作计划</h3>
                 </div>
                 <div className="bg-white rounded-lg border border-slate-200 p-4 min-h-[80px]">
-                    {data.nextWeekPlans.length > 0 ? (
+                    {data.nextWeekPlans && data.nextWeekPlans.length > 0 ? (
                         <ul className="space-y-2">
                             {data.nextWeekPlans.map((item, idx) => (
                                 <li key={idx} className="text-sm text-slate-700 flex items-start gap-2.5 leading-relaxed">
@@ -121,7 +124,7 @@ ${data.risks}
                             ))}
                         </ul>
                     ) : (
-                        <div className="text-sm text-slate-400">暂未排入下周计划。</div>
+                        <div className="text-sm text-slate-400 italic">暂未排入下周计划。</div>
                     )}
                 </div>
             </section>
@@ -136,7 +139,7 @@ ${data.risks}
                      {data.risks && data.risks !== "无" ? (
                          <span>{data.risks}</span>
                      ) : (
-                         <span className="text-slate-400">目前暂无风险。</span>
+                         <span className="text-slate-400 italic">目前暂无风险。</span>
                      )}
                 </div>
             </section>

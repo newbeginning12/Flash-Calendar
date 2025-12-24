@@ -149,7 +149,6 @@ export const processUserIntent = async (
   const localTimeContext = format(now, 'yyyy-MM-dd HH:mm:ss');
   const todayDate = format(now, 'yyyy-MM-dd');
   
-  // 仅筛选本周和下周的日程作为上下文，避免 Token 过多
   const relevantPlans = currentPlans.filter(p => {
       const pDate = new Date(p.startDate);
       const start = startOfWeek(now, { weekStartsOn: 1 });
@@ -167,9 +166,6 @@ export const processUserIntent = async (
 
     ### 模式 A：创建日程 (Intent: CREATE)
     当用户想要“开会”、“预约”、“明天做某事”时进入此模式。
-    1. 标题提取 (title): 2-15字，精简有力。
-    2. 时间解析 (startDate/endDate): 基于 ${todayDate} 偏移。默认时长1小时。
-    3. 标签提取 (tags): 从输入中提取1-2个核心关键词。
 
     ### 模式 B：生成周报 (Intent: ANALYZE)
     当用户提到“周报”、“总结”、“回顾”时进入此模式。
@@ -245,12 +241,27 @@ export const processUserIntent = async (
   const data = extractJSON(rawResponseText);
   if (!data) return null;
 
-  if (data.intent === 'ANALYZE' && data.reportData) {
-    return { type: 'ANALYSIS', data: data.reportData };
+  // 强化校验逻辑，确保 intent 匹配不区分大小写，且提供数据兜底
+  const intent = (data.intent || "").toUpperCase();
+  
+  if (intent === 'ANALYZE' && data.reportData) {
+    const report = data.reportData;
+    // 兜底：确保所有字段都有值，数组字段不是 null
+    return { 
+      type: 'ANALYSIS', 
+      data: {
+        achievements: Array.isArray(report.achievements) ? report.achievements : [],
+        summary: report.summary || "未生成有效总结",
+        nextWeekPlans: Array.isArray(report.nextWeekPlans) ? report.nextWeekPlans : [],
+        risks: report.risks || "无"
+      } 
+    };
   }
-  if (data.intent === 'CREATE') {
+  
+  if (intent === 'CREATE') {
     return createPlanFromRaw(data.planData || {});
   }
+  
   return null;
 };
 

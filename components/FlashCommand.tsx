@@ -63,14 +63,17 @@ export const FlashCommand: React.FC<FlashCommandProps> = ({ plans, settings, onP
                     setShowSuccess(null);
                 }, 1200);
             } else if (result.type === 'ANALYSIS' && result.data) {
-                onAnalysisCreated(result.data);
-                setShowSuccess('report');
+                // 先重置输入，防止状态闪烁
                 setInput('');
-                // 周报生成后立即关闭指令框，以便用户看到弹出的周报 Modal
+                setShowSuccess('report');
+                
+                // 关键优化：先执行回调触发 App 的 Modal，然后尽快关闭 FlashCommand 以免层级干扰
+                onAnalysisCreated(result.data);
+                
                 setTimeout(() => {
                     setIsOpen(false);
                     setShowSuccess(null);
-                }, 800);
+                }, 500); // 缩短等待时间
             }
         }
     } catch (error: any) {
