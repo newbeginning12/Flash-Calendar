@@ -1,7 +1,8 @@
+
 import React, { useState, useRef, useEffect, useMemo, useCallback, useLayoutEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { WorkPlan, PlanStatus } from '../types';
-import { format, addDays, isSameDay, getHours, getMinutes, differenceInMinutes, addMinutes } from 'date-fns';
+import { format, addDays, isSameDay, getHours, getMinutes, differenceInMinutes, addMinutes, getWeek, startOfMonth } from 'date-fns';
 import { Plus, Clock, Move, Tag, CheckCircle2, Circle, PlayCircle, Edit2, Trash2, AlignLeft, ZoomIn, ZoomOut, Maximize2, Minimize2, Search, RotateCcw } from 'lucide-react';
 
 interface WeeklyCalendarProps {
@@ -28,10 +29,10 @@ const WEEKDAYS_ZH = ['周日', '周一', '周二', '周三', '周四', '周五',
 const SIDEBAR_WIDTH = 60; 
 const COLORS = ['blue', 'indigo', 'purple', 'rose', 'orange', 'emerald'];
 
-// 基础常量
-const BASE_ROW_HEIGHT = 48;
-const BASE_COL_MIN_WIDTH = 130; 
-const GRID_TOP_OFFSET = 24; // 增加顶部间距，防止 00:00 被遮挡
+// 进一步调大基础尺寸，让默认视觉更丰满
+const BASE_ROW_HEIGHT = 68; 
+const BASE_COL_MIN_WIDTH = 180; 
+const GRID_TOP_OFFSET = 24; 
 
 const STATUS_LABELS = {
   [PlanStatus.TODO]: '待办',
@@ -108,7 +109,6 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
   const [now, setNow] = useState(new Date());
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; date?: Date; timeStr?: string; plan?: WorkPlan } | null>(null);
   
-  // 缩放状态控制
   const [zoomScale, setZoomScale] = useState(1.0);
   const zoomAnchorRef = useRef<{ xRatio: number; yRatio: number } | null>(null);
   
@@ -126,25 +126,20 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
       tags?: string[];
   } | null>(null);
 
-  // 动态尺寸计算
   const rowHeight = BASE_ROW_HEIGHT * zoomScale;
   const colMinWidth = BASE_COL_MIN_WIDTH * zoomScale;
 
-  // 计算当前时间点在视图中的高度
   const currentTimeTop = useMemo(() => {
     return (getHours(now) * 60 + getMinutes(now)) / 60 * rowHeight + GRID_TOP_OFFSET;
   }, [now, rowHeight]);
 
-  // 1. 初始加载：自动滚动到当前时间 (Human-friendly initial scroll)
   useEffect(() => {
     if (containerRef.current && !targetPlanId) {
-      // 默认将当前时间定位在视图上方约 1/4 处，更符合直觉
       const initialScroll = currentTimeTop - 150;
       containerRef.current.scrollTop = Math.max(0, initialScroll);
     }
-  }, []); // 仅在组件挂载时执行一次
+  }, []); 
 
-  // 2. 自动平滑滚动到目标日程 (Target navigation)
   useEffect(() => {
     if (targetPlanId && containerRef.current) {
       const targetPlan = plans.find(p => p.id === targetPlanId);
@@ -160,7 +155,6 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
     }
   }, [targetPlanId, plans, rowHeight]);
 
-  // 关键：锚点缩放补偿
   useLayoutEffect(() => {
     const container = containerRef.current;
     if (!container || !zoomAnchorRef.current) return;
@@ -181,7 +175,8 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
     const container = containerRef.current;
     if (!container) return;
 
-    const clampedScale = Math.max(0.6, Math.min(2.5, newScale));
+    // 限制最大缩放为 200% (2.0)
+    const clampedScale = Math.max(0.6, Math.min(2.0, newScale));
     if (Math.abs(clampedScale - zoomScale) < 0.001) return;
 
     const { scrollLeft, scrollTop, clientWidth, clientHeight, scrollWidth, scrollHeight } = container;
@@ -194,7 +189,6 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
     setZoomScale(clampedScale);
   }, [zoomScale]);
 
-  // 全局快捷键与滚轮缩放支持
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       const isCmdOrCtrl = e.metaKey || e.ctrlKey;
@@ -270,7 +264,6 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
     e.dataTransfer.dropEffect = template ? 'copy' : 'move';
     
     const rect = e.currentTarget.getBoundingClientRect();
-    // 偏移计算需减去 GRID_TOP_OFFSET
     const rawMinutes = ((e.clientY - rect.top - GRID_TOP_OFFSET) / rowHeight) * 60;
     const snappedMinutes = Math.max(0, Math.floor(rawMinutes / 15) * 15);
 
@@ -344,6 +337,18 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
 
   const weekStart = calculateWeekStart(currentDate);
   const weekDays = Array.from({ length: DAYS_TO_SHOW }, (_, i) => addDays(weekStart, i));
+  
+  // 核心改动：计算当前月份的第几周
+  const weekOfMonth = useMemo(() => {
+    const startOfCurrMonth = startOfMonth(weekStart);
+    const weekNumStart = getWeek(startOfCurrMonth, { weekStartsOn: 1 });
+    const weekNumCurrent = getWeek(weekStart, { weekStartsOn: 1 });
+    // 处理跨年周数重置问题
+    if (weekNumCurrent < weekNumStart) {
+        return weekNumCurrent; 
+    }
+    return weekNumCurrent - weekNumStart + 1;
+  }, [weekStart]);
 
   useEffect(() => {
     const interval = setInterval(() => setNow(new Date()), 60000);
@@ -380,7 +385,6 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
     setContextMenu({ x: e.clientX, y: e.clientY, plan });
   };
 
-  // 搜索过滤逻辑
   const isPlanHighlighted = (plan: WorkPlan) => {
     if (!searchTerm.trim()) return true;
     const lowerSearch = searchTerm.toLowerCase();
@@ -394,7 +398,6 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
   return (
     <div className="flex flex-col h-full bg-white rounded-3xl shadow-[0_4px_30px_rgb(0,0,0,0.03)] border border-slate-100 overflow-hidden relative group/calendar">
       
-      {/* 工业级缩放控制器 - Apple 风格悬浮窗 */}
       <div className="absolute bottom-6 right-6 z-[60] flex items-center gap-1 bg-white/70 backdrop-blur-2xl border border-white/60 shadow-[0_15px_45px_-12px_rgba(0,0,0,0.15)] rounded-2xl p-2 opacity-0 group-hover/calendar:opacity-100 transition-all duration-300 scale-95 group-hover/calendar:scale-100 select-none">
           <button 
             onClick={() => handleZoomUpdate(zoomScale - 0.2)}
@@ -408,7 +411,7 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
             <input 
               type="range"
               min="0.6"
-              max="2.5"
+              max="2.0"
               step="0.05"
               value={zoomScale}
               onChange={(e) => handleZoomUpdate(parseFloat(e.target.value))}
@@ -445,7 +448,10 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
       <div ref={containerRef} className="flex-1 overflow-auto custom-scrollbar relative bg-slate-50/10 scroll-smooth">
         <div className="min-w-max flex flex-col">
             <div className="sticky top-0 z-40 flex border-b border-slate-200/60 bg-white">
-                <div className="sticky left-0 z-50 bg-white border-r border-slate-50" style={{ width: SIDEBAR_WIDTH }}></div>
+                <div className="sticky left-0 z-50 bg-white border-r border-slate-50 flex flex-col items-center justify-center leading-none" style={{ width: SIDEBAR_WIDTH }}>
+                    <span className="text-[9px] font-bold text-slate-400 mb-1">{format(weekStart, 'M月')}</span>
+                    <span className="text-[10px] font-black text-slate-600 uppercase tracking-tighter">第{weekOfMonth}周</span>
+                </div>
                 <div className="flex flex-1">
                     {weekDays.map((day) => {
                         const isSelected = isSameDay(day, currentDate);
@@ -460,7 +466,6 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
             </div>
 
             <div className="flex relative">
-                {/* 侧边时间轴 - 增加顶部 Offset 容器 */}
                 <div className="sticky left-0 z-30 bg-white border-r border-slate-100 flex-shrink-0" style={{ width: SIDEBAR_WIDTH }}>
                     <div style={{ height: `${GRID_TOP_OFFSET}px` }}></div>
                     {HOURS.map((hour) => (
@@ -470,8 +475,7 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
                     ))}
                 </div>
 
-                <div className="flex-1 relative min-h-[1152px]">
-                    {/* 背景网格线 - 增加顶部 Offset */}
+                <div className="flex-1 relative" style={{ height: 24 * rowHeight + GRID_TOP_OFFSET }}>
                     <div className="absolute inset-0 flex flex-col pointer-events-none">
                         <div style={{ height: `${GRID_TOP_OFFSET}px` }}></div>
                         {HOURS.map((h) => <div key={h} className="border-b border-slate-100/60" style={{ height: `${rowHeight}px` }} />)}
@@ -545,7 +549,6 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
                                         const widthPct = 100 / plan.totalColumns;
                                         const leftPct = plan.column * widthPct;
                                         
-                                        // 确定高亮状态
                                         const isHighlighted = isPlanHighlighted(plan);
                                         const isSearchActive = searchTerm.trim().length > 0;
                                         const isTarget = targetPlanId === plan.id;
