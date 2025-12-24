@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { WorkPlan, PlanStatus, LinkResource } from '../types';
-import { X, Tag, Trash2, Link as LinkIcon, ExternalLink, ChevronDown, ChevronUp, AlignLeft, Check, Clock, AlertCircle, ArrowRight, Calendar, Sparkles, Loader2 } from 'lucide-react';
+import { X, Tag, Trash2, Link as LinkIcon, ExternalLink, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, AlignLeft, Check, Clock, AlertCircle, ArrowRight, Calendar, Sparkles, Loader2, Minus, Plus } from 'lucide-react';
 import { DateTimePicker } from './DateTimePicker';
 import { differenceInMinutes, addMinutes, isSameDay } from 'date-fns';
 
@@ -61,11 +61,9 @@ export const PlanModal: React.FC<PlanModalProps> = ({ plan, isOpen, onClose, onS
 
   useEffect(() => {
     if (isOpen && plan) {
-        // Intelligent focus and selection logic
         const timer = setTimeout(() => {
             if (inputRef.current) {
                 inputRef.current.focus();
-                // If it is the default generic title, select it all for quick overwrite
                 if (plan.title === '新建日程') {
                     inputRef.current.select();
                 }
@@ -99,21 +97,13 @@ export const PlanModal: React.FC<PlanModalProps> = ({ plan, isOpen, onClose, onS
     }
   }, [editedPlan.startDate, editedPlan.endDate]);
 
-  // Auto-update status logic for new plans
   useEffect(() => {
-      // Only apply auto-status logic if it's a "New Plan" (default title)
-      // This prevents overriding manual status changes on existing named plans
       if (editedPlan.title === '新建日程') {
           const now = new Date();
           const start = new Date(editedPlan.startDate);
           const end = new Date(editedPlan.endDate);
           
           let newStatus = PlanStatus.TODO;
-          
-          // Logic: 
-          // 1. End time is past -> DONE
-          // 2. Now is between Start and End -> IN_PROGRESS
-          // 3. Start time is future -> TODO
           
           if (end <= now) {
               newStatus = PlanStatus.DONE;
@@ -127,7 +117,7 @@ export const PlanModal: React.FC<PlanModalProps> = ({ plan, isOpen, onClose, onS
       }
   }, [editedPlan.startDate, editedPlan.endDate, editedPlan.title]);
 
-  const allTags = Array.from(new Set([...DEFAULT_TAGS, ...customTags]));
+  const allTags = useMemo(() => Array.from(new Set([...DEFAULT_TAGS, ...customTags])), [customTags]);
 
   const handleChange = (field: keyof WorkPlan, value: any) => {
     setEditedPlan(prev => ({ ...prev, [field]: value }));
@@ -168,6 +158,16 @@ export const PlanModal: React.FC<PlanModalProps> = ({ plan, isOpen, onClose, onS
       return `${m}分钟`;
   }, [editedPlan.startDate, editedPlan.endDate]);
 
+  const adjustDuration = (hours: number) => {
+      const start = new Date(editedPlan.startDate);
+      const currentEnd = new Date(editedPlan.endDate);
+      const newEnd = addMinutes(currentEnd, hours * 60);
+      
+      if (newEnd.getTime() > start.getTime() && isSameDay(start, newEnd)) {
+          handleChange('endDate', newEnd.toISOString());
+      }
+  };
+
   const handleAddTag = (tag: string) => {
       const cleanTag = tag.trim();
       if (!cleanTag) return;
@@ -188,6 +188,13 @@ export const PlanModal: React.FC<PlanModalProps> = ({ plan, isOpen, onClose, onS
       handleChange('tags', editedPlan.tags.filter(t => t !== tagToRemove));
   };
 
+  const handleDeleteCustomTag = (e: React.MouseEvent, tag: string) => {
+      e.stopPropagation(); 
+      const newCustom = customTags.filter(t => t !== tag);
+      setCustomTags(newCustom);
+      localStorage.setItem('zhihui_custom_tags', JSON.stringify(newCustom));
+  };
+
   const toggleTag = (tag: string) => {
       if (editedPlan.tags.includes(tag)) {
           handleRemoveTag(tag);
@@ -203,7 +210,6 @@ export const PlanModal: React.FC<PlanModalProps> = ({ plan, isOpen, onClose, onS
       }
   };
 
-  // Helper to check if string looks like a URL
   const isValidUrl = (string: string) => {
     try {
       new URL(string.startsWith('http') ? string : `https://${string}`);
@@ -227,7 +233,6 @@ export const PlanModal: React.FC<PlanModalProps> = ({ plan, isOpen, onClose, onS
     const pastedText = e.clipboardData.getData('text');
     
     if (isValidUrl(pastedText)) {
-        // If title is currently empty, try to fill it
         if (!newLinkTitle.trim()) {
             let fullUrl = pastedText;
             if (!/^https?:\/\//i.test(fullUrl)) {
@@ -235,20 +240,17 @@ export const PlanModal: React.FC<PlanModalProps> = ({ plan, isOpen, onClose, onS
             }
 
             try {
-                // 1. Immediate Fallback: Extract Domain Name
-                // This ensures the user gets instant feedback even if fetch fails
                 const urlObj = new URL(fullUrl);
                 const hostname = urlObj.hostname.replace(/^www\./, '');
                 setNewLinkTitle(hostname);
 
-                // 2. Attempt to fetch real title (Best Effort)
                 setIsFetchingTitle(true);
                 const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), 3000); // 3s timeout
+                const timeoutId = setTimeout(() => controller.abort(), 3000);
 
                 const response = await fetch(fullUrl, {
                     signal: controller.signal,
-                    mode: 'cors', // Attempt CORS
+                    mode: 'cors',
                     headers: { 'Accept': 'text/html' }
                 });
                 clearTimeout(timeoutId);
@@ -262,7 +264,6 @@ export const PlanModal: React.FC<PlanModalProps> = ({ plan, isOpen, onClose, onS
                     }
                 }
             } catch (err) {
-                // Ignore CORS errors
             } finally {
                 setIsFetchingTitle(false);
             }
@@ -299,6 +300,19 @@ export const PlanModal: React.FC<PlanModalProps> = ({ plan, isOpen, onClose, onS
 
   const isDefaultTitle = editedPlan.title === '新建日程';
 
+  const isDecreaseDisabled = useMemo(() => {
+      const start = new Date(editedPlan.startDate);
+      const end = new Date(editedPlan.endDate);
+      return differenceInMinutes(end, start) <= 60;
+  }, [editedPlan.startDate, editedPlan.endDate]);
+
+  const isIncreaseDisabled = useMemo(() => {
+      const start = new Date(editedPlan.startDate);
+      const end = new Date(editedPlan.endDate);
+      const nextEnd = addMinutes(end, 60);
+      return !isSameDay(start, nextEnd);
+  }, [editedPlan.startDate, editedPlan.endDate]);
+
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
       <div 
@@ -308,10 +322,8 @@ export const PlanModal: React.FC<PlanModalProps> = ({ plan, isOpen, onClose, onS
       
       <div className="relative w-full max-w-2xl bg-white rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh] animate-in fade-in zoom-in-95 duration-200">
         
-        {/* --- Header Section --- */}
         <div className="px-8 pt-8 pb-4 flex-none">
             <div className="flex gap-5">
-                {/* Left: Color Indicator */}
                 <div className="pt-3 flex-shrink-0">
                      <div className="relative">
                         <button 
@@ -333,7 +345,6 @@ export const PlanModal: React.FC<PlanModalProps> = ({ plan, isOpen, onClose, onS
                      </div>
                 </div>
 
-                {/* Right: Title & Time */}
                 <div className="flex-1 min-w-0">
                     <div className="relative group">
                         {isDefaultTitle && (
@@ -354,7 +365,6 @@ export const PlanModal: React.FC<PlanModalProps> = ({ plan, isOpen, onClose, onS
                         />
                     </div>
                     
-                    {/* Time Picker Row */}
                     <div className="mt-4 flex flex-wrap items-center gap-3">
                         <div className="flex-1 min-w-[200px]">
                             <DateTimePicker 
@@ -365,15 +375,32 @@ export const PlanModal: React.FC<PlanModalProps> = ({ plan, isOpen, onClose, onS
                         </div>
                         <ArrowRight size={16} className="text-slate-300 flex-shrink-0 mt-4 hidden sm:block" />
                         <div className="flex-1 min-w-[200px]">
-                            {/* Manual Label Row with Duration */}
                             <div className="flex justify-between items-center mb-2">
                                 <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">
                                     结束时间
                                 </label>
                                 {durationLabel && (
-                                    <span className="text-[10px] text-slate-500 font-medium bg-slate-100 px-1.5 py-0.5 rounded whitespace-nowrap animate-in fade-in">
-                                        {durationLabel}
-                                    </span>
+                                    <div className="flex items-center gap-1 px-1 animate-in fade-in group/stepper">
+                                        <button 
+                                            onClick={() => adjustDuration(-1)}
+                                            disabled={isDecreaseDisabled}
+                                            className="p-0.5 text-slate-400 hover:text-indigo-600 disabled:opacity-20 disabled:hover:text-slate-400 transition-colors"
+                                            title="减少1小时"
+                                        >
+                                            <ChevronLeft size={12} strokeWidth={3} />
+                                        </button>
+                                        <span className="text-[10px] text-slate-600 font-bold px-1 min-w-[3.5em] text-center">
+                                            {durationLabel}
+                                        </span>
+                                        <button 
+                                            onClick={() => adjustDuration(1)}
+                                            disabled={isIncreaseDisabled}
+                                            className="p-0.5 text-slate-400 hover:text-indigo-600 disabled:opacity-20 disabled:hover:text-slate-400 transition-colors"
+                                            title="增加1小时"
+                                        >
+                                            <ChevronRight size={12} strokeWidth={3} />
+                                        </button>
+                                    </div>
                                 )}
                             </div>
                             <DateTimePicker 
@@ -398,14 +425,11 @@ export const PlanModal: React.FC<PlanModalProps> = ({ plan, isOpen, onClose, onS
             </div>
         </div>
 
-        {/* Divider */}
         <div className="h-px bg-slate-100 w-full"></div>
 
-        {/* --- Body Section --- */}
         <div className="flex-1 overflow-y-auto custom-scrollbar px-8 py-6">
             <div className="space-y-6">
 
-                {/* Status */}
                 <div className="flex gap-5">
                     <div className="w-6 flex-shrink-0 flex justify-center mt-1 text-slate-400">
                         <Check size={20} />
@@ -430,7 +454,6 @@ export const PlanModal: React.FC<PlanModalProps> = ({ plan, isOpen, onClose, onS
                     </div>
                 </div>
 
-                {/* Tags */}
                 <div className="flex gap-5">
                     <div className="w-6 flex-shrink-0 flex justify-center mt-1.5 text-slate-400">
                         <Tag size={20} />
@@ -470,26 +493,39 @@ export const PlanModal: React.FC<PlanModalProps> = ({ plan, isOpen, onClose, onS
                             
                             {isTagsExpanded && (
                                 <div className="mt-3 p-3 bg-slate-50/50 rounded-xl border border-slate-100 flex flex-wrap gap-2 animate-in fade-in slide-in-from-top-2">
-                                    {allTags.map(tag => (
-                                        <button
-                                            key={tag}
-                                            onClick={() => toggleTag(tag)}
-                                            className={`px-2.5 py-1 rounded-md text-xs border transition-all ${
-                                                editedPlan.tags.includes(tag)
-                                                ? 'bg-indigo-100 text-indigo-700 border-indigo-200'
-                                                : 'bg-white text-slate-600 border-slate-200 hover:border-indigo-300 hover:text-indigo-600'
-                                            }`}
-                                        >
-                                            {tag}
-                                        </button>
-                                    ))}
+                                    {allTags.map(tag => {
+                                        const isCustom = customTags.includes(tag);
+                                        const isSelected = editedPlan.tags.includes(tag);
+                                        return (
+                                            <div key={tag} className="relative group/tagitem">
+                                                <button
+                                                    onClick={() => toggleTag(tag)}
+                                                    className={`px-2.5 py-1 rounded-md text-xs border transition-all flex items-center gap-1 ${
+                                                        isSelected
+                                                        ? 'bg-indigo-100 text-indigo-700 border-indigo-200'
+                                                        : 'bg-white text-slate-600 border-slate-200 hover:border-indigo-300 hover:text-indigo-600'
+                                                    }`}
+                                                >
+                                                    {tag}
+                                                </button>
+                                                {isCustom && (
+                                                    <button 
+                                                        onClick={(e) => handleDeleteCustomTag(e, tag)}
+                                                        className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-slate-200 text-slate-500 items-center justify-center hover:bg-rose-500 hover:text-white transition-all hidden group-hover/tagitem:flex shadow-sm z-10"
+                                                        title="从推荐中删除"
+                                                    >
+                                                        <X size={8} strokeWidth={4} />
+                                                    </button>
+                                                )}
+                                            </div>
+                                        );
+                                    })}
                                 </div>
                             )}
                         </div>
                     </div>
                 </div>
 
-                {/* Notes */}
                 <div className="flex gap-5">
                     <div className="w-6 flex-shrink-0 flex justify-center mt-1 text-slate-400">
                         <AlignLeft size={20} />
@@ -505,7 +541,6 @@ export const PlanModal: React.FC<PlanModalProps> = ({ plan, isOpen, onClose, onS
                     </div>
                 </div>
 
-                {/* Links */}
                 <div className="flex gap-5">
                     <div className="w-6 flex-shrink-0 flex justify-center mt-1.5 text-slate-400">
                         <LinkIcon size={20} />
@@ -574,7 +609,6 @@ export const PlanModal: React.FC<PlanModalProps> = ({ plan, isOpen, onClose, onS
             </div>
         </div>
 
-        {/* --- Footer --- */}
         <div className="flex-none px-8 py-5 border-t border-slate-100 bg-white flex justify-between items-center z-10">
           <button 
             onClick={() => onDelete(editedPlan.id)}
