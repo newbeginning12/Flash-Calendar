@@ -26,18 +26,25 @@ const determineStatus = (startDateStr: string, endDateStr: string): PlanStatus =
 
 const extractJSON = (text: string) => {
   try {
+    // 1. 尝试匹配 Markdown 代码块
     const codeBlockMatch = text.match(/```json\s*([\s\S]*?)\s*```/);
     if (codeBlockMatch) return JSON.parse(codeBlockMatch[1]);
+    
+    // 2. 尝试寻找第一个 { 或 [
     const firstOpenBrace = text.indexOf('{');
     const firstOpenBracket = text.indexOf('[');
+    
     if (firstOpenBracket !== -1 && (firstOpenBrace === -1 || firstOpenBracket < firstOpenBrace)) {
         const arrayMatch = text.match(/\[[\s\S]*\]/);
         if (arrayMatch) return JSON.parse(arrayMatch[0]);
     }
+    
     const objectMatch = text.match(/\{[\s\S]*\}/);
     if (objectMatch) return JSON.parse(objectMatch[0]);
+    
     return JSON.parse(text);
   } catch (e) {
+    console.error("JSON Extraction failed:", e);
     return null;
   }
 };
@@ -89,6 +96,7 @@ const callOpenAICompatible = async (
         messages: messages,
         temperature: 0.1,
         stream: false,
+        // 部分模型可能不支持显式的 json_object 格式，此时我们依赖 Prompt
         response_format: jsonMode ? { type: "json_object" } : undefined
       }),
       signal: signal
@@ -170,15 +178,15 @@ export const processUserIntent = async (
     ### 模式 B：生成周报 (Intent: ANALYZE)
     当用户提到“周报”、“总结”、“回顾”时进入此模式。
     你必须基于提供的【现有日程上下文】来总结。钉钉周报格式要求如下：
-    1. achievements (本周完成工作): 列出状态为“已完成”或“进行中”的重点事项。
-    2. summary (本周工作总结): 对本周产出进行一段话的概括。
-    3. nextWeekPlans (下周工作计划): 列出状态为“待办”或未来日期的事项。
-    4. risks (需协调与帮助): 识别可能的风险或阻塞点，若无则写“无”。
+    1. achievements (本周完成工作): 数组格式，列出重点事项。
+    2. summary (本周工作总结): 字符串，一段话概括。
+    3. nextWeekPlans (下周工作计划): 数组格式。
+    4. risks (需协调与帮助): 字符串，若无则写“无”。
 
     【现有日程上下文】:
-    ${planContext || "（暂无现有日程，请基于通用逻辑生成空框架）"}
+    ${planContext || "（暂无现有日程）"}
 
-    直接返回 JSON 对象，严禁任何解释。
+    请直接返回 JSON 格式，包含字段: "intent" (值为 "CREATE" 或 "ANALYZE") 以及对应的 "planData" 或 "reportData"。
   `;
 
   let rawResponseText: string | undefined | null = null;
@@ -231,7 +239,7 @@ export const processUserIntent = async (
     }
   } else {
     const messages: OpenAICompatibleMessage[] = [
-      { role: 'system', content: systemInstructionText },
+      { role: 'system', content: systemInstructionText + "\n请务必返回合法的 JSON 对象。" },
       { role: 'user', content: `用户输入: "${userInput}"` }
     ];
     rawResponseText = await callOpenAICompatible(settings, messages, true, signal);
@@ -241,25 +249,31 @@ export const processUserIntent = async (
   const data = extractJSON(rawResponseText);
   if (!data) return null;
 
-  // 强化校验逻辑，确保 intent 匹配不区分大小写，且提供数据兜底
-  const intent = (data.intent || "").toUpperCase();
-  
-  if (intent === 'ANALYZE' && data.reportData) {
-    const report = data.reportData;
-    // 兜底：确保所有字段都有值，数组字段不是 null
-    return { 
-      type: 'ANALYSIS', 
-      data: {
-        achievements: Array.isArray(report.achievements) ? report.achievements : [],
-        summary: report.summary || "未生成有效总结",
-        nextWeekPlans: Array.isArray(report.nextWeekPlans) ? report.nextWeekPlans : [],
-        risks: report.risks || "无"
-      } 
+  // --- 关键增强：意图与数据归一化 ---
+  const intentStr = (data.intent || "").toUpperCase();
+  const isAnalyzeIntent = intentStr === 'ANALYZE' || intentStr === 'REPORT' || !!data.reportData || (!!data.achievements && !!data.summary);
+  const isCreateIntent = intentStr === 'CREATE' || !!data.planData || (!!data.title && !!data.startDate);
+
+  // 1. 处理分析/周报意图
+  if (isAnalyzeIntent) {
+    // 兼容扁平结构：有些模型可能直接返回 { achievements: [...], summary: "..." }
+    const source = data.reportData || data;
+    
+    // 强制校验/补全 WeeklyReportData
+    const normalizedReport: WeeklyReportData = {
+      achievements: Array.isArray(source.achievements) ? source.achievements : [],
+      summary: source.summary || "根据您的日程生成的本周工作总结。",
+      nextWeekPlans: Array.isArray(source.nextWeekPlans) ? source.nextWeekPlans : [],
+      risks: source.risks || "无"
     };
+
+    return { type: 'ANALYSIS', data: normalizedReport };
   }
   
-  if (intent === 'CREATE') {
-    return createPlanFromRaw(data.planData || {});
+  // 2. 处理创建日程意图
+  if (isCreateIntent) {
+    const source = data.planData || data;
+    return createPlanFromRaw(source);
   }
   
   return null;
