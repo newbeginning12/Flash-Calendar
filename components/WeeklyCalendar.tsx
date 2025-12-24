@@ -29,7 +29,6 @@ const WEEKDAYS_ZH = ['周日', '周一', '周二', '周三', '周四', '周五',
 const SIDEBAR_WIDTH = 60; 
 const COLORS = ['blue', 'indigo', 'purple', 'rose', 'orange', 'emerald'];
 
-// 进一步调大基础尺寸，让默认视觉更丰满
 const BASE_ROW_HEIGHT = 68; 
 const BASE_COL_MIN_WIDTH = 180; 
 const GRID_TOP_OFFSET = 24; 
@@ -40,9 +39,13 @@ const STATUS_LABELS = {
   [PlanStatus.DONE]: '已完成',
 };
 
+// 错落布局参数
+const OFFSET_STEP_PCT = 12; // 每层偏移 12%
+
 const getPositionedPlans = (dayPlans: WorkPlan[]): PositionedPlan[] => {
   if (dayPlans.length === 0) return [];
 
+  // 按开始时间排序，开始时间相同则按持续时间排序（长的在前）
   const sorted = [...dayPlans].sort((a, b) => {
     const startA = new Date(a.startDate).getTime();
     const startB = new Date(b.startDate).getTime();
@@ -67,6 +70,7 @@ const getPositionedPlans = (dayPlans: WorkPlan[]): PositionedPlan[] => {
       const lastInCol = columns[colIndex][columns[colIndex].length - 1];
       const lastEnd = new Date(lastInCol.endDate).getTime();
       
+      // 如果当前计划开始时间 >= 最后一项结束时间，说明可以放在同一列（接续任务）
       if (planStart >= lastEnd) {
         break;
       }
@@ -84,10 +88,11 @@ const getPositionedPlans = (dayPlans: WorkPlan[]): PositionedPlan[] => {
     const overlapping = positioned.filter(p2 => {
       const s2 = new Date(p2.startDate).getTime();
       const e2 = new Date(p2.endDate).getTime();
+      // 严格判定重叠：s1 < e2 && e1 > s2
       return s1 < e2 && e1 > s2;
     });
 
-    const maxColInCluster = Math.max(...overlapping.map(o => o.column)) + 1;
+    const maxColInCluster = overlapping.length > 0 ? Math.max(...overlapping.map(o => o.column)) + 1 : 1;
     p1.totalColumns = maxColInCluster;
   });
 
@@ -108,6 +113,7 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
 }) => {
   const [now, setNow] = useState(new Date());
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; date?: Date; timeStr?: string; plan?: WorkPlan } | null>(null);
+  const [hoveredPlanId, setHoveredPlanId] = useState<string | null>(null);
   
   const [zoomScale, setZoomScale] = useState(1.0);
   const zoomAnchorRef = useRef<{ xRatio: number; yRatio: number } | null>(null);
@@ -175,7 +181,6 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
     const container = containerRef.current;
     if (!container) return;
 
-    // 限制最大缩放为 200% (2.0)
     const clampedScale = Math.max(0.6, Math.min(2.0, newScale));
     if (Math.abs(clampedScale - zoomScale) < 0.001) return;
 
@@ -338,12 +343,10 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
   const weekStart = calculateWeekStart(currentDate);
   const weekDays = Array.from({ length: DAYS_TO_SHOW }, (_, i) => addDays(weekStart, i));
   
-  // 核心改动：计算当前月份的第几周
   const weekOfMonth = useMemo(() => {
     const startOfCurrMonth = startOfMonth(weekStart);
     const weekNumStart = getWeek(startOfCurrMonth, { weekStartsOn: 1 });
     const weekNumCurrent = getWeek(weekStart, { weekStartsOn: 1 });
-    // 处理跨年周数重置问题
     if (weekNumCurrent < weekNumStart) {
         return weekNumCurrent; 
     }
@@ -542,16 +545,22 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
                                         const start = new Date(plan.startDate);
                                         const end = new Date(plan.endDate);
                                         const top = (getHours(start) * 60 + getMinutes(start)) / 60 * rowHeight + GRID_TOP_OFFSET;
-                                        const h = Math.max(differenceInMinutes(end, start) / 60 * rowHeight, 18);
+                                        
+                                        // 高度减少 2px 以产生接续缝隙
+                                        const h = Math.max((differenceInMinutes(end, start) / 60 * rowHeight) - 2, 18);
+                                        
                                         const isDone = plan.status === PlanStatus.DONE;
                                         const timeRangeStr = `${format(start, 'HH:mm')} - ${format(end, 'HH:mm')}`;
 
-                                        const widthPct = 100 / plan.totalColumns;
-                                        const leftPct = plan.column * widthPct;
+                                        // 错落布局逻辑：
+                                        // column 0 保持靠左全宽；后续 column 依次向右偏移 OFFSET_STEP_PCT
+                                        const leftPct = plan.column * OFFSET_STEP_PCT;
+                                        const widthPct = 100 - leftPct;
                                         
                                         const isHighlighted = isPlanHighlighted(plan);
                                         const isSearchActive = searchTerm.trim().length > 0;
                                         const isTarget = targetPlanId === plan.id;
+                                        const isHovered = hoveredPlanId === plan.id;
 
                                         return (
                                             <div
@@ -560,17 +569,19 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
                                                 onDragStart={(e) => handleDragStartExisting(e, plan)}
                                                 onDragEnd={() => setDragInfo(null)}
                                                 onContextMenu={(e) => handleCardContextMenu(e, plan)}
+                                                onMouseEnter={() => setHoveredPlanId(plan.id)}
+                                                onMouseLeave={() => setHoveredPlanId(null)}
                                                 style={{ 
                                                     top: `${top}px`, 
                                                     height: `${h}px`,
                                                     left: `${leftPct}%`,
-                                                    width: `${widthPct}%`,
-                                                    paddingLeft: '4px',
-                                                    paddingRight: '4px'
+                                                    width: `calc(${widthPct}% - 4px)`, // 右侧留出 4px 呼吸位
+                                                    zIndex: isHovered ? 100 : (isTarget ? 50 : 10 + plan.column), // 悬停置顶
+                                                    transform: isHovered ? 'scale(1.02)' : 'scale(1)', // 悬停微扩
                                                 }}
                                                 className={`
-                                                    absolute z-10 cursor-grab active:cursor-grabbing overflow-hidden transition-all flex flex-col
-                                                    shadow-[0_2px_12px_rgba(0,0,0,0.02)] hover:z-30 hover:shadow-lg backdrop-blur-md group
+                                                    absolute cursor-grab active:cursor-grabbing overflow-hidden transition-all flex flex-col
+                                                    backdrop-blur-md group
                                                     ${isDone 
                                                         ? `bg-slate-50/75 border-slate-100 opacity-60` 
                                                         : `bg-${plan.color}-50/90 border-${plan.color}-200/60 hover:border-${plan.color}-400 hover:bg-${plan.color}-50 text-${plan.color}-900`
@@ -580,6 +591,7 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
                                                     ${isSearchActive && !isHighlighted ? 'opacity-20 grayscale pointer-events-none' : 'opacity-100'}
                                                     ${isSearchActive && isHighlighted ? 'ring-2 ring-indigo-500 ring-offset-2 z-40 animate-pulse' : ''}
                                                     ${isTarget ? 'ring-2 ring-indigo-500/40 border-indigo-400 z-50 shadow-xl scale-[1.01]' : ''}
+                                                    ${isHovered ? 'shadow-[0_20px_40px_rgba(0,0,0,0.12)] z-[100]' : (plan.column > 0 ? 'shadow-[-8px_0_15px_rgba(0,0,0,0.08)]' : 'shadow-[0_2px_12px_rgba(0,0,0,0.02)]')}
                                                     rounded-xl border
                                                 `}
                                                 onClick={() => onPlanClick(plan)}
@@ -598,7 +610,7 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
                                                                 {plan.title}
                                                             </div>
                                                             {h >= 65 && plan.totalColumns < 3 ? (
-                                                                <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-md border flex-shrink-0 transition-all
+                                                                <span className={`text-[9px] font-black px-1.5 py-0.5 rounded-md border flex-shrink-0 transition-all uppercase tracking-tighter
                                                                     ${plan.status === PlanStatus.DONE ? 'bg-emerald-50 text-emerald-600 border-emerald-100' : 
                                                                       plan.status === PlanStatus.IN_PROGRESS ? 'bg-blue-50 text-blue-600 border-blue-100 animate-pulse' : 
                                                                       'bg-slate-100 text-slate-500 border-slate-200'}
