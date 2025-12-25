@@ -498,6 +498,11 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
                                         const isTarget = targetPlanId === plan.id;
                                         const isHovered = hoveredPlanId === plan.id;
 
+                                        // 智能显示高度阈值
+                                        const COMPACT_THRESHOLD = 38;
+                                        const SHOW_TAGS_THRESHOLD = 80;
+                                        const SHOW_DESC_THRESHOLD = 115;
+
                                         return (
                                             <div
                                                 key={plan.id}
@@ -512,10 +517,10 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
                                                     zIndex: isHovered ? 100 : (isTarget ? 50 : 10 + plan.column),
                                                     transform: isHovered ? 'scale(1.02)' : 'scale(1)',
                                                 }}
-                                                className={`absolute cursor-grab active:cursor-grabbing overflow-hidden transition-all flex flex-col backdrop-blur-md group ${isDone ? `bg-slate-50/75 border-slate-100 opacity-60` : `bg-${plan.color}-50/90 border-${plan.color}-200/60 hover:border-${plan.color}-400 hover:bg-${plan.color}-50 text-${plan.color}-900`} ${dragInfo?.planId === plan.id && !dragInfo.isCopy ? 'opacity-20 scale-95' : ''} ${h < 35 ? 'p-1 px-1.5' : h < 75 ? 'p-2' : h < 115 ? 'p-2.5' : 'p-3'} ${isSearchActive && !isHighlighted ? 'opacity-20 grayscale pointer-events-none' : 'opacity-100'} ${isTarget ? 'ring-2 ring-indigo-500/40 border-indigo-400 z-50 shadow-xl' : ''} ${isHovered ? 'shadow-xl z-[100]' : 'shadow-sm'} rounded-xl border`}
+                                                className={`absolute cursor-grab active:cursor-grabbing overflow-hidden transition-all flex flex-col backdrop-blur-md group ${isDone ? `bg-slate-50/75 border-slate-100 opacity-60` : `bg-${plan.color}-50/90 border-${plan.color}-200/60 hover:border-${plan.color}-400 hover:bg-${plan.color}-50 text-${plan.color}-900`} ${dragInfo?.planId === plan.id && !dragInfo.isCopy ? 'opacity-20 scale-95' : ''} ${h < COMPACT_THRESHOLD ? 'p-1 px-1.5' : h < 75 ? 'p-2' : h < 115 ? 'p-2.5' : 'p-3'} ${isSearchActive && !isHighlighted ? 'opacity-20 grayscale pointer-events-none' : 'opacity-100'} ${isTarget ? 'ring-2 ring-indigo-500/40 border-indigo-400 z-50 shadow-xl' : ''} ${isHovered ? 'shadow-xl z-[100]' : 'shadow-sm'} rounded-xl border`}
                                                 onClick={() => onPlanClick(plan)}
                                             >
-                                                {h < 35 ? (
+                                                {h < COMPACT_THRESHOLD ? (
                                                     <div className="flex items-center justify-between gap-1 h-full">
                                                         <span className={`text-[10px] font-bold truncate flex-1 ${isDone ? 'text-slate-400 line-through' : ''}`}>
                                                            <span className="opacity-70 mr-1 text-[9px]">[{STATUS_LABELS[plan.status]}]</span>
@@ -524,17 +529,17 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
                                                         {getSimpleStatusIcon(plan.status, plan.color, 10)}
                                                     </div>
                                                 ) : (
-                                                    <div className="flex flex-col h-full">
+                                                    <div className="flex flex-col h-full overflow-hidden">
                                                         {/* 第一行：标题与图标 */}
-                                                        <div className="flex items-start justify-between gap-1.5 mb-1.5 min-w-0">
+                                                        <div className="flex items-start justify-between gap-1.5 mb-1.5 min-w-0 flex-shrink-0">
                                                             <div className={`font-bold truncate leading-tight ${h >= 115 ? 'text-[15px]' : h >= 75 ? 'text-[13px]' : 'text-[11px]'} ${isDone ? 'text-slate-400 line-through font-normal' : 'text-slate-800'} flex-1`}>
                                                                 {plan.title}
                                                             </div>
                                                             {getSimpleStatusIcon(plan.status, plan.color, h < 75 ? 10 : 12)}
                                                         </div>
 
-                                                        {/* 第二行：元数据 (状态标签、时间+时长) - 强制单行显示 */}
-                                                        <div className={`flex items-center gap-1.5 mb-1.5 overflow-hidden whitespace-nowrap`}>
+                                                        {/* 第二行：元数据 (状态标签、时间+时长) */}
+                                                        <div className={`flex items-center gap-1.5 mb-1.5 overflow-hidden whitespace-nowrap flex-shrink-0`}>
                                                             <div className={`flex-shrink-0 inline-flex items-center px-1 py-0.5 rounded text-[8px] font-black uppercase tracking-tighter ${STATUS_BADGE_CLASSES[plan.status]}`}>
                                                                 {STATUS_LABELS[plan.status]}
                                                             </div>
@@ -548,8 +553,8 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
                                                         </div>
 
                                                         {/* 第三行：标签 (只要高度允许就显示) */}
-                                                        {h >= 75 && plan.tags && plan.tags.length > 0 && (
-                                                            <div className="flex flex-wrap gap-1 mt-0.5 mb-1 overflow-hidden">
+                                                        {h >= SHOW_TAGS_THRESHOLD && plan.tags && plan.tags.length > 0 && (
+                                                            <div className="flex flex-wrap gap-1 mt-0.5 mb-1 overflow-hidden flex-shrink-0 max-h-[36px]">
                                                                 {plan.tags.slice(0, 3).map(tag => (
                                                                     <span key={tag} className={`px-1.5 py-0.5 rounded-md text-[8px] font-bold whitespace-nowrap ${isDone ? 'bg-slate-100 text-slate-400' : `bg-${plan.color}-100/50 text-${plan.color}-700 border border-${plan.color}-200/30`}`}>
                                                                         {tag}
@@ -559,11 +564,11 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
                                                             </div>
                                                         )}
 
-                                                        {/* 第四行：描述 (节省高度后，105px 以上就有机会显示部分描述) */}
-                                                        {h >= 105 && plan.description && plan.totalColumns < 2 && (
-                                                            <div className={`mt-auto text-[11px] leading-relaxed flex items-start gap-1.5 pt-2 border-t border-black/5 ${isDone ? 'text-slate-300' : 'text-slate-600'}`}>
+                                                        {/* 第四行：描述 (在高度充足且无其他列重叠时显示更多) */}
+                                                        {h >= SHOW_DESC_THRESHOLD && plan.description && (
+                                                            <div className={`mt-auto text-[11px] leading-relaxed flex items-start gap-1.5 pt-2 border-t border-black/5 ${isDone ? 'text-slate-300' : 'text-slate-600'} overflow-hidden`}>
                                                                 <AlignLeft size={10} className="mt-1 flex-shrink-0 opacity-40" />
-                                                                <span className="flex-1 line-clamp-3">
+                                                                <span className={`flex-1 ${h > 160 ? 'line-clamp-4' : 'line-clamp-2'}`}>
                                                                     {plan.description}
                                                                 </span>
                                                             </div>

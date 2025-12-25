@@ -1,6 +1,6 @@
 {
   "name": "闪历",
-  "description": "一个灵感源自 Apple 设计哲学的智能工作计划工具。闪历通过深度集成 Google Gemini API，将自然语言交互与流畅日历界面相结合，致力于通过 AI 穿透数据真相，提升个人生产力。",
+  "description": "一个灵感源自 Apple 设计的智能工作计划工具，利用 Gemini 将自然语言转化为日程安排，拥有类似飞书的流畅日历界面。",
   "requestFramePermissions": [
     "microphone"
   ]
