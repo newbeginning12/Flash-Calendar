@@ -525,34 +525,31 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
                                                     </div>
                                                 ) : (
                                                     <div className="flex flex-col h-full">
-                                                        <div className="flex items-start justify-between gap-1.5 mb-1 min-w-0">
-                                                            <div className="flex-1 min-w-0">
-                                                                <div className={`font-bold truncate leading-tight mb-1 ${h >= 115 ? 'text-[15px]' : h >= 75 ? 'text-[13px]' : 'text-[11px]'} ${isDone ? 'text-slate-400 line-through font-normal' : 'text-slate-800'}`}>
-                                                                    {plan.title}
-                                                                </div>
-                                                                <div className={`inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-black uppercase tracking-tighter ${STATUS_BADGE_CLASSES[plan.status]}`}>
-                                                                    {STATUS_LABELS[plan.status]}
-                                                                </div>
+                                                        {/* 第一行：标题与图标 */}
+                                                        <div className="flex items-start justify-between gap-1.5 mb-1.5 min-w-0">
+                                                            <div className={`font-bold truncate leading-tight ${h >= 115 ? 'text-[15px]' : h >= 75 ? 'text-[13px]' : 'text-[11px]'} ${isDone ? 'text-slate-400 line-through font-normal' : 'text-slate-800'} flex-1`}>
+                                                                {plan.title}
                                                             </div>
-                                                            {getSimpleStatusIcon(plan.status, plan.color)}
+                                                            {getSimpleStatusIcon(plan.status, plan.color, h < 75 ? 10 : 12)}
                                                         </div>
 
-                                                        <div className={`flex flex-wrap items-center gap-x-2.5 gap-y-1 font-bold font-mono ${h >= 75 ? 'mt-1' : 'mt-auto'} ${isDone ? 'text-slate-300' : `text-${plan.color}-600/80`}`}>
-                                                            <div className="flex items-center gap-1">
-                                                                <Clock size={h < 75 ? 10 : 12} strokeWidth={2.5} />
-                                                                <span className={`${h < 75 ? 'text-[9px]' : 'text-[10px]'}`}>{timeRangeStr}</span>
+                                                        {/* 第二行：元数据 (状态标签、时间+时长) - 强制单行显示 */}
+                                                        <div className={`flex items-center gap-1.5 mb-1.5 overflow-hidden whitespace-nowrap`}>
+                                                            <div className={`flex-shrink-0 inline-flex items-center px-1 py-0.5 rounded text-[8px] font-black uppercase tracking-tighter ${STATUS_BADGE_CLASSES[plan.status]}`}>
+                                                                {STATUS_LABELS[plan.status]}
                                                             </div>
-                                                            {h >= 75 && (
-                                                                <div className="flex items-center gap-1 opacity-70">
-                                                                    <Timer size={10} strokeWidth={2.5} />
-                                                                    <span className="text-[9px]">{durationStr}</span>
-                                                                </div>
-                                                            )}
+                                                            <div className={`flex items-center gap-1 font-bold font-mono min-w-0 ${isDone ? 'text-slate-300' : `text-${plan.color}-600/80`}`}>
+                                                                {h >= 115 && <Clock size={11} strokeWidth={2.5} className="mr-0.5 opacity-60" />}
+                                                                <span className={`${h < 75 ? 'text-[9px]' : 'text-[10px]'} truncate`}>
+                                                                    {timeRangeStr}
+                                                                    {h >= 75 && <span className="ml-1 opacity-60 font-normal">({durationStr})</span>}
+                                                                </span>
+                                                            </div>
                                                         </div>
 
-                                                        {/* 展示标签: 高度大于 90px 时显示 */}
-                                                        {h >= 90 && plan.tags && plan.tags.length > 0 && (
-                                                            <div className="flex flex-wrap gap-1 mt-2.5 mb-1 overflow-hidden">
+                                                        {/* 第三行：标签 (只要高度允许就显示) */}
+                                                        {h >= 75 && plan.tags && plan.tags.length > 0 && (
+                                                            <div className="flex flex-wrap gap-1 mt-0.5 mb-1 overflow-hidden">
                                                                 {plan.tags.slice(0, 3).map(tag => (
                                                                     <span key={tag} className={`px-1.5 py-0.5 rounded-md text-[8px] font-bold whitespace-nowrap ${isDone ? 'bg-slate-100 text-slate-400' : `bg-${plan.color}-100/50 text-${plan.color}-700 border border-${plan.color}-200/30`}`}>
                                                                         {tag}
@@ -562,9 +559,9 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
                                                             </div>
                                                         )}
 
-                                                        {/* 展示描述: 高度大于 130px 时显示 */}
-                                                        {h >= 130 && plan.description && plan.totalColumns < 2 && (
-                                                            <div className={`mt-auto text-[11px] leading-relaxed flex items-start gap-1.5 pt-2.5 border-t border-black/5 ${isDone ? 'text-slate-300' : 'text-slate-600'}`}>
+                                                        {/* 第四行：描述 (节省高度后，105px 以上就有机会显示部分描述) */}
+                                                        {h >= 105 && plan.description && plan.totalColumns < 2 && (
+                                                            <div className={`mt-auto text-[11px] leading-relaxed flex items-start gap-1.5 pt-2 border-t border-black/5 ${isDone ? 'text-slate-300' : 'text-slate-600'}`}>
                                                                 <AlignLeft size={10} className="mt-1 flex-shrink-0 opacity-40" />
                                                                 <span className="flex-1 line-clamp-3">
                                                                     {plan.description}
