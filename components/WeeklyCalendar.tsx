@@ -135,6 +135,28 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
   const rowHeight = BASE_ROW_HEIGHT * zoomScale;
   const colMinWidth = BASE_COL_MIN_WIDTH * zoomScale;
 
+  const calculateWeekStart = (date: Date) => {
+    const d = new Date(date);
+    const day = d.getDay();
+    const diff = (day + 6) % 7;
+    const monday = addDays(d, -diff);
+    monday.setHours(0, 0, 0, 0);
+    return monday;
+  };
+
+  const weekStart = calculateWeekStart(currentDate);
+  const weekDays = Array.from({ length: DAYS_TO_SHOW }, (_, i) => addDays(weekStart, i));
+  
+  const weekOfMonth = useMemo(() => {
+    // 修复跨年周数错误：计算当前周起始日（周一）相对于本月 1 号所在周起始日（周一）的周数差
+    const firstDayOfCurrentMonth = startOfMonth(weekStart);
+    const firstMondayOfCurrentMonth = calculateWeekStart(firstDayOfCurrentMonth);
+    
+    // 计算两个周一之间的毫秒差，转换为周数。Math.round 消除可能的夏令时微差。
+    const diffInWeeks = Math.round((weekStart.getTime() - firstMondayOfCurrentMonth.getTime()) / (7 * 24 * 60 * 60 * 1000));
+    return diffInWeeks + 1;
+  }, [weekStart]);
+
   const currentTimeTop = useMemo(() => {
     return (getHours(now) * 60 + getMinutes(now)) / 60 * rowHeight + GRID_TOP_OFFSET;
   }, [now, rowHeight]);
@@ -330,28 +352,6 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
         (window as any).__ACTIVE_DRAG_TEMPLATE__ = null;
     } catch (err) { console.error("Drop process failed:", err); }
   };
-
-  const calculateWeekStart = (date: Date) => {
-    const d = new Date(date);
-    const day = d.getDay();
-    const diff = (day + 6) % 7;
-    const monday = addDays(d, -diff);
-    monday.setHours(0, 0, 0, 0);
-    return monday;
-  };
-
-  const weekStart = calculateWeekStart(currentDate);
-  const weekDays = Array.from({ length: DAYS_TO_SHOW }, (_, i) => addDays(weekStart, i));
-  
-  const weekOfMonth = useMemo(() => {
-    const startOfCurrMonth = startOfMonth(weekStart);
-    const weekNumStart = getWeek(startOfCurrMonth, { weekStartsOn: 1 });
-    const weekNumCurrent = getWeek(weekStart, { weekStartsOn: 1 });
-    if (weekNumCurrent < weekNumStart) {
-        return weekNumCurrent; 
-    }
-    return weekNumCurrent - weekNumStart + 1;
-  }, [weekStart]);
 
   useEffect(() => {
     const interval = setInterval(() => setNow(new Date()), 60000);
