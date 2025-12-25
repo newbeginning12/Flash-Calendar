@@ -21,7 +21,7 @@ import {
   processUserIntent, generateSmartSuggestions, DEFAULT_MODEL, SmartSuggestion
 } from './services/aiService';
 import { storageService, BackupData } from './services/storageService';
-import { format, addDays, isSameDay, addMinutes, endOfDay, differenceInMinutes } from 'date-fns';
+import { format, addDays, isSameDay, addMinutes, endOfDay, differenceInMinutes, isAfter } from 'date-fns';
 
 const MIN_SIDEBAR_WIDTH = 240;
 const DEFAULT_SIDEBAR_WIDTH = 280;
@@ -50,6 +50,47 @@ export const App: React.FC = () => {
   const [isResizing, setIsResizing] = useState(false);
   
   const sidebarRef = useRef<HTMLDivElement>(null);
+  const lastCheckedOverdueRef = useRef<Set<string>>(new Set());
+
+  // --- 智能通知引擎 ---
+  const addNotification = useCallback((notif: Omit<AppNotification, 'id' | 'timestamp' | 'read'>) => {
+    const newNotif: AppNotification = {
+      ...notif,
+      id: crypto.randomUUID(),
+      timestamp: new Date().toISOString(),
+      read: false
+    };
+    setNotifications(prev => [newNotif, ...prev].slice(0, 50));
+    
+    // 如果不是静默通知，可以考虑在这里增加简单的 Toast 逻辑
+    console.log(`[闪历通知] ${notif.title}: ${notif.message}`);
+  }, []);
+
+  // 任务逾期自动检测轮询 (每分钟一次)
+  useEffect(() => {
+    const checkOverdue = () => {
+      const now = new Date();
+      const overduePlans = plans.filter(p => 
+        p.status !== PlanStatus.DONE && 
+        isAfter(now, new Date(p.endDate)) &&
+        !lastCheckedOverdueRef.current.has(p.id)
+      );
+
+      overduePlans.forEach(p => {
+        addNotification({
+          type: 'OVERDUE',
+          title: '任务已逾期',
+          message: `计划 “${p.title}” 已超过结束时间，请及时处理。`,
+          planId: p.id
+        });
+        lastCheckedOverdueRef.current.add(p.id);
+      });
+    };
+
+    checkOverdue();
+    const interval = setInterval(checkOverdue, 60000);
+    return () => clearInterval(interval);
+  }, [plans, addNotification]);
 
   useEffect(() => {
     const init = async () => {
@@ -63,6 +104,12 @@ export const App: React.FC = () => {
         if (savedWidth) setSidebarWidth(parseInt(savedWidth));
         const savedState = localStorage.getItem('zhihui_sidebar_open');
         if (savedState) setIsSidebarOpen(savedState === 'true');
+        
+        addNotification({
+          type: 'SYSTEM',
+          title: '欢迎回来',
+          message: `今日共有 ${storedPlans.filter(p => isSameDay(new Date(p.startDate), new Date())).length} 项日程安排。`
+        });
       } catch (e) { console.error("Initialization failed", e); }
     };
     init();
@@ -124,7 +171,7 @@ export const App: React.FC = () => {
       id: crypto.randomUUID(),
       startDate: start.toISOString(),
       endDate: end.toISOString(),
-      status: PlanStatus.TODO // 复制的任务默认重置为待办
+      status: PlanStatus.TODO
     };
 
     if (targetDate) {
@@ -203,6 +250,11 @@ export const App: React.FC = () => {
       localStorage.setItem('zhihui_settings', JSON.stringify(data.settings));
     }
     setIsSettingsOpen(false);
+    addNotification({
+      type: 'SYSTEM',
+      title: '导入成功',
+      message: `已成功从备份中恢复 ${data.plans.length} 条日程安排。`
+    });
   };
 
   const handleStopAI = () => {
@@ -229,6 +281,11 @@ export const App: React.FC = () => {
               } else if (result.type === 'ANALYSIS' && result.data) {
                   setReportData(result.data);
                   setIsReportModalOpen(true);
+                  addNotification({
+                    type: 'SYSTEM',
+                    title: '周报生成成功',
+                    message: 'AI 已基于您的本周日程完成了工作总结，请查看。'
+                  });
               }
           }
       } catch (error: any) { 
@@ -263,6 +320,18 @@ export const App: React.FC = () => {
     };
   }, [resize]);
 
+  const handleNotificationItemClick = (n: AppNotification) => {
+    if (n.planId) {
+      const plan = plans.find(p => p.id === n.planId);
+      if (plan) {
+        handleResultClick(plan);
+      }
+    }
+    // 标记已读
+    setNotifications(prev => prev.map(notif => notif.id === n.id ? { ...notif, read: true } : notif));
+    setIsNotificationOpen(false);
+  };
+
   return (
     <div className={`flex h-screen w-full bg-slate-50 text-slate-900 font-sans overflow-hidden relative ${isResizing ? 'cursor-col-resize select-none' : ''}`}>
        <div ref={sidebarRef} className={`hidden lg:block h-full flex-shrink-0 bg-white shadow-[1px_0_20px_rgba(0,0,0,0.02)] transition-[width] ease-in-out will-change-[width] overflow-hidden ${isResizing ? 'duration-0' : 'duration-300'}`} style={{ width: isSidebarOpen ? sidebarWidth : 0 }}>
@@ -276,6 +345,7 @@ export const App: React.FC = () => {
               onDuplicatePlan={handleDuplicatePlan}
               onCreateNew={() => handleSlotClick(new Date())} 
               onQuickAdd={handleQuickAdd}
+              onJumpToToday={() => setCurrentDate(new Date())}
             />
           </div>
        </div>
@@ -331,8 +401,21 @@ export const App: React.FC = () => {
 
                     <div className="flex items-center gap-1">
                         <div className="relative">
-                            <button onClick={() => setIsNotificationOpen(!isNotificationOpen)} className="p-2 text-slate-400 hover:text-slate-800 hover:bg-slate-100 rounded-full transition-colors relative"><Bell size={20} />{notifications.some(n => !n.read) && <span className="absolute top-2 right-2 w-2 h-2 bg-rose-500 rounded-full border border-white"></span>}</button>
-                            <NotificationCenter isOpen={isNotificationOpen} onClose={() => setIsNotificationOpen(false)} notifications={notifications} onMarkRead={(id) => setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true } : n))} onClearAll={() => setNotifications([])} onDelete={(id) => setNotifications(prev => prev.filter(n => n.id !== id))} onItemClick={(n) => n.planId && handlePlanClick(plans.find(p => p.id === n.planId)!)} />
+                            <button onClick={() => setIsNotificationOpen(!isNotificationOpen)} className="p-2 text-slate-400 hover:text-slate-800 hover:bg-slate-100 rounded-full transition-colors relative">
+                                <Bell size={20} />
+                                {notifications.some(n => !n.read) && (
+                                    <span className="absolute top-2 right-2 w-2 h-2 bg-rose-500 rounded-full border border-white animate-pulse"></span>
+                                )}
+                            </button>
+                            <NotificationCenter 
+                                isOpen={isNotificationOpen} 
+                                onClose={() => setIsNotificationOpen(false)} 
+                                notifications={notifications} 
+                                onMarkRead={(id) => setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true } : n))} 
+                                onClearAll={() => setNotifications([])} 
+                                onDelete={(id) => setNotifications(prev => prev.filter(n => n.id !== id))} 
+                                onItemClick={handleNotificationItemClick} 
+                            />
                         </div>
                         <button onClick={() => setIsSettingsOpen(true)} className="p-2 text-slate-400 hover:text-slate-800 hover:bg-slate-100 rounded-full transition-colors"><Settings size={20} /></button>
                     </div>

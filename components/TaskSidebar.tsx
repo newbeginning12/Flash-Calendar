@@ -2,8 +2,8 @@
 import React, { useMemo, useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { WorkPlan, PlanStatus } from '../types';
-import { format, isSameDay, addDays } from 'date-fns';
-import { CheckCircle2, Circle, Clock, Target, CalendarDays, Plus, Trash2, Zap, FileSearch, Users, PencilRuler, ShieldCheck, ChevronDown, ChevronUp, PlayCircle, Copy, CalendarPlus } from 'lucide-react';
+import { format, isSameDay, addDays, differenceInMinutes, isToday } from 'date-fns';
+import { CheckCircle2, Circle, Clock, Target, CalendarDays, Plus, Trash2, Zap, FileSearch, Users, PencilRuler, ShieldCheck, ChevronDown, ChevronUp, PlayCircle, Copy, CalendarPlus, Timer, ArrowLeftCircle } from 'lucide-react';
 
 interface TaskSidebarProps {
   currentDate: Date;
@@ -14,6 +14,7 @@ interface TaskSidebarProps {
   onDeletePlan: (id: string) => void;
   onCreateNew: () => void;
   onQuickAdd: (title: string, duration: number, color: string) => void;
+  onJumpToToday?: () => void;
 }
 
 interface ContextMenuState {
@@ -22,26 +23,24 @@ interface ContextMenuState {
   plan: WorkPlan;
 }
 
-const COLORS = ['blue', 'indigo', 'purple', 'rose', 'orange', 'emerald'];
-
 const STATUS_CONFIG = {
   [PlanStatus.TODO]: { 
     label: '待办', 
     icon: Circle, 
     color: 'slate',
-    badgeClass: 'bg-slate-50 text-slate-400 border-slate-100'
+    badgeClass: 'bg-slate-100 text-slate-600'
   },
   [PlanStatus.IN_PROGRESS]: { 
     label: '进行中', 
     icon: PlayCircle, 
     color: 'blue',
-    badgeClass: 'bg-blue-50 text-blue-600 border-blue-100'
+    badgeClass: 'bg-blue-600 text-white shadow-sm'
   },
   [PlanStatus.DONE]: { 
     label: '已完成', 
     icon: CheckCircle2, 
     color: 'emerald',
-    badgeClass: 'bg-emerald-50 text-emerald-600 border-emerald-100'
+    badgeClass: 'bg-emerald-100 text-emerald-700'
   },
 };
 
@@ -52,6 +51,13 @@ const TASK_TEMPLATES = [
   { title: '测试用例评审', minutes: 120, icon: ShieldCheck, color: 'orange', label: '2h', tags: ['测试', 'QA'] },
 ];
 
+const formatDuration = (start: string, end: string) => {
+    const diff = differenceInMinutes(new Date(end), new Date(start));
+    if (diff < 60) return `${diff}m`;
+    const hours = (diff / 60).toFixed(1).replace('.0', '');
+    return `${hours}h`;
+};
+
 export const TaskSidebar: React.FC<TaskSidebarProps> = ({ 
   currentDate, 
   plans, 
@@ -60,17 +66,17 @@ export const TaskSidebar: React.FC<TaskSidebarProps> = ({
   onDuplicatePlan,
   onDeletePlan,
   onCreateNew,
-  onQuickAdd
+  onQuickAdd,
+  onJumpToToday
 }) => {
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [isTemplatesExpanded, setIsTemplatesExpanded] = useState(true);
 
   const dailyPlans = useMemo(() => {
-    const today = new Date();
     return plans
-      .filter(p => isSameDay(new Date(p.startDate), today))
+      .filter(p => isSameDay(new Date(p.startDate), currentDate))
       .sort((a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime());
-  }, [plans]);
+  }, [plans, currentDate]);
 
   const stats = useMemo(() => {
     const total = dailyPlans.length;
@@ -78,6 +84,8 @@ export const TaskSidebar: React.FC<TaskSidebarProps> = ({
     const progress = total === 0 ? 0 : Math.round((done / total) * 100);
     return { total, done, progress };
   }, [dailyPlans]);
+
+  const isSelectedToday = isToday(currentDate);
 
   useEffect(() => {
     const handleClickOutside = () => setContextMenu(null);
@@ -108,16 +116,30 @@ export const TaskSidebar: React.FC<TaskSidebarProps> = ({
       <div className="p-5 pt-6 flex-none bg-slate-50/30">
         <div className="flex items-center justify-between mb-3">
             <h2 className="text-[12px] font-black text-slate-400 flex items-center gap-2 uppercase tracking-widest">
-                <Target className="text-indigo-500" size={16} />
-                今日汇总
+                <Target className={isSelectedToday ? "text-indigo-500" : "text-slate-400"} size={16} />
+                {isSelectedToday ? '今日汇总' : `${format(currentDate, 'M月d日')} 汇总`}
             </h2>
-            <div className="text-[11px] text-indigo-600 font-black bg-indigo-50 px-2 py-0.5 rounded-full border border-indigo-100/50">
-                {stats.done}/{stats.total}
-            </div>
+            {!isSelectedToday && (
+              <button 
+                onClick={onJumpToToday}
+                className="flex items-center gap-1 text-[10px] font-bold text-indigo-600 hover:text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded-full border border-indigo-100 transition-all active:scale-95"
+              >
+                <ArrowLeftCircle size={10} />
+                回到今天
+              </button>
+            )}
+            {isSelectedToday && stats.total > 0 && (
+              <div className="text-[11px] text-indigo-600 font-black bg-indigo-50 px-2 py-0.5 rounded-full border border-indigo-100/50">
+                  {stats.done}/{stats.total}
+              </div>
+            )}
         </div>
         <div className="flex items-center gap-3">
           <div className="flex-1 bg-slate-200/60 rounded-full h-1 overflow-hidden">
-              <div className="bg-indigo-500 h-full transition-all duration-1000 ease-[cubic-bezier(0.16,1,0.3,1)]" style={{ width: `${stats.progress}%` }}></div>
+              <div 
+                className={`h-full transition-all duration-1000 ease-[cubic-bezier(0.16,1,0.3,1)] ${isSelectedToday ? 'bg-indigo-500' : 'bg-slate-400'}`} 
+                style={{ width: `${stats.progress}%` }}
+              ></div>
           </div>
           <span className="text-[10px] font-black text-slate-400 w-7 text-right">{stats.progress}%</span>
         </div>
@@ -129,31 +151,40 @@ export const TaskSidebar: React.FC<TaskSidebarProps> = ({
             const isDone = plan.status === PlanStatus.DONE;
             const statusInfo = STATUS_CONFIG[plan.status];
             const StatusIconComp = statusInfo.icon;
+            const duration = formatDuration(plan.startDate, plan.endDate);
             return (
               <div key={plan.id} onClick={() => onPlanClick(plan)}
                 onContextMenu={(e) => { e.preventDefault(); setContextMenu({ x: e.clientX, y: e.clientY, plan }); }}
-                className={`group relative flex items-center gap-3 p-3.5 rounded-xl border transition-all cursor-pointer select-none hover:shadow-sm ${isDone ? 'bg-slate-50/50 border-slate-100' : 'bg-white border-slate-100 hover:border-indigo-100'}`}
+                className={`group relative flex items-start gap-3 p-3.5 rounded-xl border transition-all cursor-pointer select-none hover:shadow-sm animate-in fade-in slide-in-from-bottom-2 duration-300 ${isDone ? 'bg-slate-50/50 border-slate-100' : 'bg-white border-slate-100 hover:border-indigo-100'}`}
               >
-                <button onClick={(e) => handleToggleStatus(e, plan)} className={`flex-shrink-0 transition-all duration-300 ${isDone ? 'text-emerald-500' : 'text-slate-200 group-hover:text-indigo-400'}`}>
-                    <StatusIconComp size={22} strokeWidth={2} className={isDone ? 'fill-emerald-50' : ''} />
+                <button onClick={(e) => handleToggleStatus(e, plan)} className={`flex-shrink-0 mt-0.5 transition-all duration-300 ${isDone ? 'text-emerald-500' : 'text-slate-200 group-hover:text-indigo-400'}`}>
+                    <StatusIconComp size={20} strokeWidth={2.5} className={isDone ? 'fill-emerald-50' : ''} />
                 </button>
                 <div className="flex-1 min-w-0">
-                    <div className={`text-[14px] font-bold tracking-tight truncate leading-none mb-1.5 ${isDone ? 'text-slate-300 line-through' : 'text-slate-700'}`}>{plan.title}</div>
-                    <div className="flex items-center gap-2">
-                        <div className="text-[11px] text-slate-400 font-bold flex items-center gap-1 opacity-80">
-                            <Clock size={11} strokeWidth={3} />
-                            {format(new Date(plan.startDate), 'HH:mm')}
+                    <div className={`text-[14px] font-bold tracking-tight truncate leading-tight mb-2 ${isDone ? 'text-slate-300 line-through' : 'text-slate-700'}`}>{plan.title}</div>
+                    <div className="flex flex-wrap items-center gap-y-1.5 gap-x-3">
+                        <div className={`inline-flex items-center px-1.5 py-0.5 rounded-[4px] text-[9px] font-black uppercase tracking-tighter ${statusInfo.badgeClass}`}>
+                            {statusInfo.label}
                         </div>
-                        <div className={`w-1 h-1 rounded-full bg-${plan.color}-400`}></div>
+                        <div className="flex items-center gap-3 text-[10px] font-bold">
+                            <div className="text-slate-400 flex items-center gap-1">
+                                <Clock size={11} strokeWidth={3} />
+                                <span>{format(new Date(plan.startDate), 'HH:mm')} - {format(new Date(plan.endDate), 'HH:mm')}</span>
+                            </div>
+                            <div className="text-indigo-500 bg-indigo-50/50 px-1.5 py-0.5 rounded border border-indigo-100/50 flex items-center gap-1">
+                                <Timer size={10} strokeWidth={3} />
+                                <span>{duration}</span>
+                            </div>
+                        </div>
                     </div>
                 </div>
               </div>
             );
           })
         ) : (
-          <div className="h-32 flex flex-col items-center justify-center text-slate-500 space-y-3 border border-dashed border-slate-200 rounded-2xl bg-slate-50/50">
+          <div className="h-32 flex flex-col items-center justify-center text-slate-500 space-y-3 border border-dashed border-slate-200 rounded-2xl bg-slate-50/50 animate-in fade-in duration-500">
              <CalendarDays size={24} className="opacity-40" />
-             <span className="text-[11px] font-bold uppercase tracking-widest">暂无日程安排</span>
+             <span className="text-[11px] font-bold uppercase tracking-widest">该日暂无日程</span>
           </div>
         )}
       </div>

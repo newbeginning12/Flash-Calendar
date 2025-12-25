@@ -1,8 +1,9 @@
+
 import React, { useState, useRef, useEffect, useMemo, useCallback, useLayoutEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { WorkPlan, PlanStatus } from '../types';
 import { format, addDays, isSameDay, getHours, getMinutes, differenceInMinutes, addMinutes, getWeek, startOfMonth } from 'date-fns';
-import { Plus, Clock, Move, Tag, CheckCircle2, Circle, PlayCircle, Edit2, Trash2, AlignLeft, ZoomIn, ZoomOut, Maximize2, Minimize2, Search, RotateCcw, Copy, CalendarPlus } from 'lucide-react';
+import { Plus, Clock, Move, Tag, CheckCircle2, Circle, PlayCircle, Edit2, Trash2, AlignLeft, ZoomIn, ZoomOut, Maximize2, Minimize2, Search, RotateCcw, Copy, CalendarPlus, Timer } from 'lucide-react';
 
 interface WeeklyCalendarProps {
   currentDate: Date;
@@ -39,7 +40,20 @@ const STATUS_LABELS = {
   [PlanStatus.DONE]: '已完成',
 };
 
+const STATUS_BADGE_CLASSES = {
+  [PlanStatus.TODO]: 'bg-slate-200 text-slate-700',
+  [PlanStatus.IN_PROGRESS]: 'bg-blue-600 text-white shadow-sm',
+  [PlanStatus.DONE]: 'bg-emerald-100 text-emerald-700',
+};
+
 const OFFSET_STEP_PCT = 12;
+
+const formatDuration = (start: string, end: string) => {
+    const diff = differenceInMinutes(new Date(end), new Date(start));
+    if (diff < 60) return `${diff}m`;
+    const hours = (diff / 60).toFixed(1).replace('.0', '');
+    return `${hours}h`;
+};
 
 const getPositionedPlans = (dayPlans: WorkPlan[]): PositionedPlan[] => {
   if (dayPlans.length === 0) return [];
@@ -246,7 +260,6 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
   const handleDragOver = (e: React.DragEvent, day: Date) => {
     e.preventDefault();
     const template = (window as any).__ACTIVE_DRAG_TEMPLATE__;
-    // fix: ensure isAltCopy is a boolean to avoid string vs boolean type error in setDragInfo
     const isAltCopy = !!(e.altKey && !template && dragInfo?.planId);
     
     e.dataTransfer.dropEffect = (template || isAltCopy) ? 'copy' : 'move';
@@ -413,7 +426,7 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
                         {HOURS.map((h) => <div key={h} className="border-b border-slate-100/60" style={{ height: `${rowHeight}px` }} />)}
                     </div>
 
-                    <div className="flex flex-1 relative h-full">
+                    <div className="flex-1 relative h-full flex">
                         {weekDays.map((day) => {
                             const dayPlansRaw = plans.filter(p => isSameDay(new Date(p.startDate), day));
                             const dayPlans = getPositionedPlans(dayPlansRaw);
@@ -477,6 +490,7 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
                                         const h = Math.max((differenceInMinutes(end, start) / 60 * rowHeight) - 2, 18);
                                         const isDone = plan.status === PlanStatus.DONE;
                                         const timeRangeStr = `${format(start, 'HH:mm')} - ${format(end, 'HH:mm')}`;
+                                        const durationStr = formatDuration(plan.startDate, plan.endDate);
                                         const leftPct = plan.column * OFFSET_STEP_PCT;
                                         const widthPct = 100 - leftPct;
                                         const isHighlighted = isPlanHighlighted(plan);
@@ -498,28 +512,63 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
                                                     zIndex: isHovered ? 100 : (isTarget ? 50 : 10 + plan.column),
                                                     transform: isHovered ? 'scale(1.02)' : 'scale(1)',
                                                 }}
-                                                className={`absolute cursor-grab active:cursor-grabbing overflow-hidden transition-all flex flex-col backdrop-blur-md group ${isDone ? `bg-slate-50/75 border-slate-100 opacity-60` : `bg-${plan.color}-50/90 border-${plan.color}-200/60 hover:border-${plan.color}-400 hover:bg-${plan.color}-50 text-${plan.color}-900`} ${dragInfo?.planId === plan.id && !dragInfo.isCopy ? 'opacity-20 scale-95' : ''} ${h < 35 ? 'p-1 px-1.5' : h < 100 ? 'p-2' : h < 160 ? 'p-2.5' : 'p-3'} ${isSearchActive && !isHighlighted ? 'opacity-20 grayscale pointer-events-none' : 'opacity-100'} ${isTarget ? 'ring-2 ring-indigo-500/40 border-indigo-400 z-50 shadow-xl' : ''} ${isHovered ? 'shadow-xl z-[100]' : 'shadow-sm'} rounded-xl border`}
+                                                className={`absolute cursor-grab active:cursor-grabbing overflow-hidden transition-all flex flex-col backdrop-blur-md group ${isDone ? `bg-slate-50/75 border-slate-100 opacity-60` : `bg-${plan.color}-50/90 border-${plan.color}-200/60 hover:border-${plan.color}-400 hover:bg-${plan.color}-50 text-${plan.color}-900`} ${dragInfo?.planId === plan.id && !dragInfo.isCopy ? 'opacity-20 scale-95' : ''} ${h < 35 ? 'p-1 px-1.5' : h < 75 ? 'p-2' : h < 115 ? 'p-2.5' : 'p-3'} ${isSearchActive && !isHighlighted ? 'opacity-20 grayscale pointer-events-none' : 'opacity-100'} ${isTarget ? 'ring-2 ring-indigo-500/40 border-indigo-400 z-50 shadow-xl' : ''} ${isHovered ? 'shadow-xl z-[100]' : 'shadow-sm'} rounded-xl border`}
                                                 onClick={() => onPlanClick(plan)}
                                             >
                                                 {h < 35 ? (
                                                     <div className="flex items-center justify-between gap-1 h-full">
-                                                        <span className={`text-[10px] font-bold truncate flex-1 ${isDone ? 'text-slate-400 line-through' : ''}`}>{plan.title}</span>
+                                                        <span className={`text-[10px] font-bold truncate flex-1 ${isDone ? 'text-slate-400 line-through' : ''}`}>
+                                                           <span className="opacity-70 mr-1 text-[9px]">[{STATUS_LABELS[plan.status]}]</span>
+                                                           {plan.title}
+                                                        </span>
                                                         {getSimpleStatusIcon(plan.status, plan.color, 10)}
                                                     </div>
                                                 ) : (
                                                     <div className="flex flex-col h-full">
                                                         <div className="flex items-start justify-between gap-1.5 mb-1 min-w-0">
-                                                            <div className={`font-bold truncate leading-tight flex-1 ${h >= 160 ? 'text-[15px]' : h >= 65 ? 'text-[13px]' : 'text-[11px]'} ${isDone ? 'text-slate-400 line-through font-normal' : 'text-slate-800'}`}>{plan.title}</div>
+                                                            <div className="flex-1 min-w-0">
+                                                                <div className={`font-bold truncate leading-tight mb-1 ${h >= 115 ? 'text-[15px]' : h >= 75 ? 'text-[13px]' : 'text-[11px]'} ${isDone ? 'text-slate-400 line-through font-normal' : 'text-slate-800'}`}>
+                                                                    {plan.title}
+                                                                </div>
+                                                                <div className={`inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-black uppercase tracking-tighter ${STATUS_BADGE_CLASSES[plan.status]}`}>
+                                                                    {STATUS_LABELS[plan.status]}
+                                                                </div>
+                                                            </div>
                                                             {getSimpleStatusIcon(plan.status, plan.color)}
                                                         </div>
-                                                        <div className={`flex items-center gap-1 font-bold font-mono ${isDone ? 'text-slate-300' : `text-${plan.color}-600/80`}`}>
-                                                            <Clock size={h < 65 ? 10 : 12} strokeWidth={2.5} />
-                                                            <span className={`${h < 65 ? 'text-[9px]' : 'text-[10px]'}`}>{timeRangeStr}</span>
+
+                                                        <div className={`flex flex-wrap items-center gap-x-2.5 gap-y-1 font-bold font-mono ${h >= 75 ? 'mt-1' : 'mt-auto'} ${isDone ? 'text-slate-300' : `text-${plan.color}-600/80`}`}>
+                                                            <div className="flex items-center gap-1">
+                                                                <Clock size={h < 75 ? 10 : 12} strokeWidth={2.5} />
+                                                                <span className={`${h < 75 ? 'text-[9px]' : 'text-[10px]'}`}>{timeRangeStr}</span>
+                                                            </div>
+                                                            {h >= 75 && (
+                                                                <div className="flex items-center gap-1 opacity-70">
+                                                                    <Timer size={10} strokeWidth={2.5} />
+                                                                    <span className="text-[9px]">{durationStr}</span>
+                                                                </div>
+                                                            )}
                                                         </div>
-                                                        {h >= 160 && plan.description && plan.totalColumns < 2 && (
-                                                            <div className="mt-2 text-[11px] text-slate-500 leading-snug line-clamp-3 opacity-80 flex items-start gap-1.5">
+
+                                                        {/* 展示标签: 高度大于 90px 时显示 */}
+                                                        {h >= 90 && plan.tags && plan.tags.length > 0 && (
+                                                            <div className="flex flex-wrap gap-1 mt-2.5 mb-1 overflow-hidden">
+                                                                {plan.tags.slice(0, 3).map(tag => (
+                                                                    <span key={tag} className={`px-1.5 py-0.5 rounded-md text-[8px] font-bold whitespace-nowrap ${isDone ? 'bg-slate-100 text-slate-400' : `bg-${plan.color}-100/50 text-${plan.color}-700 border border-${plan.color}-200/30`}`}>
+                                                                        {tag}
+                                                                    </span>
+                                                                ))}
+                                                                {plan.tags.length > 3 && <span className="text-[8px] text-slate-400">+{plan.tags.length - 3}</span>}
+                                                            </div>
+                                                        )}
+
+                                                        {/* 展示描述: 高度大于 130px 时显示 */}
+                                                        {h >= 130 && plan.description && plan.totalColumns < 2 && (
+                                                            <div className={`mt-auto text-[11px] leading-relaxed flex items-start gap-1.5 pt-2.5 border-t border-black/5 ${isDone ? 'text-slate-300' : 'text-slate-600'}`}>
                                                                 <AlignLeft size={10} className="mt-1 flex-shrink-0 opacity-40" />
-                                                                <span className="flex-1">{plan.description}</span>
+                                                                <span className="flex-1 line-clamp-3">
+                                                                    {plan.description}
+                                                                </span>
                                                             </div>
                                                         )}
                                                     </div>

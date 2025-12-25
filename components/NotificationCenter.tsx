@@ -49,20 +49,20 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
 
   if (!isOpen) return null;
 
-  // Group notifications? For now, simple reverse chronological order
   const sortedNotifications = [...notifications].sort((a, b) => 
     new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
   );
 
   return (
     <div className="absolute top-14 right-0 z-50 w-[380px] max-w-[95vw] sm:right-0 transform translate-x-2 sm:translate-x-0" ref={containerRef}>
-      {/* Arrow pointing up */}
-      <div className="absolute top-0 right-5 w-4 h-4 bg-white/80 backdrop-blur-2xl border-t border-l border-white/40 transform rotate-45 -translate-y-2 z-0"></div>
+      {/* 优化后的箭头：背景改为纯白，防止透光 */}
+      <div className="absolute top-0 right-5 w-4 h-4 bg-white border-t border-l border-slate-200 transform rotate-45 -translate-y-2 z-0"></div>
 
-      <div className="relative z-10 bg-white/85 backdrop-blur-2xl rounded-2xl shadow-[0_50px_100px_-20px_rgba(50,50,93,0.25),0_30px_60px_-30px_rgba(0,0,0,0.3)] border border-white/60 overflow-hidden animate-in fade-in zoom-in-95 duration-200 origin-top-right">
+      {/* 优化后的主体容器：背景改为纯白(bg-white)，增强阴影(shadow-2xl) */}
+      <div className="relative z-10 bg-white rounded-2xl shadow-[0_20px_60px_-10px_rgba(0,0,0,0.15),0_10px_30px_-15px_rgba(0,0,0,0.2)] border border-slate-200 overflow-hidden animate-in fade-in zoom-in-95 duration-200 origin-top-right">
         
-        {/* Header */}
-        <div className="px-5 py-4 border-b border-slate-200/50 flex justify-between items-center bg-white/40 sticky top-0 z-20 backdrop-blur-sm">
+        {/* Header: 背景颜色微调以增加对比度 */}
+        <div className="px-5 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50/50 sticky top-0 z-20 backdrop-blur-sm">
           <div className="flex items-center gap-2">
             <h3 className="text-base font-semibold text-slate-800 tracking-tight">通知中心</h3>
             {notifications.length > 0 && (
@@ -74,7 +74,7 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
           {notifications.length > 0 && (
             <button
               onClick={onClearAll}
-              className="text-xs font-medium text-slate-500 hover:text-slate-900 transition-colors px-2 py-1 rounded-lg hover:bg-slate-100/50 active:scale-95 transform"
+              className="text-xs font-medium text-slate-500 hover:text-slate-900 transition-colors px-2 py-1 rounded-lg hover:bg-slate-200/40 active:scale-95 transform"
             >
               清空
             </button>
@@ -84,23 +84,23 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
         {/* List */}
         <div className="max-h-[450px] overflow-y-auto custom-scrollbar">
           {sortedNotifications.length === 0 ? (
-            <div className="py-20 flex flex-col items-center justify-center text-slate-400">
-              <div className="w-16 h-16 bg-slate-50/50 rounded-full flex items-center justify-center mb-4 shadow-inner">
+            <div className="py-20 flex flex-col items-center justify-center text-slate-400 bg-white">
+              <div className="w-16 h-16 bg-slate-50 rounded-full flex items-center justify-center mb-4 shadow-inner">
                  <Bell size={24} className="opacity-30" />
               </div>
               <p className="text-sm font-medium text-slate-500">暂无新消息</p>
               <p className="text-xs text-slate-400 mt-1">您所有的通知都将显示在这里</p>
             </div>
           ) : (
-            <div className="p-2 space-y-2">
+            <div className="p-2 space-y-2 bg-white">
               {sortedNotifications.map((n) => (
                 <div
                   key={n.id}
                   onClick={() => onItemClick(n)}
                   className={`relative p-4 rounded-xl transition-all cursor-pointer group border border-transparent
                     ${!n.read 
-                        ? 'bg-blue-50/40 hover:bg-blue-50/70 border-blue-100/50' 
-                        : 'bg-transparent hover:bg-slate-50/80 hover:border-slate-100/50 hover:shadow-sm'
+                        ? 'bg-blue-50/50 hover:bg-blue-50/80 border-blue-100/40' 
+                        : 'bg-transparent hover:bg-slate-50 hover:border-slate-100/80 hover:shadow-sm'
                     }
                   `}
                 >
@@ -109,7 +109,7 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
                     <div className="flex-shrink-0 mt-0.5">
                        {n.type === 'OVERDUE' ? (
                            <div className="relative">
-                               <div className="w-10 h-10 rounded-full bg-rose-100 text-rose-500 flex items-center justify-center shadow-sm border border-rose-200/50">
+                               <div className="w-10 h-10 rounded-full bg-rose-50 text-rose-500 flex items-center justify-center shadow-sm border border-rose-100">
                                    <Clock size={18} strokeWidth={2.5} />
                                </div>
                                {!n.read && (
@@ -118,7 +118,7 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
                            </div>
                        ) : (
                            <div className="relative">
-                               <div className="w-10 h-10 rounded-full bg-slate-100 text-slate-500 flex items-center justify-center shadow-sm border border-slate-200/50">
+                               <div className="w-10 h-10 rounded-full bg-slate-50 text-slate-500 flex items-center justify-center shadow-sm border border-slate-100">
                                    <Bell size={18} strokeWidth={2.5} />
                                </div>
                                {!n.read && (
@@ -144,12 +144,12 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
                     </div>
                   </div>
                   
-                  {/* Hover Actions (Desktop) */}
+                  {/* Hover Actions */}
                   <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
                       {!n.read && (
                         <button 
                             onClick={(e) => { e.stopPropagation(); onMarkRead(n.id); }}
-                            className="p-1.5 hover:bg-white rounded-full text-blue-400 hover:text-blue-600 shadow-sm transition-colors"
+                            className="p-1.5 bg-white hover:bg-blue-50 rounded-full text-blue-400 hover:text-blue-600 shadow-sm border border-slate-100 transition-colors"
                             title="标记已读"
                         >
                             <div className="w-1.5 h-1.5 bg-current rounded-full"></div>
@@ -157,7 +157,7 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
                       )}
                       <button 
                          onClick={(e) => { e.stopPropagation(); onDelete(n.id); }}
-                         className="p-1.5 hover:bg-white rounded-full text-slate-300 hover:text-rose-500 shadow-sm transition-colors"
+                         className="p-1.5 bg-white hover:bg-rose-50 rounded-full text-slate-300 hover:text-rose-500 shadow-sm border border-slate-100 transition-colors"
                          title="删除"
                       >
                           <X size={12} />
@@ -169,8 +169,8 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
           )}
         </div>
         
-        {/* Footer Fade */}
-        <div className="absolute bottom-0 left-0 right-0 h-6 bg-gradient-to-t from-white/80 to-transparent pointer-events-none"></div>
+        {/* Footer Fade: 同样保持纯白遮罩 */}
+        <div className="absolute bottom-0 left-0 right-0 h-6 bg-gradient-to-t from-white to-transparent pointer-events-none"></div>
       </div>
     </div>
   );
