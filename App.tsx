@@ -21,7 +21,7 @@ import {
   processUserIntent, generateSmartSuggestions, DEFAULT_MODEL, SmartSuggestion
 } from './services/aiService';
 import { storageService, BackupData } from './services/storageService';
-import { format, addDays, isSameDay, addMinutes, endOfDay } from 'date-fns';
+import { format, addDays, isSameDay, addMinutes, endOfDay, differenceInMinutes } from 'date-fns';
 
 const MIN_SIDEBAR_WIDTH = 240;
 const DEFAULT_SIDEBAR_WIDTH = 280;
@@ -106,6 +106,37 @@ export const App: React.FC = () => {
     setIsPlanModalOpen(true);
   };
 
+  const handleDuplicatePlan = async (planId: string, targetDate?: Date) => {
+    const sourcePlan = plans.find(p => p.id === planId);
+    if (!sourcePlan) return;
+
+    let start = new Date(sourcePlan.startDate);
+    let end = new Date(sourcePlan.endDate);
+    const duration = differenceInMinutes(end, start);
+
+    if (targetDate) {
+      start = targetDate;
+      end = addMinutes(start, duration);
+    }
+
+    const newPlan: WorkPlan = {
+      ...sourcePlan,
+      id: crypto.randomUUID(),
+      startDate: start.toISOString(),
+      endDate: end.toISOString(),
+      status: PlanStatus.TODO // 复制的任务默认重置为待办
+    };
+
+    if (targetDate) {
+      await savePlansToStorage([...plans, newPlan]);
+      setTargetPlanId(newPlan.id);
+      setTimeout(() => setTargetPlanId(null), 2500);
+    } else {
+      setEditingPlan(newPlan);
+      setIsPlanModalOpen(true);
+    }
+  };
+
   const handleQuickAdd = async (title: string, duration: number, color: string) => {
       const today = new Date();
       const dayPlans = plans
@@ -131,7 +162,6 @@ export const App: React.FC = () => {
       
       await savePlansToStorage([...plans, newPlan]);
 
-      // 自动导航逻辑
       setCurrentDate(targetDate);
       setTargetPlanId(newPlan.id);
       setTimeout(() => setTargetPlanId(null), 2500);
@@ -144,7 +174,6 @@ export const App: React.FC = () => {
     const newPlans = exists ? plans.map(p => p.id === plan.id ? plan : p) : [...plans, plan];
     await savePlansToStorage(newPlans);
     
-    // 关键优化：保存后自动跳转到该日期并高亮
     const planDate = new Date(plan.startDate);
     setCurrentDate(planDate);
     setTargetPlanId(plan.id);
@@ -244,6 +273,7 @@ export const App: React.FC = () => {
               onPlanClick={handlePlanClick} 
               onPlanUpdate={handleUpdatePlan} 
               onDeletePlan={handleDeletePlan} 
+              onDuplicatePlan={handleDuplicatePlan}
               onCreateNew={() => handleSlotClick(new Date())} 
               onQuickAdd={handleQuickAdd}
             />
@@ -253,10 +283,7 @@ export const App: React.FC = () => {
        {isSidebarOpen && <div className="hidden lg:block w-1 hover:w-1.5 h-full cursor-col-resize hover:bg-indigo-500/30 active:bg-indigo-500 active:w-1.5 transition-all z-40 flex-shrink-0 -ml-0.5" onMouseDown={() => setIsResizing(true)} />}
 
        <div className="flex-1 flex flex-col min-w-0 h-full relative bg-slate-50">
-           {/* Header - 重新布局后的样式 */}
            <header className="h-16 flex items-center justify-between px-6 bg-white/80 backdrop-blur-xl border-b border-slate-200/60 flex-shrink-0 z-[70] sticky top-0 shadow-sm">
-                
-                {/* 左侧：品牌 + 日期视图控制 (Navigation Group) */}
                 <div className="flex items-center gap-8 flex-shrink-0">
                     <div className="flex items-center gap-4">
                         <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="p-2 -ml-2 text-slate-400 hover:text-slate-800 hover:bg-slate-100 rounded-lg transition-all hidden lg:block">
@@ -268,7 +295,6 @@ export const App: React.FC = () => {
                         </div>
                     </div>
 
-                    {/* 日期选择器 */}
                     <div className="relative flex items-center bg-slate-100/60 hover:bg-slate-100 border border-slate-200/50 rounded-xl p-0.5">
                         <button onClick={() => setCurrentDate(addDays(currentDate, -7))} className="p-1.5 text-slate-400 hover:text-slate-800 hover:bg-white rounded-lg transition-all"><ChevronLeft size={16} /></button>
                         <button onClick={() => setIsDatePickerOpen(!isDatePickerOpen)} className="flex items-center gap-2 px-3 py-1 text-sm font-bold text-slate-700 min-w-[100px] justify-center hover:text-indigo-600 transition-colors">{format(currentDate, 'M月yyyy')}</button>
@@ -277,9 +303,7 @@ export const App: React.FC = () => {
                     </div>
                 </div>
 
-                {/* 右侧：AI 搜索 + 新建按钮 + 系统操作 (Tool Group) */}
                 <div className="flex items-center gap-4 justify-end flex-1">
-                    {/* 搜索框 - 分离后的容器，宽度稍微调小以适应比例 */}
                     <div className="w-[260px] lg:w-[380px] transition-all duration-300 ml-auto">
                         <SmartInput 
                             onSubmit={handleSmartInput} 
@@ -295,7 +319,6 @@ export const App: React.FC = () => {
                         />
                     </div>
 
-                    {/* 新建按钮 - 高度从 h-10 调优为 h-9，更符合图标比例 */}
                     <button 
                         onClick={() => handleSlotClick(new Date())}
                         className="h-9 flex items-center justify-center gap-2 px-4 bg-slate-900 hover:bg-black text-white rounded-xl shadow-md active:scale-95 transition-all group whitespace-nowrap flex-shrink-0"
@@ -306,7 +329,6 @@ export const App: React.FC = () => {
 
                     <div className="h-6 w-px bg-slate-200/60 mx-1"></div>
 
-                    {/* 系统通知与设置 */}
                     <div className="flex items-center gap-1">
                         <div className="relative">
                             <button onClick={() => setIsNotificationOpen(!isNotificationOpen)} className="p-2 text-slate-400 hover:text-slate-800 hover:bg-slate-100 rounded-full transition-colors relative"><Bell size={20} />{notifications.some(n => !n.read) && <span className="absolute top-2 right-2 w-2 h-2 bg-rose-500 rounded-full border border-white"></span>}</button>
@@ -326,6 +348,7 @@ export const App: React.FC = () => {
                 onPlanClick={handlePlanClick} 
                 onSlotClick={handleSlotClick} 
                 onPlanUpdate={handleUpdatePlan} 
+                onDuplicatePlan={handleDuplicatePlan}
                 onDateSelect={setCurrentDate} 
                 onDeletePlan={handleDeletePlan} 
                 onDragCreate={(startDate, duration, title, color, tags) => {

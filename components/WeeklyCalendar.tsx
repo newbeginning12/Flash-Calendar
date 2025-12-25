@@ -1,9 +1,8 @@
-
 import React, { useState, useRef, useEffect, useMemo, useCallback, useLayoutEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { WorkPlan, PlanStatus } from '../types';
 import { format, addDays, isSameDay, getHours, getMinutes, differenceInMinutes, addMinutes, getWeek, startOfMonth } from 'date-fns';
-import { Plus, Clock, Move, Tag, CheckCircle2, Circle, PlayCircle, Edit2, Trash2, AlignLeft, ZoomIn, ZoomOut, Maximize2, Minimize2, Search, RotateCcw } from 'lucide-react';
+import { Plus, Clock, Move, Tag, CheckCircle2, Circle, PlayCircle, Edit2, Trash2, AlignLeft, ZoomIn, ZoomOut, Maximize2, Minimize2, Search, RotateCcw, Copy, CalendarPlus } from 'lucide-react';
 
 interface WeeklyCalendarProps {
   currentDate: Date;
@@ -13,6 +12,7 @@ interface WeeklyCalendarProps {
   onPlanClick: (plan: WorkPlan) => void;
   onSlotClick: (date: Date) => void;
   onPlanUpdate: (plan: WorkPlan) => void;
+  onDuplicatePlan: (id: string, targetDate?: Date) => void;
   onDeletePlan: (id: string) => void;
   onDateSelect: (date: Date) => void;
   onDragCreate: (startDate: Date, durationMinutes: number, title?: string, color?: string, tags?: string[]) => void;
@@ -39,13 +39,10 @@ const STATUS_LABELS = {
   [PlanStatus.DONE]: '已完成',
 };
 
-// 错落布局参数
-const OFFSET_STEP_PCT = 12; // 每层偏移 12%
+const OFFSET_STEP_PCT = 12;
 
 const getPositionedPlans = (dayPlans: WorkPlan[]): PositionedPlan[] => {
   if (dayPlans.length === 0) return [];
-
-  // 按开始时间排序，开始时间相同则按持续时间排序（长的在前）
   const sorted = [...dayPlans].sort((a, b) => {
     const startA = new Date(a.startDate).getTime();
     const startB = new Date(b.startDate).getTime();
@@ -61,7 +58,6 @@ const getPositionedPlans = (dayPlans: WorkPlan[]): PositionedPlan[] => {
   sorted.forEach(plan => {
     let colIndex = 0;
     const planStart = new Date(plan.startDate).getTime();
-
     while (true) {
       if (!columns[colIndex]) {
         columns[colIndex] = [];
@@ -69,14 +65,9 @@ const getPositionedPlans = (dayPlans: WorkPlan[]): PositionedPlan[] => {
       }
       const lastInCol = columns[colIndex][columns[colIndex].length - 1];
       const lastEnd = new Date(lastInCol.endDate).getTime();
-      
-      // 如果当前计划开始时间 >= 最后一项结束时间，说明可以放在同一列（接续任务）
-      if (planStart >= lastEnd) {
-        break;
-      }
+      if (planStart >= lastEnd) break;
       colIndex++;
     }
-
     columns[colIndex].push(plan);
     positioned.push({ ...plan, column: colIndex, totalColumns: 0 });
   });
@@ -84,18 +75,14 @@ const getPositionedPlans = (dayPlans: WorkPlan[]): PositionedPlan[] => {
   positioned.forEach(p1 => {
     const s1 = new Date(p1.startDate).getTime();
     const e1 = new Date(p1.endDate).getTime();
-    
     const overlapping = positioned.filter(p2 => {
       const s2 = new Date(p2.startDate).getTime();
       const e2 = new Date(p2.endDate).getTime();
-      // 严格判定重叠：s1 < e2 && e1 > s2
       return s1 < e2 && e1 > s2;
     });
-
     const maxColInCluster = overlapping.length > 0 ? Math.max(...overlapping.map(o => o.column)) + 1 : 1;
     p1.totalColumns = maxColInCluster;
   });
-
   return positioned;
 };
 
@@ -107,6 +94,7 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
   onPlanClick, 
   onSlotClick, 
   onPlanUpdate, 
+  onDuplicatePlan,
   onDeletePlan,
   onDateSelect,
   onDragCreate
@@ -114,13 +102,10 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
   const [now, setNow] = useState(new Date());
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; date?: Date; timeStr?: string; plan?: WorkPlan } | null>(null);
   const [hoveredPlanId, setHoveredPlanId] = useState<string | null>(null);
-  
   const [zoomScale, setZoomScale] = useState(1.0);
   const zoomAnchorRef = useRef<{ xRatio: number; yRatio: number } | null>(null);
-  
   const containerRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
-  
   const [dragInfo, setDragInfo] = useState<{
       planId?: string;
       durationMins: number;
@@ -128,6 +113,7 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
       activeDay: Date | null;
       activeMinutes: number;
       isNew?: boolean;
+      isCopy?: boolean;
       title?: string;
       tags?: string[];
   } | null>(null);
@@ -146,13 +132,9 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
 
   const weekStart = calculateWeekStart(currentDate);
   const weekDays = Array.from({ length: DAYS_TO_SHOW }, (_, i) => addDays(weekStart, i));
-  
   const weekOfMonth = useMemo(() => {
-    // 修复跨年周数错误：计算当前周起始日（周一）相对于本月 1 号所在周起始日（周一）的周数差
     const firstDayOfCurrentMonth = startOfMonth(weekStart);
     const firstMondayOfCurrentMonth = calculateWeekStart(firstDayOfCurrentMonth);
-    
-    // 计算两个周一之间的毫秒差，转换为周数。Math.round 消除可能的夏令时微差。
     const diffInWeeks = Math.round((weekStart.getTime() - firstMondayOfCurrentMonth.getTime()) / (7 * 24 * 60 * 60 * 1000));
     return diffInWeeks + 1;
   }, [weekStart]);
@@ -174,11 +156,7 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
       if (targetPlan) {
         const start = new Date(targetPlan.startDate);
         const top = (getHours(start) * 60 + getMinutes(start)) / 60 * rowHeight + GRID_TOP_OFFSET;
-        
-        containerRef.current.scrollTo({
-          top: top - 150, 
-          behavior: 'smooth'
-        });
+        containerRef.current.scrollTo({ top: top - 150, behavior: 'smooth' });
       }
     }
   }, [targetPlanId, plans, rowHeight]);
@@ -186,33 +164,23 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
   useLayoutEffect(() => {
     const container = containerRef.current;
     if (!container || !zoomAnchorRef.current) return;
-
     const { xRatio, yRatio } = zoomAnchorRef.current;
     const { clientWidth, clientHeight, scrollWidth, scrollHeight } = container;
-
-    const newLeft = xRatio * scrollWidth - clientWidth / 2;
-    const newTop = yRatio * scrollHeight - clientHeight / 2;
-
-    container.scrollLeft = newLeft;
-    container.scrollTop = newTop;
-    
+    container.scrollLeft = xRatio * scrollWidth - clientWidth / 2;
+    container.scrollTop = yRatio * scrollHeight - clientHeight / 2;
     zoomAnchorRef.current = null;
   }, [zoomScale]);
 
   const handleZoomUpdate = useCallback((newScale: number) => {
     const container = containerRef.current;
     if (!container) return;
-
     const clampedScale = Math.max(0.6, Math.min(2.0, newScale));
     if (Math.abs(clampedScale - zoomScale) < 0.001) return;
-
     const { scrollLeft, scrollTop, clientWidth, clientHeight, scrollWidth, scrollHeight } = container;
-    
     zoomAnchorRef.current = {
       xRatio: (scrollLeft + clientWidth / 2) / scrollWidth,
       yRatio: (scrollTop + clientHeight / 2) / scrollHeight
     };
-
     setZoomScale(clampedScale);
   }, [zoomScale]);
 
@@ -220,51 +188,37 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
     const handleKeyDown = (e: KeyboardEvent) => {
       const isCmdOrCtrl = e.metaKey || e.ctrlKey;
       if (!isCmdOrCtrl) return;
-
-      if (e.key === '=' || e.key === '+') {
-        e.preventDefault();
-        handleZoomUpdate(zoomScale + 0.1);
-      } else if (e.key === '-') {
-        e.preventDefault();
-        handleZoomUpdate(zoomScale - 0.1);
-      } else if (e.key === '0') {
-        e.preventDefault();
-        handleZoomUpdate(1.0);
-      }
+      if (e.key === '=' || e.key === '+') { e.preventDefault(); handleZoomUpdate(zoomScale + 0.1); }
+      else if (e.key === '-') { e.preventDefault(); handleZoomUpdate(zoomScale - 0.1); }
+      else if (e.key === '0') { e.preventDefault(); handleZoomUpdate(1.0); }
     };
-
     const handleWheel = (e: WheelEvent) => {
       if (e.metaKey || e.ctrlKey) {
         e.preventDefault();
-        const delta = -e.deltaY;
-        const factor = delta > 0 ? 0.05 : -0.05;
+        const factor = e.deltaY > 0 ? -0.05 : 0.05;
         handleZoomUpdate(zoomScale + factor);
       }
     };
-
     window.addEventListener('keydown', handleKeyDown);
-    const container = containerRef.current;
-    if (container) {
-      container.addEventListener('wheel', handleWheel, { passive: false });
-    }
-
+    if (containerRef.current) containerRef.current.addEventListener('wheel', handleWheel, { passive: false });
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
-      if (container) {
-        container.removeEventListener('wheel', handleWheel);
-      }
+      if (containerRef.current) containerRef.current.removeEventListener('wheel', handleWheel);
     };
   }, [zoomScale, handleZoomUpdate]);
 
-  const createDragGhost = (title: string) => {
+  const createDragGhost = (title: string, isCopy?: boolean) => {
     const ghost = document.createElement('div');
-    ghost.className = "fixed -top-[1000px] left-0 bg-slate-900/90 text-white px-3 py-1.5 rounded-lg text-xs font-bold shadow-2xl pointer-events-none z-[9999] flex items-center gap-2";
-    ghost.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="m5 9 7-7 7 7"/><path d="M12 2v15"/><path d="m19 17-7 7-7-7"/></svg> ${title}`;
+    ghost.className = `fixed -top-[1000px] left-0 ${isCopy ? 'bg-indigo-600' : 'bg-slate-900/90'} text-white px-3 py-1.5 rounded-lg text-xs font-bold shadow-2xl pointer-events-none z-[9999] flex items-center gap-2`;
+    ghost.innerHTML = isCopy 
+      ? `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg> 复制: ${title}`
+      : `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="m5 9 7-7 7 7"/><path d="M12 2v15"/><path d="m19 17-7 7-7-7"/></svg> ${title}`;
     document.body.appendChild(ghost);
     return ghost;
   };
 
   const handleDragStartExisting = (e: React.DragEvent, plan: WorkPlan) => {
+    const isCopy = e.altKey;
     const duration = differenceInMinutes(new Date(plan.endDate), new Date(plan.startDate));
     setDragInfo({
         planId: plan.id,
@@ -273,22 +227,29 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
         activeDay: null,
         activeMinutes: 0,
         isNew: false,
+        isCopy: isCopy,
         title: plan.title,
         tags: plan.tags
     });
 
-    const ghost = createDragGhost(plan.title);
+    const ghost = createDragGhost(plan.title, isCopy);
     e.dataTransfer.setDragImage(ghost, 0, 0);
     setTimeout(() => document.body.removeChild(ghost), 0);
 
-    e.dataTransfer.setData('application/json', JSON.stringify({ type: 'MOVE_PLAN', planId: plan.id }));
-    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('application/json', JSON.stringify({ 
+        type: isCopy ? 'COPY_PLAN' : 'MOVE_PLAN', 
+        planId: plan.id 
+    }));
+    e.dataTransfer.effectAllowed = isCopy ? 'copy' : 'move';
   };
 
   const handleDragOver = (e: React.DragEvent, day: Date) => {
     e.preventDefault();
     const template = (window as any).__ACTIVE_DRAG_TEMPLATE__;
-    e.dataTransfer.dropEffect = template ? 'copy' : 'move';
+    // fix: ensure isAltCopy is a boolean to avoid string vs boolean type error in setDragInfo
+    const isAltCopy = !!(e.altKey && !template && dragInfo?.planId);
+    
+    e.dataTransfer.dropEffect = (template || isAltCopy) ? 'copy' : 'move';
     
     const rect = e.currentTarget.getBoundingClientRect();
     const rawMinutes = ((e.clientY - rect.top - GRID_TOP_OFFSET) / rowHeight) * 60;
@@ -302,6 +263,7 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
                 activeDay: day,
                 activeMinutes: snappedMinutes,
                 isNew: true,
+                isCopy: false,
                 title: template?.title || '新日程',
                 tags: template?.tags || []
             };
@@ -310,6 +272,7 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
             ...prev, 
             activeDay: day, 
             activeMinutes: snappedMinutes,
+            isCopy: isAltCopy || prev.isCopy,
             durationMins: template?.minutes || prev.durationMins,
             color: template?.color || prev.color,
             title: template?.title || prev.title,
@@ -321,10 +284,10 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
 
   const handleDrop = (e: React.DragEvent, day: Date) => {
     e.preventDefault();
+    const finalDragInfo = dragInfo;
     setDragInfo(null);
     try {
         const jsonStr = e.dataTransfer.getData('application/json');
-        const textStr = e.dataTransfer.getData('text/plain');
         const rect = e.currentTarget.getBoundingClientRect();
         const snappedMinutes = Math.max(0, Math.floor(((e.clientY - rect.top - GRID_TOP_OFFSET) / rowHeight) * 60 / 15) * 15);
         const targetStart = new Date(day);
@@ -332,25 +295,30 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
 
         let data: any = null;
         if (jsonStr) { try { data = JSON.parse(jsonStr); } catch (e) {} }
-        if (!data && textStr) { try { data = JSON.parse(textStr); } catch (e) {} }
-        if (!data) { data = (window as any).__ACTIVE_DRAG_TEMPLATE__; }
+        if (!data) data = (window as any).__ACTIVE_DRAG_TEMPLATE__;
 
         if (data && data.type === 'PRESET_DURATION') {
             onDragCreate(targetStart, data.minutes, data.title, data.color, data.tags);
-        } else if (data && (data.type === 'MOVE_PLAN' || data.planId)) {
+        } else if (data && (data.type === 'MOVE_PLAN' || data.type === 'COPY_PLAN' || data.planId)) {
             const planId = data.planId;
-            const plan = plans.find(p => p.id === planId);
-            if (plan) {
-                const duration = differenceInMinutes(new Date(plan.endDate), new Date(plan.startDate));
-                onPlanUpdate({
-                    ...plan,
-                    startDate: targetStart.toISOString(),
-                    endDate: addMinutes(targetStart, duration).toISOString()
-                });
+            const isCopyAction = data.type === 'COPY_PLAN' || e.altKey;
+            
+            if (isCopyAction) {
+                onDuplicatePlan(planId, targetStart);
+            } else {
+                const plan = plans.find(p => p.id === planId);
+                if (plan) {
+                    const duration = differenceInMinutes(new Date(plan.endDate), new Date(plan.startDate));
+                    onPlanUpdate({
+                        ...plan,
+                        startDate: targetStart.toISOString(),
+                        endDate: addMinutes(targetStart, duration).toISOString()
+                    });
+                }
             }
         }
         (window as any).__ACTIVE_DRAG_TEMPLATE__ = null;
-    } catch (err) { console.error("Drop process failed:", err); }
+    } catch (err) { console.error("Drop failed:", err); }
   };
 
   useEffect(() => {
@@ -360,9 +328,7 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        setContextMenu(null);
-      }
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setContextMenu(null);
     };
     if (contextMenu) {
         document.addEventListener('mousedown', handleClickOutside);
@@ -400,52 +366,15 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
 
   return (
     <div className="flex flex-col h-full bg-white rounded-3xl shadow-[0_4px_30px_rgb(0,0,0,0.03)] border border-slate-100 overflow-hidden relative group/calendar">
-      
       <div className="absolute bottom-6 right-6 z-[60] flex items-center gap-1 bg-white/70 backdrop-blur-2xl border border-white/60 shadow-[0_15px_45px_-12px_rgba(0,0,0,0.15)] rounded-2xl p-2 opacity-0 group-hover/calendar:opacity-100 transition-all duration-300 scale-95 group-hover/calendar:scale-100 select-none">
-          <button 
-            onClick={() => handleZoomUpdate(zoomScale - 0.2)}
-            className="w-8 h-8 flex items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 active:scale-90 transition-all"
-            title="缩小 (Cmd -)"
-          >
-            <ZoomOut size={16} />
-          </button>
-          
+          <button onClick={() => handleZoomUpdate(zoomScale - 0.2)} className="w-8 h-8 flex items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 active:scale-90 transition-all"><ZoomOut size={16} /></button>
           <div className="flex items-center gap-2 px-2 group/slider">
-            <input 
-              type="range"
-              min="0.6"
-              max="2.0"
-              step="0.05"
-              value={zoomScale}
-              onChange={(e) => handleZoomUpdate(parseFloat(e.target.value))}
-              className="w-24 h-1 bg-slate-200 rounded-full appearance-none cursor-pointer accent-indigo-600 focus:outline-none"
-            />
-            <span 
-              className="text-[10px] font-bold font-mono text-slate-400 w-9 text-right cursor-pointer hover:text-indigo-600"
-              onDoubleClick={() => handleZoomUpdate(1.0)}
-              title="双击恢复默认 (Cmd 0)"
-            >
-              {Math.round(zoomScale * 100)}%
-            </span>
+            <input type="range" min="0.6" max="2.0" step="0.05" value={zoomScale} onChange={(e) => handleZoomUpdate(parseFloat(e.target.value))} className="w-24 h-1 bg-slate-200 rounded-full appearance-none cursor-pointer accent-indigo-600 focus:outline-none" />
+            <span className="text-[10px] font-bold font-mono text-slate-400 w-9 text-right cursor-pointer hover:text-indigo-600" onDoubleClick={() => handleZoomUpdate(1.0)}>{Math.round(zoomScale * 100)}%</span>
           </div>
-
-          <button 
-            onClick={() => handleZoomUpdate(zoomScale + 0.2)}
-            className="w-8 h-8 flex items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 active:scale-90 transition-all"
-            title="放大 (Cmd +)"
-          >
-            <ZoomIn size={16} />
-          </button>
-          
+          <button onClick={() => handleZoomUpdate(zoomScale + 0.2)} className="w-8 h-8 flex items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 active:scale-90 transition-all"><ZoomIn size={16} /></button>
           <div className="w-px h-4 bg-slate-200 mx-1"></div>
-          
-          <button 
-            onClick={() => handleZoomUpdate(1.0)}
-            className={`w-8 h-8 flex items-center justify-center rounded-lg transition-all ${zoomScale === 1.0 ? 'text-slate-300 pointer-events-none' : 'text-slate-500 hover:bg-indigo-50 hover:text-indigo-600 active:scale-90'}`}
-            title="重置缩放"
-          >
-            <RotateCcw size={14} />
-          </button>
+          <button onClick={() => handleZoomUpdate(1.0)} className={`w-8 h-8 flex items-center justify-center rounded-lg transition-all ${zoomScale === 1.0 ? 'text-slate-300 pointer-events-none' : 'text-slate-500 hover:bg-indigo-50 hover:text-indigo-600 active:scale-90'}`}><RotateCcw size={14} /></button>
       </div>
 
       <div ref={containerRef} className="flex-1 overflow-auto custom-scrollbar relative bg-slate-50/10 scroll-smooth">
@@ -460,8 +389,8 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
                         const isSelected = isSameDay(day, currentDate);
                         return (
                             <div key={day.toISOString()} className={`flex-1 py-3 flex flex-col items-center justify-center cursor-pointer transition-all border-r border-slate-100/50 hover:bg-slate-50 ${isSelected ? 'bg-blue-50/20' : ''}`} style={{ minWidth: colMinWidth }} onClick={() => onDateSelect(day)}>
-                                <span className={`text-[10px] font-bold uppercase tracking-widest mb-1 ${isSameDay(day, new Date()) ? 'text-blue-600' : 'text-slate-400'}`} style={{ transform: `scale(${Math.max(0.85, zoomScale > 1.2 ? 1.1 : zoomScale)})`, transformOrigin: 'center' }}>{WEEKDAYS_ZH[day.getDay()]}</span>
-                                <div className={`w-8 h-8 flex items-center justify-center rounded-xl text-sm font-bold transition-all ${isSelected ? 'bg-slate-900 text-white' : (isSameDay(day, new Date()) ? 'text-blue-600 bg-blue-50' : 'text-slate-800')}`} style={{ transform: `scale(${Math.max(0.9, Math.min(1.2, zoomScale))})` }}>{format(day, 'd')}</div>
+                                <span className={`text-[10px] font-bold uppercase tracking-widest mb-1 ${isSameDay(day, new Date()) ? 'text-blue-600' : 'text-slate-400'}`}>{WEEKDAYS_ZH[day.getDay()]}</span>
+                                <div className={`w-8 h-8 flex items-center justify-center rounded-xl text-sm font-bold transition-all ${isSelected ? 'bg-slate-900 text-white' : (isSameDay(day, new Date()) ? 'text-blue-600 bg-blue-50' : 'text-slate-800')}`}>{format(day, 'd')}</div>
                             </div>
                         );
                     })}
@@ -473,7 +402,7 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
                     <div style={{ height: `${GRID_TOP_OFFSET}px` }}></div>
                     {HOURS.map((hour) => (
                         <div key={hour} className="relative w-full" style={{ height: `${rowHeight}px` }}>
-                            <span className="absolute -top-2.5 right-3 text-[10px] text-slate-400 font-bold font-mono opacity-50 transition-all origin-right" style={{ transform: `scale(${Math.max(0.8, Math.min(1.1, zoomScale))})` }}>{hour.toString().padStart(2, '0')}:00</span>
+                            <span className="absolute -top-2.5 right-3 text-[10px] text-slate-400 font-bold font-mono opacity-50 transition-all origin-right">{hour.toString().padStart(2, '0')}:00</span>
                         </div>
                     ))}
                 </div>
@@ -489,7 +418,6 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
                             const dayPlansRaw = plans.filter(p => isSameDay(new Date(p.startDate), day));
                             const dayPlans = getPositionedPlans(dayPlansRaw);
                             const isDraggingOverMe = dragInfo?.activeDay && isSameDay(dragInfo.activeDay, day);
-
                             return (
                                 <div 
                                     key={day.toISOString()}
@@ -511,7 +439,7 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
                                 >
                                     {isDraggingOverMe && dragInfo && (
                                         <div 
-                                            className={`absolute inset-x-1 z-[35] rounded-xl border-2 border-dashed border-${dragInfo.color}-400/60 bg-${dragInfo.color}-100/15 pointer-events-none flex flex-col items-center justify-center transition-all duration-75`}
+                                            className={`absolute inset-x-1 z-[35] rounded-xl border-2 border-dashed ${dragInfo.isCopy ? 'border-indigo-500 bg-indigo-100/20' : `border-${dragInfo.color}-400/60 bg-${dragInfo.color}-100/15`} pointer-events-none flex flex-col items-center justify-center transition-all duration-75`}
                                             style={{ 
                                                 top: `${(dragInfo.activeMinutes / 60) * rowHeight + GRID_TOP_OFFSET}px`, 
                                                 height: `${(dragInfo.durationMins / 60) * rowHeight}px` 
@@ -524,8 +452,9 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
                                                     ${dragInfo.activeMinutes < 90 ? 'top-full mt-2' : '-top-10'}
                                                 `}
                                             >
-                                                <Clock size={10} className="text-blue-400" />
+                                                {dragInfo.isCopy ? <Copy size={10} className="text-indigo-400" /> : <Clock size={10} className="text-blue-400" />}
                                                 <span>
+                                                    {dragInfo.isCopy ? '复制到: ' : ''}
                                                     {format(addMinutes(new Date().setHours(0, dragInfo.activeMinutes, 0, 0), 0), 'HH:mm')} 
                                                     <span className="mx-1 opacity-50">-</span>
                                                     {format(addMinutes(new Date().setHours(0, dragInfo.activeMinutes, 0, 0), dragInfo.durationMins), 'HH:mm')}
@@ -545,18 +474,11 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
                                         const start = new Date(plan.startDate);
                                         const end = new Date(plan.endDate);
                                         const top = (getHours(start) * 60 + getMinutes(start)) / 60 * rowHeight + GRID_TOP_OFFSET;
-                                        
-                                        // 高度减少 2px 以产生接续缝隙
                                         const h = Math.max((differenceInMinutes(end, start) / 60 * rowHeight) - 2, 18);
-                                        
                                         const isDone = plan.status === PlanStatus.DONE;
                                         const timeRangeStr = `${format(start, 'HH:mm')} - ${format(end, 'HH:mm')}`;
-
-                                        // 错落布局逻辑：
-                                        // column 0 保持靠左全宽；后续 column 依次向右偏移 OFFSET_STEP_PCT
                                         const leftPct = plan.column * OFFSET_STEP_PCT;
                                         const widthPct = 100 - leftPct;
-                                        
                                         const isHighlighted = isPlanHighlighted(plan);
                                         const isSearchActive = searchTerm.trim().length > 0;
                                         const isTarget = targetPlanId === plan.id;
@@ -572,77 +494,32 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
                                                 onMouseEnter={() => setHoveredPlanId(plan.id)}
                                                 onMouseLeave={() => setHoveredPlanId(null)}
                                                 style={{ 
-                                                    top: `${top}px`, 
-                                                    height: `${h}px`,
-                                                    left: `${leftPct}%`,
-                                                    width: `calc(${widthPct}% - 4px)`, // 右侧留出 4px 呼吸位
-                                                    zIndex: isHovered ? 100 : (isTarget ? 50 : 10 + plan.column), // 悬停置顶
-                                                    transform: isHovered ? 'scale(1.02)' : 'scale(1)', // 悬停微扩
+                                                    top: `${top}px`, height: `${h}px`, left: `${leftPct}%`, width: `calc(${widthPct}% - 4px)`,
+                                                    zIndex: isHovered ? 100 : (isTarget ? 50 : 10 + plan.column),
+                                                    transform: isHovered ? 'scale(1.02)' : 'scale(1)',
                                                 }}
-                                                className={`
-                                                    absolute cursor-grab active:cursor-grabbing overflow-hidden transition-all flex flex-col
-                                                    backdrop-blur-md group
-                                                    ${isDone 
-                                                        ? `bg-slate-50/75 border-slate-100 opacity-60` 
-                                                        : `bg-${plan.color}-50/90 border-${plan.color}-200/60 hover:border-${plan.color}-400 hover:bg-${plan.color}-50 text-${plan.color}-900`
-                                                    }
-                                                    ${dragInfo?.planId === plan.id ? 'opacity-20 scale-95' : ''}
-                                                    ${h < 35 ? 'p-1 px-1.5' : h < 100 ? 'p-2' : h < 160 ? 'p-2.5' : 'p-3'}
-                                                    ${isSearchActive && !isHighlighted ? 'opacity-20 grayscale pointer-events-none' : 'opacity-100'}
-                                                    ${isSearchActive && isHighlighted ? 'ring-2 ring-indigo-500 ring-offset-2 z-40 animate-pulse' : ''}
-                                                    ${isTarget ? 'ring-2 ring-indigo-500/40 border-indigo-400 z-50 shadow-xl scale-[1.01]' : ''}
-                                                    ${isHovered ? 'shadow-[0_20px_40px_rgba(0,0,0,0.12)] z-[100]' : (plan.column > 0 ? 'shadow-[-8px_0_15px_rgba(0,0,0,0.08)]' : 'shadow-[0_2px_12px_rgba(0,0,0,0.02)]')}
-                                                    rounded-xl border
-                                                `}
+                                                className={`absolute cursor-grab active:cursor-grabbing overflow-hidden transition-all flex flex-col backdrop-blur-md group ${isDone ? `bg-slate-50/75 border-slate-100 opacity-60` : `bg-${plan.color}-50/90 border-${plan.color}-200/60 hover:border-${plan.color}-400 hover:bg-${plan.color}-50 text-${plan.color}-900`} ${dragInfo?.planId === plan.id && !dragInfo.isCopy ? 'opacity-20 scale-95' : ''} ${h < 35 ? 'p-1 px-1.5' : h < 100 ? 'p-2' : h < 160 ? 'p-2.5' : 'p-3'} ${isSearchActive && !isHighlighted ? 'opacity-20 grayscale pointer-events-none' : 'opacity-100'} ${isTarget ? 'ring-2 ring-indigo-500/40 border-indigo-400 z-50 shadow-xl' : ''} ${isHovered ? 'shadow-xl z-[100]' : 'shadow-sm'} rounded-xl border`}
                                                 onClick={() => onPlanClick(plan)}
                                             >
                                                 {h < 35 ? (
                                                     <div className="flex items-center justify-between gap-1 h-full">
-                                                        <span className={`text-[10px] font-bold truncate flex-1 ${isDone ? 'text-slate-400 line-through' : ''}`}>
-                                                            {plan.title}
-                                                        </span>
+                                                        <span className={`text-[10px] font-bold truncate flex-1 ${isDone ? 'text-slate-400 line-through' : ''}`}>{plan.title}</span>
                                                         {getSimpleStatusIcon(plan.status, plan.color, 10)}
                                                     </div>
                                                 ) : (
                                                     <div className="flex flex-col h-full">
                                                         <div className="flex items-start justify-between gap-1.5 mb-1 min-w-0">
-                                                            <div className={`font-bold truncate leading-tight flex-1 ${h >= 160 ? 'text-[15px]' : h >= 65 ? 'text-[13px]' : 'text-[11px]'} ${isDone ? 'text-slate-400 line-through font-normal' : 'text-slate-800'}`}>
-                                                                {plan.title}
-                                                            </div>
-                                                            {h >= 65 && plan.totalColumns < 3 ? (
-                                                                <span className={`text-[9px] font-black px-1.5 py-0.5 rounded-md border flex-shrink-0 transition-all uppercase tracking-tighter
-                                                                    ${plan.status === PlanStatus.DONE ? 'bg-emerald-50 text-emerald-600 border-emerald-100' : 
-                                                                      plan.status === PlanStatus.IN_PROGRESS ? 'bg-blue-50 text-blue-600 border-blue-100 animate-pulse' : 
-                                                                      'bg-slate-100 text-slate-500 border-slate-200'}
-                                                                `}>
-                                                                    {STATUS_LABELS[plan.status]}
-                                                                </span>
-                                                            ) : (
-                                                                getSimpleStatusIcon(plan.status, plan.color)
-                                                            )}
+                                                            <div className={`font-bold truncate leading-tight flex-1 ${h >= 160 ? 'text-[15px]' : h >= 65 ? 'text-[13px]' : 'text-[11px]'} ${isDone ? 'text-slate-400 line-through font-normal' : 'text-slate-800'}`}>{plan.title}</div>
+                                                            {getSimpleStatusIcon(plan.status, plan.color)}
                                                         </div>
-
                                                         <div className={`flex items-center gap-1 font-bold font-mono ${isDone ? 'text-slate-300' : `text-${plan.color}-600/80`}`}>
                                                             <Clock size={h < 65 ? 10 : 12} strokeWidth={2.5} />
-                                                            <span className={`${h < 65 ? 'text-[9px]' : 'text-[10px]'}`}>
-                                                                {timeRangeStr}
-                                                            </span>
+                                                            <span className={`${h < 65 ? 'text-[9px]' : 'text-[10px]'}`}>{timeRangeStr}</span>
                                                         </div>
-
                                                         {h >= 160 && plan.description && plan.totalColumns < 2 && (
                                                             <div className="mt-2 text-[11px] text-slate-500 leading-snug line-clamp-3 opacity-80 flex items-start gap-1.5">
                                                                 <AlignLeft size={10} className="mt-1 flex-shrink-0 opacity-40" />
                                                                 <span className="flex-1">{plan.description}</span>
-                                                            </div>
-                                                        )}
-
-                                                        {h >= 100 && plan.tags && plan.tags.length > 0 && plan.totalColumns < 3 && (
-                                                            <div className="flex flex-wrap gap-1 mt-auto pt-2 pb-1 overflow-hidden max-h-[44px]">
-                                                                {plan.tags.slice(0, h >= 160 ? 4 : 2).map(tag => (
-                                                                    <span key={tag} className={`px-1.5 py-0.5 rounded-md text-[9px] font-bold border transition-colors whitespace-nowrap ${isDone ? 'bg-slate-100 text-slate-300 border-slate-200' : `bg-${plan.color}-100/50 text-${plan.color}-700 border-${plan.color}-200/50 group-hover:bg-${plan.color}-100 group-hover:border-${plan.color}-200`}`}>
-                                                                        {tag}
-                                                                    </span>
-                                                                ))}
                                                             </div>
                                                         )}
                                                     </div>
@@ -663,45 +540,33 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
         <div ref={menuRef} 
             className="fixed z-[9999] bg-white/90 backdrop-blur-xl rounded-2xl shadow-2xl border border-slate-200/50 p-1.5 w-48 animate-in fade-in zoom-in-95 duration-150 origin-top-left" 
             style={{ 
-                top: Math.min(contextMenu.y, window.innerHeight - 320), 
+                top: Math.min(contextMenu.y, window.innerHeight - 380), 
                 left: Math.min(contextMenu.x, window.innerWidth - 200) 
             }}
         >
             {contextMenu.plan ? (
                 <>
-                    <div className="px-3 py-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider">切换状态 (当前: {STATUS_LABELS[contextMenu.plan.status]})</div>
+                    <div className="px-3 py-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider">日程管理</div>
+                    <button onClick={() => { onDuplicatePlan(contextMenu.plan!.id); setContextMenu(null); }} className="w-full flex items-center gap-2.5 p-2 rounded-lg hover:bg-indigo-50 text-indigo-600 font-bold text-xs transition-all">
+                        <Copy size={14} /> 复制日程 (复刻)
+                    </button>
+                    <button onClick={() => { 
+                        const tomorrow = addDays(new Date(contextMenu.plan!.startDate), 1);
+                        onDuplicatePlan(contextMenu.plan!.id, tomorrow); 
+                        setContextMenu(null); 
+                    }} className="w-full flex items-center gap-2.5 p-2 rounded-lg hover:bg-blue-50 text-blue-600 font-bold text-xs transition-all">
+                        <CalendarPlus size={14} /> 明天继续 (复制到明天)
+                    </button>
                     
-                    {contextMenu.plan.status !== PlanStatus.TODO && (
-                      <button onClick={() => { onPlanUpdate({...contextMenu.plan!, status: PlanStatus.TODO}); setContextMenu(null); }} className="w-full flex items-center gap-2.5 p-2 rounded-lg hover:bg-slate-50 text-slate-600 font-bold text-xs transition-all">
-                          <Circle size={14} /> 设为待办
-                      </button>
-                    )}
-                    {contextMenu.plan.status !== PlanStatus.IN_PROGRESS && (
-                      <button onClick={() => { onPlanUpdate({...contextMenu.plan!, status: PlanStatus.IN_PROGRESS}); setContextMenu(null); }} className="w-full flex items-center gap-2.5 p-2 rounded-lg hover:bg-blue-50 text-blue-600 font-bold text-xs transition-all">
-                          <PlayCircle size={14} /> 标记进行中
-                      </button>
-                    )}
+                    <div className="h-px bg-slate-100 my-1.5 mx-1"></div>
+                    <div className="px-3 py-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider">状态 (当前: {STATUS_LABELS[contextMenu.plan.status]})</div>
                     {contextMenu.plan.status !== PlanStatus.DONE && (
                       <button onClick={() => { onPlanUpdate({...contextMenu.plan!, status: PlanStatus.DONE}); setContextMenu(null); }} className="w-full flex items-center gap-2.5 p-2 rounded-lg hover:bg-emerald-50 text-emerald-600 font-bold text-xs transition-all">
                           <CheckCircle2 size={14} /> 标记完成
                       </button>
                     )}
-
-                    <div className="h-px bg-slate-100 my-1.5 mx-1"></div>
-                    <div className="px-3 py-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider">颜色标签</div>
-                    <div className="grid grid-cols-6 gap-1 px-2 pb-2 mt-1">
-                        {COLORS.map(c => (
-                            <button 
-                                key={c}
-                                onClick={() => { onPlanUpdate({...contextMenu.plan!, color: c}); setContextMenu(null); }}
-                                className={`w-5 h-5 rounded-full bg-${c}-500 hover:scale-125 transition-transform ring-2 ring-transparent hover:ring-white shadow-sm ${contextMenu.plan!.color === c ? 'ring-slate-400' : ''}`}
-                            />
-                        ))}
-                    </div>
-
-                    <div className="h-px bg-slate-100 my-1.5 mx-1"></div>
                     <button onClick={() => { onDeletePlan(contextMenu.plan!.id); setContextMenu(null); }} className="w-full flex items-center gap-2.5 p-2 rounded-lg hover:bg-rose-50 text-rose-500 font-bold text-xs transition-all">
-                        <Trash2 size={14} /> 删除此日程
+                        <Trash2 size={14} /> 删除日程
                     </button>
                 </>
             ) : (

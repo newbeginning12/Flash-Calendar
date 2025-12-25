@@ -1,14 +1,16 @@
+
 import React, { useMemo, useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { WorkPlan, PlanStatus } from '../types';
-import { format, isSameDay } from 'date-fns';
-import { CheckCircle2, Circle, Clock, Target, CalendarDays, Plus, Trash2, Zap, FileSearch, Users, PencilRuler, ShieldCheck, ChevronDown, ChevronUp, PlayCircle } from 'lucide-react';
+import { format, isSameDay, addDays } from 'date-fns';
+import { CheckCircle2, Circle, Clock, Target, CalendarDays, Plus, Trash2, Zap, FileSearch, Users, PencilRuler, ShieldCheck, ChevronDown, ChevronUp, PlayCircle, Copy, CalendarPlus } from 'lucide-react';
 
 interface TaskSidebarProps {
   currentDate: Date;
   plans: WorkPlan[];
   onPlanClick: (plan: WorkPlan) => void;
   onPlanUpdate: (plan: WorkPlan) => void;
+  onDuplicatePlan: (id: string, targetDate?: Date) => void;
   onDeletePlan: (id: string) => void;
   onCreateNew: () => void;
   onQuickAdd: (title: string, duration: number, color: string) => void;
@@ -55,6 +57,7 @@ export const TaskSidebar: React.FC<TaskSidebarProps> = ({
   plans, 
   onPlanClick, 
   onPlanUpdate,
+  onDuplicatePlan,
   onDeletePlan,
   onCreateNew,
   onQuickAdd
@@ -102,8 +105,6 @@ export const TaskSidebar: React.FC<TaskSidebarProps> = ({
 
   return (
     <div className="w-full h-full flex flex-col bg-white border-r border-slate-200/60 flex-shrink-0 z-20 overflow-hidden relative">
-      
-      {/* 侧边栏顶部：紧凑后的今日任务汇总 */}
       <div className="p-5 pt-6 flex-none bg-slate-50/30">
         <div className="flex items-center justify-between mb-3">
             <h2 className="text-[12px] font-black text-slate-400 flex items-center gap-2 uppercase tracking-widest">
@@ -114,7 +115,6 @@ export const TaskSidebar: React.FC<TaskSidebarProps> = ({
                 {stats.done}/{stats.total}
             </div>
         </div>
-        
         <div className="flex items-center gap-3">
           <div className="flex-1 bg-slate-200/60 rounded-full h-1 overflow-hidden">
               <div className="bg-indigo-500 h-full transition-all duration-1000 ease-[cubic-bezier(0.16,1,0.3,1)]" style={{ width: `${stats.progress}%` }}></div>
@@ -123,7 +123,6 @@ export const TaskSidebar: React.FC<TaskSidebarProps> = ({
         </div>
       </div>
 
-      {/* 列表区：压缩垂直间距 */}
       <div className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-2">
         {dailyPlans.length > 0 ? (
           dailyPlans.map(plan => {
@@ -133,33 +132,20 @@ export const TaskSidebar: React.FC<TaskSidebarProps> = ({
             return (
               <div key={plan.id} onClick={() => onPlanClick(plan)}
                 onContextMenu={(e) => { e.preventDefault(); setContextMenu({ x: e.clientX, y: e.clientY, plan }); }}
-                className={`group relative flex items-center gap-3 p-3.5 rounded-xl border transition-all cursor-pointer select-none hover:shadow-[0_4px_15px_-5px_rgba(0,0,0,0.05)] ${isDone ? 'bg-slate-50/50 border-slate-100' : 'bg-white border-slate-100 hover:border-indigo-100'}`}
+                className={`group relative flex items-center gap-3 p-3.5 rounded-xl border transition-all cursor-pointer select-none hover:shadow-sm ${isDone ? 'bg-slate-50/50 border-slate-100' : 'bg-white border-slate-100 hover:border-indigo-100'}`}
               >
-                {/* 左侧选择圈 */}
                 <button onClick={(e) => handleToggleStatus(e, plan)} className={`flex-shrink-0 transition-all duration-300 ${isDone ? 'text-emerald-500' : 'text-slate-200 group-hover:text-indigo-400'}`}>
                     <StatusIconComp size={22} strokeWidth={2} className={isDone ? 'fill-emerald-50' : ''} />
                 </button>
-
-                {/* 中间信息：紧凑排列 */}
                 <div className="flex-1 min-w-0">
-                    <div className={`text-[14px] font-bold tracking-tight truncate leading-none mb-1.5 ${isDone ? 'text-slate-300 line-through' : 'text-slate-700'}`}>
-                        {plan.title}
-                    </div>
+                    <div className={`text-[14px] font-bold tracking-tight truncate leading-none mb-1.5 ${isDone ? 'text-slate-300 line-through' : 'text-slate-700'}`}>{plan.title}</div>
                     <div className="flex items-center gap-2">
                         <div className="text-[11px] text-slate-400 font-bold flex items-center gap-1 opacity-80">
                             <Clock size={11} strokeWidth={3} />
-                            {format(new Date(plan.startDate), 'HH:mm')} - {format(new Date(plan.endDate), 'HH:mm')}
+                            {format(new Date(plan.startDate), 'HH:mm')}
                         </div>
-                        {/* 颜色圆点 */}
                         <div className={`w-1 h-1 rounded-full bg-${plan.color}-400`}></div>
                     </div>
-                </div>
-
-                {/* 右上角状态标签：差异化色彩方案 */}
-                <div className="absolute top-3 right-3">
-                    <span className={`text-[9px] font-black px-1.5 py-0.5 rounded-md flex-shrink-0 uppercase tracking-tighter border transition-colors ${statusInfo.badgeClass}`}>
-                        {statusInfo.label}
-                    </span>
                 </div>
               </div>
             );
@@ -172,25 +158,17 @@ export const TaskSidebar: React.FC<TaskSidebarProps> = ({
         )}
       </div>
 
-      {/* 底部模版区域：压缩内边距 */}
       <div className="border-t border-slate-100 bg-slate-50/30 flex-none p-4">
-        <button 
-            onClick={() => setIsTemplatesExpanded(!isTemplatesExpanded)}
-            className="w-full flex items-center justify-between py-1 hover:bg-white rounded-lg transition-all group mb-3 px-1"
-        >
-            <div className="flex items-center gap-2">
-                <Zap size={12} className="text-amber-500 fill-amber-500" />
-                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">原子模版</span>
-            </div>
+        <button onClick={() => setIsTemplatesExpanded(!isTemplatesExpanded)} className="w-full flex items-center justify-between py-1 hover:bg-white rounded-lg transition-all group mb-3 px-1">
+            <div className="flex items-center gap-2"><Zap size={12} className="text-amber-500 fill-amber-500" /><span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">原子模版</span></div>
             {isTemplatesExpanded ? <ChevronDown size={14} className="text-slate-300" /> : <ChevronUp size={14} className="text-slate-300" />}
         </button>
-
         {isTemplatesExpanded && (
             <div className="grid grid-cols-2 gap-2">
                 {TASK_TEMPLATES.map((template) => (
-                    <div key={template.title} draggable onDragStart={(e) => handleDragStart(e, template)} onClick={() => onQuickAdd(template.title, template.minutes, template.color)} className="flex flex-col p-3 rounded-xl border border-slate-100 bg-white cursor-grab active:cursor-grabbing transition-all hover:border-indigo-200 hover:shadow-lg hover:shadow-indigo-500/5 group">
+                    <div key={template.title} draggable onDragStart={(e) => handleDragStart(e, template)} onClick={() => onQuickAdd(template.title, template.minutes, template.color)} className="flex flex-col p-3 rounded-xl border border-slate-100 bg-white cursor-grab active:cursor-grabbing transition-all hover:border-indigo-200 group">
                         <div className="flex items-center justify-between mb-2">
-                            <div className={`w-7 h-7 flex items-center justify-center rounded-lg bg-${template.color}-50 text-${template.color}-600 group-hover:bg-${template.color}-500 group-hover:text-white transition-all duration-300`}>
+                            <div className={`w-7 h-7 flex items-center justify-center rounded-lg bg-${template.color}-50 text-${template.color}-600 group-hover:bg-${template.color}-500 group-hover:text-white transition-all`}>
                                 <template.icon size={14} />
                             </div>
                             <span className="text-[9px] font-black text-slate-400 bg-slate-50 px-1.5 py-0.5 rounded-md">{template.label}</span>
@@ -203,14 +181,23 @@ export const TaskSidebar: React.FC<TaskSidebarProps> = ({
       </div>
 
       {contextMenu && createPortal(
-        <div className="fixed z-[9999] bg-white/90 backdrop-blur-xl rounded-2xl shadow-2xl border border-slate-200/50 w-44 overflow-hidden p-1.5 animate-in fade-in zoom-in-95 duration-150"
-          style={{ top: Math.min(contextMenu.y, window.innerHeight - 280), left: Math.min(contextMenu.x, window.innerWidth - 190) }}
+        <div className="fixed z-[9999] bg-white/90 backdrop-blur-xl rounded-2xl shadow-2xl border border-slate-200/50 w-48 overflow-hidden p-1.5 animate-in fade-in zoom-in-95 duration-150"
+          style={{ top: Math.min(contextMenu.y, window.innerHeight - 340), left: Math.min(contextMenu.x, window.innerWidth - 200) }}
         >
-            <div className="px-3 py-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider">标记状态</div>
-            <button onClick={(e) => handleToggleStatus(e, contextMenu.plan, PlanStatus.TODO)} className="w-full text-left px-3 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50 flex items-center gap-2.5 rounded-lg transition-colors"><Circle size={14} /> 待办</button>
-            <button onClick={(e) => handleToggleStatus(e, contextMenu.plan, PlanStatus.IN_PROGRESS)} className="w-full text-left px-3 py-2 text-sm font-semibold text-blue-600 hover:bg-blue-50 flex items-center gap-2.5 rounded-lg transition-colors"><PlayCircle size={14} /> 进行中</button>
-            <button onClick={(e) => handleToggleStatus(e, contextMenu.plan, PlanStatus.DONE)} className="w-full text-left px-3 py-2 text-sm font-semibold text-emerald-600 hover:bg-emerald-50 flex items-center gap-2.5 rounded-lg transition-colors"><CheckCircle2 size={14} /> 已完成</button>
+            <div className="px-3 py-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider">复刻与复制</div>
+            <button onClick={() => { onDuplicatePlan(contextMenu.plan.id); setContextMenu(null); }} className="w-full text-left px-3 py-2 text-sm font-semibold text-indigo-600 hover:bg-indigo-50 flex items-center gap-2.5 rounded-lg transition-colors">
+                <Copy size={14} /> 复刻任务
+            </button>
+            <button onClick={() => { 
+                const tomorrow = addDays(new Date(contextMenu.plan.startDate), 1);
+                onDuplicatePlan(contextMenu.plan.id, tomorrow); 
+                setContextMenu(null); 
+            }} className="w-full text-left px-3 py-2 text-sm font-semibold text-blue-600 hover:bg-blue-50 flex items-center gap-2.5 rounded-lg transition-colors">
+                <CalendarPlus size={14} /> 明天继续
+            </button>
             <div className="h-px bg-slate-100 my-1.5 mx-1"></div>
+            <div className="px-3 py-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider">状态标记</div>
+            <button onClick={(e) => handleToggleStatus(e, contextMenu.plan, PlanStatus.DONE)} className="w-full text-left px-3 py-2 text-sm font-semibold text-emerald-600 hover:bg-emerald-50 flex items-center gap-2.5 rounded-lg transition-colors"><CheckCircle2 size={14} /> 已完成</button>
             <button onClick={() => { onDeletePlan(contextMenu.plan.id); setContextMenu(null); }} className="w-full text-left px-3 py-2 text-sm font-semibold text-rose-500 hover:bg-rose-50 flex items-center gap-2.5 rounded-lg transition-colors"><Trash2 size={14} /> 删除计划</button>
         </div>,
         document.body
