@@ -589,32 +589,32 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
         <div ref={menuRef} 
             className="fixed z-[9999] bg-white/90 backdrop-blur-xl rounded-2xl shadow-2xl border border-slate-200/50 p-1.5 w-48 animate-in fade-in zoom-in-95 duration-150 origin-top-left" 
             style={{ 
-                top: Math.min(contextMenu.y, window.innerHeight - 380), 
+                top: Math.min(contextMenu.y, window.innerHeight - (contextMenu.plan ? 300 : 80)), 
                 left: Math.min(contextMenu.x, window.innerWidth - 200) 
             }}
         >
             {contextMenu.plan ? (
                 <>
                     <div className="px-3 py-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider">日程管理</div>
-                    <button onClick={() => { onDuplicatePlan(contextMenu.plan!.id); setContextMenu(null); }} className="w-full flex items-center gap-2.5 p-2 rounded-lg hover:bg-indigo-50 text-indigo-600 font-bold text-xs transition-all">
+                    <button onClick={() => { onDuplicatePlan(contextMenu.plan!.id); setContextMenu(null); }} className="w-full text-left flex items-center gap-2.5 p-2 rounded-lg hover:bg-indigo-50 text-indigo-600 font-bold text-xs transition-all">
                         <Copy size={14} /> 复制日程 (复刻)
                     </button>
                     <button onClick={() => { 
                         const tomorrow = addDays(new Date(contextMenu.plan!.startDate), 1);
                         onDuplicatePlan(contextMenu.plan!.id, tomorrow); 
                         setContextMenu(null); 
-                    }} className="w-full flex items-center gap-2.5 p-2 rounded-lg hover:bg-blue-50 text-blue-600 font-bold text-xs transition-all">
+                    }} className="w-full text-left flex items-center gap-2.5 p-2 rounded-lg hover:bg-blue-50 text-blue-600 font-bold text-xs transition-all">
                         <CalendarPlus size={14} /> 明天继续 (复制到明天)
                     </button>
                     
                     <div className="h-px bg-slate-100 my-1.5 mx-1"></div>
                     <div className="px-3 py-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider">状态 (当前: {STATUS_LABELS[contextMenu.plan.status]})</div>
                     {contextMenu.plan.status !== PlanStatus.DONE && (
-                      <button onClick={() => { onPlanUpdate({...contextMenu.plan!, status: PlanStatus.DONE}); setContextMenu(null); }} className="w-full flex items-center gap-2.5 p-2 rounded-lg hover:bg-emerald-50 text-emerald-600 font-bold text-xs transition-all">
+                      <button onClick={() => { onPlanUpdate({...contextMenu.plan!, status: PlanStatus.DONE}); setContextMenu(null); }} className="w-full text-left flex items-center gap-2.5 p-2 rounded-lg hover:bg-emerald-50 text-emerald-600 font-bold text-xs transition-all">
                           <CheckCircle2 size={14} /> 标记完成
                       </button>
                     )}
-                    <button onClick={() => { onDeletePlan(contextMenu.plan!.id); setContextMenu(null); }} className="w-full flex items-center gap-2.5 p-2 rounded-lg hover:bg-rose-50 text-rose-500 font-bold text-xs transition-all">
+                    <button onClick={() => { onDeletePlan(contextMenu.plan!.id); setContextMenu(null); }} className="w-full text-left flex items-center gap-2.5 p-2 rounded-lg hover:bg-rose-50 text-rose-500 font-bold text-xs transition-all">
                         <Trash2 size={14} /> 删除日程
                     </button>
                 </>

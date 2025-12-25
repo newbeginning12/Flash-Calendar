@@ -1,5 +1,4 @@
 
-
 export enum PlanStatus {
   TODO = 'TODO',
   IN_PROGRESS = 'IN_PROGRESS',
@@ -62,7 +61,35 @@ export interface WeeklyReportData {
   risks: string;
 }
 
+export interface MonthlyPattern {
+  id: string;
+  label: string;
+  description: string;
+  type: 'warning' | 'positive' | 'info';
+}
+
+export interface MonthlyAnalysisData {
+  id?: string;
+  timestamp: string; // 记录生成时间
+  grade: 'S' | 'A' | 'B' | 'C' | 'D' | 'E' | 'F';
+  gradeTitle: string;
+  healthScore: number; // 0-100
+  chaosLevel: number; // 0-100, based on data quality
+  patterns: MonthlyPattern[];
+  candidAdvice: {
+    truth: string;
+    action: string;
+  }[];
+  metrics: {
+    taggedRatio: number;
+    descriptionRate: number;
+    deepWorkRatio: number; // Plans > 90min
+  };
+}
+
 export type AIProcessingResult = 
   | { type: 'CREATE_PLAN'; data: Partial<WorkPlan> }
   | { type: 'ANALYSIS'; data: WeeklyReportData }
+  | { type: 'MONTH_REVIEW'; data: MonthlyAnalysisData }
+  | { type: 'UNSUPPORTED'; message: string }
   | null;

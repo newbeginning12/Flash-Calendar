@@ -1,9 +1,10 @@
 
-import { WorkPlan, AISettings } from '../types';
+import { WorkPlan, AISettings, MonthlyAnalysisData } from '../types';
 
 const DB_NAME = 'FlashCalendarDB';
-const DB_VERSION = 1;
+const DB_VERSION = 2; // 升级版本以增加新 store
 const STORE_NAME = 'plans';
+const REPORT_STORE = 'monthly_reports';
 
 export interface BackupData {
   version: number;
@@ -30,6 +31,9 @@ export const storageService = {
         if (!db.objectStoreNames.contains(STORE_NAME)) {
           db.createObjectStore(STORE_NAME, { keyPath: 'id' });
         }
+        if (!db.objectStoreNames.contains(REPORT_STORE)) {
+          db.createObjectStore(REPORT_STORE, { keyPath: 'id' });
+        }
       };
     });
   },
@@ -53,33 +57,56 @@ export const storageService = {
     });
   },
 
-  // Save all plans (Overwrite strategy for simplicity and state sync)
   async savePlans(plans: WorkPlan[]): Promise<void> {
     return new Promise((resolve, reject) => {
        const request = indexedDB.open(DB_NAME, DB_VERSION);
-       
        request.onsuccess = () => {
           const db = request.result;
           const transaction = db.transaction(STORE_NAME, 'readwrite');
           const store = transaction.objectStore(STORE_NAME);
-          
-          // Clear existing data first to handle deletions correctly
           const clearRequest = store.clear();
-          
           clearRequest.onsuccess = () => {
-              // Add all current plans
               plans.forEach(plan => store.put(plan));
           };
-          
           transaction.oncomplete = () => resolve();
-          transaction.onerror = () => reject(transaction.error);
        };
-       
        request.onerror = () => reject(request.error);
     });
   },
+
+  // 月度报告持久化
+  async saveMonthlyReport(report: MonthlyAnalysisData): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const request = indexedDB.open(DB_NAME, DB_VERSION);
+      request.onsuccess = () => {
+        const db = request.result;
+        const transaction = db.transaction(REPORT_STORE, 'readwrite');
+        const store = transaction.objectStore(REPORT_STORE);
+        if (!report.id) report.id = crypto.randomUUID();
+        store.put(report);
+        transaction.oncomplete = () => resolve();
+      };
+      request.onerror = () => reject(request.error);
+    });
+  },
+
+  async getAllMonthlyReports(): Promise<MonthlyAnalysisData[]> {
+    return new Promise((resolve, reject) => {
+      const request = indexedDB.open(DB_NAME, DB_VERSION);
+      request.onsuccess = () => {
+        const db = request.result;
+        const transaction = db.transaction(REPORT_STORE, 'readonly');
+        const store = transaction.objectStore(REPORT_STORE);
+        const getAllRequest = store.getAll();
+        getAllRequest.onsuccess = () => {
+          const results = getAllRequest.result || [];
+          resolve(results.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()));
+        };
+      };
+      request.onerror = () => reject(request.error);
+    });
+  },
   
-  // Export data to JSON file
   exportData(plans: WorkPlan[], settings: AISettings) {
       const data: BackupData = {
           version: 1,
@@ -98,7 +125,6 @@ export const storageService = {
       URL.revokeObjectURL(url);
   },
   
-  // Import data from JSON file
   async importData(file: File): Promise<BackupData | null> {
       return new Promise((resolve) => {
           const reader = new FileReader();
@@ -106,15 +132,12 @@ export const storageService = {
               try {
                   const text = e.target?.result as string;
                   const data = JSON.parse(text);
-                  // Basic validation
                   if (data && Array.isArray(data.plans)) {
                       resolve(data as BackupData);
                   } else {
-                      console.error("Invalid backup file format");
                       resolve(null);
                   }
               } catch (err) {
-                  console.error('Import failed', err);
                   resolve(null);
               }
           };

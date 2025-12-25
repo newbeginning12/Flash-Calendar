@@ -2,10 +2,10 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { 
   User, Plus, Bell, ChevronLeft, ChevronRight, Calendar as CalendarIcon, 
-  Settings, PanelLeft, Sparkles, Search, X as CloseIcon, Clock, Tag, PlusCircle
+  Settings, PanelLeft, Sparkles, Search, X as CloseIcon, Clock, Tag, PlusCircle, LayoutDashboard
 } from 'lucide-react';
 import { 
-  WorkPlan, AISettings, AIProvider, AppNotification, PlanStatus, WeeklyReportData
+  WorkPlan, AISettings, AIProvider, AppNotification, PlanStatus, WeeklyReportData, MonthlyAnalysisData
 } from './types';
 import { WeeklyCalendar } from './components/WeeklyCalendar';
 import { TaskSidebar } from './components/TaskSidebar';
@@ -17,11 +17,12 @@ import { AppIcon } from './components/AppIcon';
 import { FlashCommand } from './components/FlashCommand';
 import { NotificationCenter } from './components/NotificationCenter';
 import { WeeklyReportModal } from './components/WeeklyReportModal';
+import { MonthlyReviewModal } from './components/MonthlyReviewModal';
 import { 
-  processUserIntent, generateSmartSuggestions, DEFAULT_MODEL, SmartSuggestion
+  processUserIntent, generateSmartSuggestions, DEFAULT_MODEL, SmartSuggestion, processMonthlyReview, processWeeklyReport
 } from './services/aiService';
 import { storageService, BackupData } from './services/storageService';
-import { format, addDays, isSameDay, addMinutes, endOfDay, differenceInMinutes, isAfter } from 'date-fns';
+import { format, addDays, isSameDay, addMinutes, endOfDay, differenceInMinutes, isAfter, startOfWeek, endOfWeek, startOfMonth, endOfMonth, isWithinInterval } from 'date-fns';
 
 const MIN_SIDEBAR_WIDTH = 240;
 const DEFAULT_SIDEBAR_WIDTH = 280;
@@ -39,10 +40,22 @@ export const App: React.FC = () => {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isDatePickerOpen, setIsDatePickerOpen] = useState(false);
   const [smartSuggestions, setSmartSuggestions] = useState<SmartSuggestion[]>([]);
-  const [isProcessingAI, setIsProcessingAI] = useState(false);
+  
+  // 拆分加载状态以实现并发和独立反馈
+  const [isProcessingInput, setIsProcessingInput] = useState(false);
+  const [isProcessingReport, setIsProcessingReport] = useState(false);
+  const [isProcessingReview, setIsProcessingReview] = useState(false);
+
   const abortControllerRef = useRef<AbortController | null>(null);
+  
   const [reportData, setReportData] = useState<WeeklyReportData | null>(null);
   const [isReportModalOpen, setIsReportModalOpen] = useState(false);
+  
+  const [monthlyData, setMonthlyData] = useState<MonthlyAnalysisData | null>(null);
+  const [isMonthlyModalOpen, setIsMonthlyModalOpen] = useState(false);
+
+  const [unsupportedMessage, setUnsupportedMessage] = useState<string | null>(null);
+
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [isNotificationOpen, setIsNotificationOpen] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_SIDEBAR_WIDTH);
@@ -52,41 +65,20 @@ export const App: React.FC = () => {
   const sidebarRef = useRef<HTMLDivElement>(null);
   const lastCheckedOverdueRef = useRef<Set<string>>(new Set());
 
-  // --- 智能通知引擎 ---
   const addNotification = useCallback((notif: Omit<AppNotification, 'id' | 'timestamp' | 'read'>) => {
-    const newNotif: AppNotification = {
-      ...notif,
-      id: crypto.randomUUID(),
-      timestamp: new Date().toISOString(),
-      read: false
-    };
+    const newNotif: AppNotification = { ...notif, id: crypto.randomUUID(), timestamp: new Date().toISOString(), read: false };
     setNotifications(prev => [newNotif, ...prev].slice(0, 50));
-    
-    // 如果不是静默通知，可以考虑在这里增加简单的 Toast 逻辑
-    console.log(`[闪历通知] ${notif.title}: ${notif.message}`);
   }, []);
 
-  // 任务逾期自动检测轮询 (每分钟一次)
   useEffect(() => {
     const checkOverdue = () => {
       const now = new Date();
-      const overduePlans = plans.filter(p => 
-        p.status !== PlanStatus.DONE && 
-        isAfter(now, new Date(p.endDate)) &&
-        !lastCheckedOverdueRef.current.has(p.id)
-      );
-
+      const overduePlans = plans.filter(p => p.status !== PlanStatus.DONE && isAfter(now, new Date(p.endDate)) && !lastCheckedOverdueRef.current.has(p.id));
       overduePlans.forEach(p => {
-        addNotification({
-          type: 'OVERDUE',
-          title: '任务已逾期',
-          message: `计划 “${p.title}” 已超过结束时间，请及时处理。`,
-          planId: p.id
-        });
+        addNotification({ type: 'OVERDUE', title: '任务已逾期', message: `计划 “${p.title}” 已超过结束时间，请及时处理。`, planId: p.id });
         lastCheckedOverdueRef.current.add(p.id);
       });
     };
-
     checkOverdue();
     const interval = setInterval(checkOverdue, 60000);
     return () => clearInterval(interval);
@@ -104,16 +96,78 @@ export const App: React.FC = () => {
         if (savedWidth) setSidebarWidth(parseInt(savedWidth));
         const savedState = localStorage.getItem('zhihui_sidebar_open');
         if (savedState) setIsSidebarOpen(savedState === 'true');
-        
-        addNotification({
-          type: 'SYSTEM',
-          title: '欢迎回来',
-          message: `今日共有 ${storedPlans.filter(p => isSameDay(new Date(p.startDate), new Date())).length} 项日程安排。`
-        });
       } catch (e) { console.error("Initialization failed", e); }
     };
     init();
   }, []);
+
+  const handleWeeklyReport = async () => {
+    if (isProcessingReport) return;
+    
+    // 数据校验：检查当前选择的周是否有日程
+    const weekStart = startOfWeek(currentDate, { weekStartsOn: 1 });
+    const weekEnd = endOfWeek(currentDate, { weekStartsOn: 1 });
+    const weekPlansCount = plans.filter(p => {
+        const d = new Date(p.startDate);
+        return isWithinInterval(d, { start: weekStart, end: weekEnd });
+    }).length;
+
+    if (weekPlansCount === 0) {
+        setUnsupportedMessage("当前选择的周内暂无日程数据，无法生成周报。");
+        setTimeout(() => setUnsupportedMessage(null), 3000);
+        return;
+    }
+
+    setIsProcessingReport(true);
+    try {
+        const result = await processWeeklyReport(plans, settings);
+        if (result) {
+            setReportData(result);
+            setIsReportModalOpen(true);
+        }
+    } catch (e) {
+        console.error(e);
+    } finally {
+        setIsProcessingReport(false);
+    }
+  };
+
+  const handleMonthlyReview = async () => {
+    if (isProcessingReview) return;
+
+    // 数据校验：检查当前选择的月是否有日程
+    const monthStart = startOfMonth(currentDate);
+    const monthEnd = endOfMonth(currentDate);
+    const monthPlansCount = plans.filter(p => {
+        const d = new Date(p.startDate);
+        return isWithinInterval(d, { start: monthStart, end: monthEnd });
+    }).length;
+
+    if (monthPlansCount === 0) {
+        setUnsupportedMessage("当前选择的月份内暂无日程数据，无法进行镜像诊断。");
+        setTimeout(() => setUnsupportedMessage(null), 3000);
+        return;
+    }
+
+    setIsProcessingReview(true);
+    try {
+      const result = await processMonthlyReview(plans, settings);
+      if (result && result.type === 'MONTH_REVIEW') {
+        const report = {
+            ...result.data,
+            id: crypto.randomUUID(),
+            timestamp: new Date().toISOString()
+        };
+        await storageService.saveMonthlyReport(report);
+        setMonthlyData(report);
+        setIsMonthlyModalOpen(true);
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsProcessingReview(false);
+    }
+  };
 
   const filteredResults = useMemo(() => {
     if (!searchTerm.trim()) return [];
@@ -133,204 +187,51 @@ export const App: React.FC = () => {
     setTimeout(() => setTargetPlanId(null), 2500);
   };
 
-  const savePlansToStorage = async (newPlans: WorkPlan[]) => {
-      setPlans(newPlans);
-      await storageService.savePlans(newPlans);
-  };
-
-  const handleSlotClick = (date: Date) => {
-    const newPlan: WorkPlan = {
-      id: crypto.randomUUID(),
-      title: '新建日程',
-      startDate: date.toISOString(),
-      endDate: addMinutes(date, 60).toISOString(),
-      status: PlanStatus.TODO,
-      tags: [],
-      color: 'blue',
-      links: []
-    };
-    setEditingPlan(newPlan);
-    setIsPlanModalOpen(true);
-  };
-
-  const handleDuplicatePlan = async (planId: string, targetDate?: Date) => {
-    const sourcePlan = plans.find(p => p.id === planId);
-    if (!sourcePlan) return;
-
-    let start = new Date(sourcePlan.startDate);
-    let end = new Date(sourcePlan.endDate);
-    const duration = differenceInMinutes(end, start);
-
-    if (targetDate) {
-      start = targetDate;
-      end = addMinutes(start, duration);
-    }
-
-    const newPlan: WorkPlan = {
-      ...sourcePlan,
-      id: crypto.randomUUID(),
-      startDate: start.toISOString(),
-      endDate: end.toISOString(),
-      status: PlanStatus.TODO
-    };
-
-    if (targetDate) {
-      await savePlansToStorage([...plans, newPlan]);
-      setTargetPlanId(newPlan.id);
-      setTimeout(() => setTargetPlanId(null), 2500);
-    } else {
-      setEditingPlan(newPlan);
-      setIsPlanModalOpen(true);
-    }
-  };
-
-  const handleQuickAdd = async (title: string, duration: number, color: string) => {
-      const today = new Date();
-      const dayPlans = plans
-        .filter(p => isSameDay(new Date(p.startDate), today))
-        .sort((a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime());
-      
-      let cursor = new Date();
-      cursor.setMinutes(Math.ceil(cursor.getMinutes() / 15) * 15, 0, 0);
-      const dayEnd = endOfDay(today);
-      let foundSlot: Date | null = null;
-      while (addMinutes(cursor, duration) <= dayEnd) {
-          const slotEnd = addMinutes(cursor, duration);
-          const hasConflict = dayPlans.some(p => {
-              const pStart = new Date(p.startDate);
-              const pEnd = new Date(p.endDate);
-              return (cursor < pEnd && slotEnd > pStart);
-          });
-          if (!hasConflict) { foundSlot = new Date(cursor); break; }
-          cursor = addMinutes(cursor, 15);
-      }
-      const targetDate = foundSlot || cursor;
-      const newPlan: WorkPlan = { id: crypto.randomUUID(), title, startDate: targetDate.toISOString(), endDate: addMinutes(targetDate, duration).toISOString(), status: PlanStatus.TODO, tags: ['快速安排'], color, links: [] };
-      
-      await savePlansToStorage([...plans, newPlan]);
-
-      setCurrentDate(targetDate);
-      setTargetPlanId(newPlan.id);
-      setTimeout(() => setTargetPlanId(null), 2500);
-  };
-
-  const handlePlanClick = (plan: WorkPlan) => { setEditingPlan(plan); setIsPlanModalOpen(true); };
-
   const handleSavePlan = async (plan: WorkPlan) => {
     const exists = plans.some(p => p.id === plan.id);
     const newPlans = exists ? plans.map(p => p.id === plan.id ? plan : p) : [...plans, plan];
-    await savePlansToStorage(newPlans);
-    
-    const planDate = new Date(plan.startDate);
-    setCurrentDate(planDate);
-    setTargetPlanId(plan.id);
-    setTimeout(() => setTargetPlanId(null), 2500);
-
-    setIsPlanModalOpen(false);
-    setEditingPlan(null);
-  };
-
-  const handleDeletePlan = async (id: string) => {
-    const newPlans = plans.filter(p => p.id !== id);
-    await savePlansToStorage(newPlans);
-    setIsPlanModalOpen(false);
-  };
-  
-  const handleUpdatePlan = async (plan: WorkPlan) => {
-    const newPlans = plans.map(p => p.id === plan.id ? plan : p);
-    await savePlansToStorage(newPlans);
-  };
-
-  const handleImport = async (data: BackupData) => {
-    if (data.plans) {
-      await savePlansToStorage(data.plans);
-    }
-    if (data.settings) {
-      setSettings(data.settings);
-      localStorage.setItem('zhihui_settings', JSON.stringify(data.settings));
-    }
-    setIsSettingsOpen(false);
-    addNotification({
-      type: 'SYSTEM',
-      title: '导入成功',
-      message: `已成功从备份中恢复 ${data.plans.length} 条日程安排。`
-    });
-  };
-
-  const handleStopAI = () => {
-      if (abortControllerRef.current) {
-          abortControllerRef.current.abort();
-          abortControllerRef.current = null;
-      }
-      setIsProcessingAI(false);
+    setPlans(newPlans);
+    await storageService.savePlans(newPlans);
+    setCurrentDate(new Date(plan.startDate)); setTargetPlanId(plan.id); setTimeout(() => setTargetPlanId(null), 2500);
+    setIsPlanModalOpen(false); setEditingPlan(null);
   };
 
   const handleSmartInput = async (input: string) => {
-      if (isProcessingAI) return;
-      setIsProcessingAI(true);
-      const controller = new AbortController();
-      abortControllerRef.current = controller;
+      if (isProcessingInput) return;
+      setUnsupportedMessage(null);
+      setIsProcessingInput(true);
+      const controller = new AbortController(); abortControllerRef.current = controller;
       try {
           const result = await processUserIntent(input, plans, settings, controller.signal);
           if (controller.signal.aborted) return;
           if (result) {
               if (result.type === 'CREATE_PLAN' && result.data) {
                   const basePlan: WorkPlan = { id: crypto.randomUUID(), title: '新建日程', startDate: new Date().toISOString(), endDate: new Date(Date.now() + 3600000).toISOString(), status: PlanStatus.TODO, tags: [], color: 'blue', links: [], ...result.data };
-                  setEditingPlan(basePlan as WorkPlan);
-                  setIsPlanModalOpen(true);
-              } else if (result.type === 'ANALYSIS' && result.data) {
-                  setReportData(result.data);
-                  setIsReportModalOpen(true);
-                  addNotification({
-                    type: 'SYSTEM',
-                    title: '周报生成成功',
-                    message: 'AI 已基于您的本周日程完成了工作总结，请查看。'
-                  });
+                  setEditingPlan(basePlan as WorkPlan); setIsPlanModalOpen(true);
+              } else if (result.type === 'UNSUPPORTED') {
+                  setUnsupportedMessage(result.message);
+                  setTimeout(() => setUnsupportedMessage(null), 4000);
               }
           }
-      } catch (error: any) { 
-          console.error("AI Error:", error); 
-      } finally { 
-          setIsProcessingAI(false); 
-      }
+      } catch (error: any) { console.error("AI Error:", error); } finally { setIsProcessingInput(false); }
   };
   
   const handleSuggestionClick = async (suggestion: SmartSuggestion) => {
-      const newPlan: WorkPlan = { id: crypto.randomUUID(), title: suggestion.planData.title, description: suggestion.planData.description, startDate: suggestion.planData.startDate, endDate: suggestion.planData.endDate, status: PlanStatus.TODO, tags: suggestion.planData.tags || [], color: 'blue', links: [] };
-      setEditingPlan(newPlan);
+      setEditingPlan({ id: crypto.randomUUID(), title: suggestion.planData.title, description: suggestion.planData.description, startDate: suggestion.planData.startDate, endDate: suggestion.planData.endDate, status: PlanStatus.TODO, tags: suggestion.planData.tags || [], color: 'blue', links: [] });
       setIsPlanModalOpen(true);
   };
 
   const resize = useCallback((e: MouseEvent) => {
     if (isResizing) {
       const newWidth = e.clientX;
-      if (newWidth >= MIN_SIDEBAR_WIDTH && newWidth <= 600) {
-        setSidebarWidth(newWidth);
-        localStorage.setItem('zhihui_sidebar_width', newWidth.toString());
-      }
+      if (newWidth >= MIN_SIDEBAR_WIDTH && newWidth <= 600) { setSidebarWidth(newWidth); localStorage.setItem('zhihui_sidebar_width', newWidth.toString()); }
     }
   }, [isResizing]);
 
   useEffect(() => {
-    window.addEventListener("mousemove", resize);
-    window.addEventListener("mouseup", () => setIsResizing(false));
-    return () => { 
-      window.removeEventListener("mousemove", resize); 
-      window.removeEventListener("mouseup", () => setIsResizing(false)); 
-    };
+    window.addEventListener("mousemove", resize); window.addEventListener("mouseup", () => setIsResizing(false));
+    return () => { window.removeEventListener("mousemove", resize); window.removeEventListener("mouseup", () => setIsResizing(false)); };
   }, [resize]);
-
-  const handleNotificationItemClick = (n: AppNotification) => {
-    if (n.planId) {
-      const plan = plans.find(p => p.id === n.planId);
-      if (plan) {
-        handleResultClick(plan);
-      }
-    }
-    // 标记已读
-    setNotifications(prev => prev.map(notif => notif.id === n.id ? { ...notif, read: true } : notif));
-    setIsNotificationOpen(false);
-  };
 
   return (
     <div className={`flex h-screen w-full bg-slate-50 text-slate-900 font-sans overflow-hidden relative ${isResizing ? 'cursor-col-resize select-none' : ''}`}>
@@ -339,18 +240,36 @@ export const App: React.FC = () => {
             <TaskSidebar 
               currentDate={currentDate} 
               plans={plans} 
-              onPlanClick={handlePlanClick} 
-              onPlanUpdate={handleUpdatePlan} 
-              onDeletePlan={handleDeletePlan} 
-              onDuplicatePlan={handleDuplicatePlan}
-              onCreateNew={() => handleSlotClick(new Date())} 
-              onQuickAdd={handleQuickAdd}
+              onPlanClick={(p) => { setEditingPlan(p); setIsPlanModalOpen(true); }} 
+              onPlanUpdate={async (p) => { const np = plans.map(x => x.id === p.id ? p : x); setPlans(np); await storageService.savePlans(np); }} 
+              onDeletePlan={async (id) => { const np = plans.filter(x => x.id !== id); setPlans(np); await storageService.savePlans(np); setIsPlanModalOpen(false); }} 
+              onDuplicatePlan={async (id, td) => {
+                const s = plans.find(x => x.id === id); if(!s) return;
+                const d = differenceInMinutes(new Date(s.endDate), new Date(s.startDate));
+                const start = td || new Date(); const end = addMinutes(start, d);
+                const np = { ...s, id: crypto.randomUUID(), startDate: start.toISOString(), endDate: end.toISOString(), status: PlanStatus.TODO };
+                const nps = [...plans, np]; setPlans(nps); await storageService.savePlans(nps);
+                if(td) { setTargetPlanId(np.id); setTimeout(() => setTargetPlanId(null), 2500); } else { setEditingPlan(np); setIsPlanModalOpen(true); }
+              }}
+              onCreateNew={() => {
+                const d = new Date(); const np: WorkPlan = { id: crypto.randomUUID(), title: '新建日程', startDate: d.toISOString(), endDate: addMinutes(d, 60).toISOString(), status: PlanStatus.TODO, tags: [], color: 'blue', links: [] };
+                setEditingPlan(np); setIsPlanModalOpen(true);
+              }} 
+              onQuickAdd={async (t, dur, c) => {
+                const d = new Date(); const np: WorkPlan = { id: crypto.randomUUID(), title: t, startDate: d.toISOString(), endDate: addMinutes(d, dur).toISOString(), status: PlanStatus.TODO, tags: ['快速'], color: c, links: [] };
+                const nps = [...plans, np]; setPlans(nps); await storageService.savePlans(nps);
+                setTargetPlanId(np.id); setTimeout(() => setTargetPlanId(null), 2500);
+              }}
               onJumpToToday={() => setCurrentDate(new Date())}
+              onMonthlyReview={handleMonthlyReview}
+              onWeeklyReport={handleWeeklyReport}
+              isProcessingReport={isProcessingReport}
+              isProcessingReview={isProcessingReview}
             />
           </div>
        </div>
 
-       {isSidebarOpen && <div className="hidden lg:block w-1 hover:w-1.5 h-full cursor-col-resize hover:bg-indigo-500/30 active:bg-indigo-500 active:w-1.5 transition-all z-40 flex-shrink-0 -ml-0.5" onMouseDown={() => setIsResizing(true)} />}
+       {isSidebarOpen && <div className="hidden lg:block w-1 h-full cursor-col-resize hover:bg-indigo-500/30 active:bg-indigo-500 transition-all z-40 flex-shrink-0 -ml-0.5" onMouseDown={() => setIsResizing(true)} />}
 
        <div className="flex-1 flex flex-col min-w-0 h-full relative bg-slate-50">
            <header className="h-16 flex items-center justify-between px-6 bg-white/80 backdrop-blur-xl border-b border-slate-200/60 flex-shrink-0 z-[70] sticky top-0 shadow-sm">
@@ -377,23 +296,28 @@ export const App: React.FC = () => {
                     <div className="w-[260px] lg:w-[380px] transition-all duration-300 ml-auto">
                         <SmartInput 
                             onSubmit={handleSmartInput} 
-                            onStop={handleStopAI} 
+                            onStop={() => { abortControllerRef.current?.abort(); setIsProcessingInput(false); }} 
                             onSuggestionClick={handleSuggestionClick} 
-                            isProcessing={isProcessingAI} 
+                            isProcessing={isProcessingInput} 
                             suggestions={smartSuggestions}
                             layout="header"
                             searchValue={searchTerm}
                             onSearchChange={setSearchTerm}
                             searchResults={filteredResults}
                             onSearchResultClick={handleResultClick}
+                            unsupportedMessage={unsupportedMessage}
+                            onClearUnsupported={() => setUnsupportedMessage(null)}
                         />
                     </div>
 
                     <button 
-                        onClick={() => handleSlotClick(new Date())}
+                        onClick={() => {
+                          const d = new Date(); const np: WorkPlan = { id: crypto.randomUUID(), title: '新建日程', startDate: d.toISOString(), endDate: addMinutes(d, 60).toISOString(), status: PlanStatus.TODO, tags: [], color: 'blue', links: [] };
+                          setEditingPlan(np); setIsPlanModalOpen(true);
+                        }}
                         className="h-9 flex items-center justify-center gap-2 px-4 bg-slate-900 hover:bg-black text-white rounded-xl shadow-md active:scale-95 transition-all group whitespace-nowrap flex-shrink-0"
                     >
-                        <PlusCircle size={15} className="group-hover:rotate-90 transition-transform duration-300" />
+                        <PlusCircle size={15} />
                         <span className="text-sm font-bold tracking-tight">新建日程</span>
                     </button>
 
@@ -403,19 +327,9 @@ export const App: React.FC = () => {
                         <div className="relative">
                             <button onClick={() => setIsNotificationOpen(!isNotificationOpen)} className="p-2 text-slate-400 hover:text-slate-800 hover:bg-slate-100 rounded-full transition-colors relative">
                                 <Bell size={20} />
-                                {notifications.some(n => !n.read) && (
-                                    <span className="absolute top-2 right-2 w-2 h-2 bg-rose-500 rounded-full border border-white animate-pulse"></span>
-                                )}
+                                {notifications.some(n => !n.read) && <span className="absolute top-2 right-2 w-2 h-2 bg-rose-500 rounded-full border border-white animate-pulse"></span>}
                             </button>
-                            <NotificationCenter 
-                                isOpen={isNotificationOpen} 
-                                onClose={() => setIsNotificationOpen(false)} 
-                                notifications={notifications} 
-                                onMarkRead={(id) => setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true } : n))} 
-                                onClearAll={() => setNotifications([])} 
-                                onDelete={(id) => setNotifications(prev => prev.filter(n => n.id !== id))} 
-                                onItemClick={handleNotificationItemClick} 
-                            />
+                            <NotificationCenter isOpen={isNotificationOpen} onClose={() => setIsNotificationOpen(false)} notifications={notifications} onMarkRead={(id) => setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true } : n))} onClearAll={() => setNotifications([])} onDelete={(id) => setNotifications(prev => prev.filter(n => n.id !== id))} onItemClick={(n) => { if(n.planId) { const p = plans.find(x => x.id === n.planId); if(p) handleResultClick(p); } setIsNotificationOpen(false); }} />
                         </div>
                         <button onClick={() => setIsSettingsOpen(true)} className="p-2 text-slate-400 hover:text-slate-800 hover:bg-slate-100 rounded-full transition-colors"><Settings size={20} /></button>
                     </div>
@@ -423,37 +337,22 @@ export const App: React.FC = () => {
            </header>
 
            <div className="flex-1 overflow-hidden relative p-4">
-              <WeeklyCalendar 
-                currentDate={currentDate} 
-                plans={plans} 
-                searchTerm={searchTerm}
-                targetPlanId={targetPlanId}
-                onPlanClick={handlePlanClick} 
-                onSlotClick={handleSlotClick} 
-                onPlanUpdate={handleUpdatePlan} 
-                onDuplicatePlan={handleDuplicatePlan}
-                onDateSelect={setCurrentDate} 
-                onDeletePlan={handleDeletePlan} 
-                onDragCreate={(startDate, duration, title, color, tags) => {
-                  const newPlan: WorkPlan = { id: crypto.randomUUID(), title: title || '新建日程', startDate: startDate.toISOString(), endDate: addMinutes(startDate, duration).toISOString(), status: PlanStatus.TODO, tags: tags || [], color: color || 'blue', links: [] };
-                  setEditingPlan(newPlan);
-                  setIsPlanModalOpen(true);
-              }} />
+              <WeeklyCalendar currentDate={currentDate} plans={plans} searchTerm={searchTerm} targetPlanId={targetPlanId} onPlanClick={(p) => { setEditingPlan(p); setIsPlanModalOpen(true); }} onSlotClick={(d) => { const np: WorkPlan = { id: crypto.randomUUID(), title: '新建日程', startDate: d.toISOString(), endDate: addMinutes(d, 60).toISOString(), status: PlanStatus.TODO, tags: [], color: 'blue', links: [] }; setEditingPlan(np); setIsPlanModalOpen(true); }} onPlanUpdate={async (p) => { const np = plans.map(x => x.id === p.id ? p : x); setPlans(np); await storageService.savePlans(np); }} onDuplicatePlan={async (id, td) => {
+                const s = plans.find(x => x.id === id); if(!s) return;
+                const d = differenceInMinutes(new Date(s.endDate), new Date(s.startDate));
+                const start = td || new Date(); const end = addMinutes(start, d);
+                const np = { ...s, id: crypto.randomUUID(), startDate: start.toISOString(), endDate: end.toISOString(), status: PlanStatus.TODO };
+                const nps = [...plans, np]; setPlans(nps); await storageService.savePlans(nps);
+                if(td) { setTargetPlanId(np.id); setTimeout(() => setTargetPlanId(null), 2500); } else { setEditingPlan(np); setIsPlanModalOpen(true); }
+              }} onDateSelect={setCurrentDate} onDeletePlan={async (id) => { const np = plans.filter(x => x.id !== id); setPlans(np); await storageService.savePlans(np); setIsPlanModalOpen(false); }} onDragCreate={(startDate, duration, title, color, tags) => { const newPlan: WorkPlan = { id: crypto.randomUUID(), title: title || '新建日程', startDate: startDate.toISOString(), endDate: addMinutes(startDate, duration).toISOString(), status: PlanStatus.TODO, tags: tags || [], color: color || 'blue', links: [] }; setEditingPlan(newPlan); setIsPlanModalOpen(true); }} />
            </div>
        </div>
 
-       <PlanModal plan={editingPlan} isOpen={isPlanModalOpen} onClose={() => setIsPlanModalOpen(false)} onSave={handleSavePlan} onDelete={handleDeletePlan} />
-       <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} settings={settings} onSave={(s) => { setSettings(s); localStorage.setItem('zhihui_settings', JSON.stringify(s)); setIsSettingsOpen(false); }} onExport={() => storageService.exportData(plans, settings)} onImport={handleImport} />
+       <PlanModal plan={editingPlan} isOpen={isPlanModalOpen} onClose={() => setIsPlanModalOpen(false)} onSave={handleSavePlan} onDelete={async (id) => { const np = plans.filter(x => x.id !== id); setPlans(np); await storageService.savePlans(np); setIsPlanModalOpen(false); }} />
+       <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} settings={settings} onSave={(s) => { setSettings(s); localStorage.setItem('zhihui_settings', JSON.stringify(s)); setIsSettingsOpen(false); }} onExport={() => storageService.exportData(plans, settings)} onImport={async (d) => { if (d.plans) { setPlans(d.plans); await storageService.savePlans(d.plans); } if (d.settings) { setSettings(d.settings); localStorage.setItem('zhihui_settings', JSON.stringify(d.settings)); } setIsSettingsOpen(false); }} />
        <WeeklyReportModal isOpen={isReportModalOpen} onClose={() => setIsReportModalOpen(false)} data={reportData} />
-       <FlashCommand 
-          plans={plans} 
-          settings={settings} 
-          onPlanCreated={handleSavePlan} 
-          onAnalysisCreated={(data) => {
-            setReportData(data);
-            setIsReportModalOpen(true);
-          }}
-       />
+       <MonthlyReviewModal isOpen={isMonthlyModalOpen} onClose={() => setIsMonthlyModalOpen(false)} data={monthlyData} />
+       <FlashCommand plans={plans} settings={settings} onPlanCreated={handleSavePlan} onAnalysisCreated={(data) => { setReportData(data); setIsReportModalOpen(true); }} />
     </div>
   );
 };
