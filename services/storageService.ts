@@ -2,7 +2,7 @@
 import { WorkPlan, AISettings, MonthlyAnalysisData } from '../types';
 
 const DB_NAME = 'FlashCalendarDB';
-const DB_VERSION = 2; // 升级版本以增加新 store
+const DB_VERSION = 2; 
 const STORE_NAME = 'plans';
 const REPORT_STORE = 'monthly_reports';
 
@@ -14,7 +14,6 @@ export interface BackupData {
 }
 
 export const storageService = {
-  // Initialize the database
   async init(): Promise<void> {
     return new Promise((resolve, reject) => {
       const request = indexedDB.open(DB_NAME, DB_VERSION);
@@ -38,7 +37,6 @@ export const storageService = {
     });
   },
 
-  // Get all plans from DB
   async getAllPlans(): Promise<WorkPlan[]> {
     return new Promise((resolve, reject) => {
       const request = indexedDB.open(DB_NAME, DB_VERSION);
@@ -66,7 +64,12 @@ export const storageService = {
           const store = transaction.objectStore(STORE_NAME);
           const clearRequest = store.clear();
           clearRequest.onsuccess = () => {
-              plans.forEach(plan => store.put(plan));
+              // 修复点：增加 id 检查，防止 key path evaluation 报错
+              plans.forEach(plan => {
+                  if (plan && plan.id) {
+                      store.put(plan);
+                  }
+              });
           };
           transaction.oncomplete = () => resolve();
        };
@@ -74,7 +77,6 @@ export const storageService = {
     });
   },
 
-  // 月度报告持久化
   async saveMonthlyReport(report: MonthlyAnalysisData): Promise<void> {
     return new Promise((resolve, reject) => {
       const request = indexedDB.open(DB_NAME, DB_VERSION);

@@ -163,33 +163,35 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onSubmit, onStop, onSugg
     <div className={`relative flex flex-col group/input transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] w-full`}>
       
       {showDropdown && (
-        <div className="absolute top-full left-0 right-0 mt-3 bg-white/95 backdrop-blur-2xl border border-slate-200/60 shadow-[0_30px_60px_-12px_rgba(0,0,0,0.18)] rounded-3xl overflow-hidden animate-in fade-in slide-in-from-top-3 duration-500 z-[100]">
+        <div className="absolute top-full left-0 right-0 mt-3 bg-white/95 backdrop-blur-2xl border border-slate-200/60 shadow-[0_30px_60px_-12px_rgba(0,0,0,0.12)] rounded-3xl overflow-hidden animate-in fade-in slide-in-from-top-3 duration-500 z-[100]">
           
-          {/* AI Unsupported Feedback - Integrated into dropdown */}
+          {/* AI Unsupported Feedback - Minimalist Glass UI */}
           {unsupportedMessage && (
-            <div className="p-4 bg-slate-900 text-white animate-in slide-in-from-top-2 duration-300">
+            <div className="p-4 bg-indigo-50/40 backdrop-blur-xl border-b border-slate-100 animate-in slide-in-from-top-2 duration-300">
               <div className="flex items-start gap-3">
-                <div className="mt-0.5 p-1.5 bg-amber-500/20 text-amber-400 rounded-lg">
-                  <AlertCircle size={16} />
+                <div className="mt-0.5 p-2 bg-white text-indigo-500 rounded-xl shadow-sm border border-slate-100 flex-shrink-0">
+                  <Sparkles size={14} className="fill-indigo-500/10" />
                 </div>
                 <div className="flex-1 min-w-0">
-                  <div className="text-[10px] font-black text-white/40 uppercase tracking-widest mb-1">AI 助手反馈</div>
-                  <p className="text-sm font-medium leading-relaxed">{unsupportedMessage}</p>
+                  <div className="text-[9px] font-black text-indigo-600/60 uppercase tracking-[0.25em] mb-1 flex items-center gap-1.5">
+                    <Info size={10} /> AI 助手反馈
+                  </div>
+                  <p className="text-[13px] font-bold text-slate-800 leading-relaxed tracking-tight">{unsupportedMessage}</p>
                 </div>
                 <button 
                   onClick={(e) => { e.stopPropagation(); onClearUnsupported?.(); }}
-                  className="p-1 hover:bg-white/10 rounded-full transition-colors text-white/40 hover:text-white"
+                  className="p-1.5 hover:bg-white rounded-full transition-all text-slate-300 hover:text-slate-600 active:scale-90"
                 >
-                  <X size={16} />
+                  <X size={14} strokeWidth={3} />
                 </button>
               </div>
             </div>
           )}
 
           {suggestions.length > 0 && !searchValue && !unsupportedMessage && (
-            <div className="p-4 bg-slate-50/50 border-b border-slate-100">
+            <div className="p-4 bg-slate-50/30 border-b border-slate-100">
               <div className="px-3 py-1.5 mb-2.5 flex items-center gap-1.5">
-                <Sparkles size={12} className="text-amber-500 animate-pulse" />
+                <Sparkles size={12} className="text-indigo-400 animate-pulse" />
                 <span className="text-[10px] font-black text-slate-400 uppercase tracking-[0.15em]">安排日程灵感</span>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-2 gap-2.5">
@@ -244,7 +246,7 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onSubmit, onStop, onSugg
           ? 'h-9 rounded-xl bg-slate-100/60 border border-slate-200/50 focus-within:bg-white focus-within:border-indigo-400 focus-within:ring-[6px] focus-within:ring-indigo-500/5' 
           : 'h-14 rounded-2xl bg-white shadow-xl border border-slate-100 focus-within:ring-4 focus-within:ring-indigo-500/10'
         }
-        ${unsupportedMessage ? 'ring-2 ring-rose-500/20 border-rose-400' : ''}
+        ${unsupportedMessage ? 'ring-2 ring-indigo-500/10 border-indigo-300 bg-white shadow-[0_0_20px_-5px_rgba(99,102,241,0.1)]' : ''}
       `}>
         <div className="pl-3 flex items-center gap-3">
           <AIAssistantIcon isListening={isListening} isProcessing={isProcessing} analyser={analyser} size={14} />

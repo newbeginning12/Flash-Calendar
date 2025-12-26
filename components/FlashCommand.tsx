@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Command, CornerDownLeft, Sparkles, Loader2, X, Calendar, Clock, FileText } from 'lucide-react';
-import { WorkPlan, AISettings, WeeklyReportData } from '../types';
+import { Command, CornerDownLeft, Sparkles, Loader2, X, Calendar, Clock, FileText, AlertCircle } from 'lucide-react';
+import { WorkPlan, AISettings, WeeklyReportData, PlanStatus } from '../types';
 import { processUserIntent } from '../services/aiService';
 
 interface FlashCommandProps {
@@ -16,6 +16,7 @@ export const FlashCommand: React.FC<FlashCommandProps> = ({ plans, settings, onP
   const [input, setInput] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [showSuccess, setShowSuccess] = useState<'plan' | 'report' | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -24,6 +25,7 @@ export const FlashCommand: React.FC<FlashCommandProps> = ({ plans, settings, onP
         e.preventDefault();
         setIsOpen(prev => !prev);
         setShowSuccess(null);
+        setErrorMessage(null);
       }
       if (e.key === 'Escape') {
         setIsOpen(false);
@@ -40,6 +42,7 @@ export const FlashCommand: React.FC<FlashCommandProps> = ({ plans, settings, onP
     } else {
         setInput('');
         setIsProcessing(false);
+        setErrorMessage(null);
     }
   }, [isOpen]);
 
@@ -48,13 +51,24 @@ export const FlashCommand: React.FC<FlashCommandProps> = ({ plans, settings, onP
     if (!input.trim() || isProcessing) return;
 
     setIsProcessing(true);
+    setErrorMessage(null);
 
     try {
         const result = await processUserIntent(input, plans, settings);
 
         if (result) {
             if (result.type === 'CREATE_PLAN' && result.data) {
-                const newPlan = result.data as WorkPlan;
+                const newPlan: WorkPlan = {
+                    id: crypto.randomUUID(),
+                    title: '新建日程',
+                    startDate: new Date().toISOString(),
+                    endDate: new Date(Date.now() + 3600000).toISOString(),
+                    status: PlanStatus.TODO,
+                    tags: [],
+                    color: 'blue',
+                    links: [],
+                    ...result.data
+                };
                 onPlanCreated(newPlan);
                 setShowSuccess('plan');
                 setInput('');
@@ -63,24 +77,30 @@ export const FlashCommand: React.FC<FlashCommandProps> = ({ plans, settings, onP
                     setShowSuccess(null);
                 }, 1200);
             } else if (result.type === 'ANALYSIS' && result.data) {
-                // 先重置输入，防止状态闪烁
                 setInput('');
                 setShowSuccess('report');
-                
-                // 关键优化：先执行回调触发 App 的 Modal，然后尽快关闭 FlashCommand 以免层级干扰
                 onAnalysisCreated(result.data);
-                
                 setTimeout(() => {
                     setIsOpen(false);
                     setShowSuccess(null);
-                }, 500); // 缩短等待时间
+                }, 500);
+            } else if (result.type === 'UNSUPPORTED') {
+                setErrorMessage(result.message);
+                // 4秒后自动清除错误信息
+                setTimeout(() => setErrorMessage(null), 4000);
             }
         }
     } catch (error: any) {
         console.error("Flash Command Error:", error);
+        setErrorMessage("指令处理出错，请稍后再试。");
     } finally {
         setIsProcessing(false);
     }
+  };
+
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setInput(e.target.value);
+    if (errorMessage) setErrorMessage(null);
   };
 
   if (!isOpen) return null;
@@ -94,10 +114,15 @@ export const FlashCommand: React.FC<FlashCommandProps> = ({ plans, settings, onP
 
       <div className="relative w-full max-w-2xl bg-[#1a1a1a] rounded-2xl shadow-2xl border border-white/10 overflow-hidden transform transition-all animate-in fade-in zoom-in-95 duration-200">
         
-        <div className="flex items-center px-4 py-4 md:py-5 border-b border-white/5">
-            <div className={`w-8 h-8 rounded-lg flex items-center justify-center mr-4 transition-colors ${isProcessing ? 'bg-indigo-500/20 text-indigo-400' : 'bg-white/10 text-white'}`}>
+        <div className={`flex items-center px-4 py-4 md:py-5 border-b border-white/5 transition-colors ${errorMessage ? 'bg-rose-500/5' : ''}`}>
+            <div className={`w-8 h-8 rounded-lg flex items-center justify-center mr-4 transition-colors ${
+                isProcessing ? 'bg-indigo-500/20 text-indigo-400' : 
+                errorMessage ? 'bg-rose-500/20 text-rose-400' : 'bg-white/10 text-white'
+            }`}>
                 {isProcessing ? (
                     <Loader2 size={20} className="animate-spin" />
+                ) : errorMessage ? (
+                    <AlertCircle size={20} />
                 ) : (
                     <Command size={20} />
                 )}
@@ -107,10 +132,10 @@ export const FlashCommand: React.FC<FlashCommandProps> = ({ plans, settings, onP
                 ref={inputRef}
                 type="text"
                 value={input}
-                onChange={(e) => setInput(e.target.value)}
+                onChange={handleInputChange}
                 onKeyDown={(e) => e.key === 'Enter' && handleSubmit()}
-                placeholder={showSuccess ? (showSuccess === 'plan' ? "日程创建成功！" : "周报生成完毕！") : "输入指令，如：明天下午开会 或 生成本周周报..."}
-                className="flex-1 bg-transparent border-none outline-none text-xl md:text-2xl text-white placeholder-white/30 font-medium h-10"
+                placeholder={showSuccess ? (showSuccess === 'plan' ? "日程创建成功！" : "周报生成完毕！") : "输入指令，如：明天下午开会..."}
+                className={`flex-1 bg-transparent border-none outline-none text-xl md:text-2xl text-white placeholder-white/30 font-medium h-10 ${errorMessage ? 'text-rose-200' : ''}`}
                 autoComplete="off"
             />
 
@@ -124,11 +149,22 @@ export const FlashCommand: React.FC<FlashCommandProps> = ({ plans, settings, onP
             )}
         </div>
 
-        <div className="bg-[#141414] px-4 py-2.5 flex justify-between items-center text-xs text-white/40 font-medium">
+        <div className={`px-4 py-2.5 flex justify-between items-center text-xs font-medium transition-colors ${
+            errorMessage ? 'bg-rose-950/40 text-rose-300' : 'bg-[#141414] text-white/40'
+        }`}>
             <div className="flex items-center gap-4">
                 <span className="flex items-center gap-1.5">
-                    <Sparkles size={12} className={isProcessing ? "text-indigo-400 animate-pulse" : ""} />
-                    {isProcessing ? "AI 正在思考..." : "AI 智能指令中心"}
+                    {errorMessage ? (
+                        <>
+                            <AlertCircle size={12} className="text-rose-400" />
+                            <span className="animate-in slide-in-from-left-2">{errorMessage}</span>
+                        </>
+                    ) : (
+                        <>
+                            <Sparkles size={12} className={isProcessing ? "text-indigo-400 animate-pulse" : ""} />
+                            {isProcessing ? "AI 正在思考..." : "AI 智能指令中心"}
+                        </>
+                    )}
                 </span>
                 {showSuccess === 'plan' && (
                      <span className="flex items-center gap-1.5 text-emerald-400 animate-in fade-in slide-in-from-left-2">
@@ -136,21 +172,17 @@ export const FlashCommand: React.FC<FlashCommandProps> = ({ plans, settings, onP
                         已添加到日程
                      </span>
                 )}
-                {showSuccess === 'report' && (
-                     <span className="flex items-center gap-1.5 text-blue-400 animate-in fade-in slide-in-from-left-2">
-                        <FileText size={12} />
-                        正在展示周报
-                     </span>
-                )}
             </div>
 
             <div className="flex items-center gap-3">
-                <div className="flex items-center gap-1 opacity-60">
-                    <span>当前模型:</span>
-                    <span className="px-1.5 py-0.5 rounded bg-white/10 font-mono text-[10px] text-white">
-                        {settings.model}
-                    </span>
-                </div>
+                {!errorMessage && (
+                    <div className="flex items-center gap-1 opacity-60">
+                        <span>当前模型:</span>
+                        <span className="px-1.5 py-0.5 rounded bg-white/10 font-mono text-[10px] text-white">
+                            {settings.model}
+                        </span>
+                    </div>
+                )}
                 <div className="w-px h-3 bg-white/10"></div>
                 <div className="flex items-center gap-1 cursor-pointer hover:text-white transition-colors" onClick={() => handleSubmit()}>
                     <span>运行</span>

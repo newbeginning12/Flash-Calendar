@@ -114,7 +114,7 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
   onDragCreate
 }) => {
   const [now, setNow] = useState(new Date());
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; date?: Date; timeStr?: string; plan?: WorkPlan } | null>(null);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; plan: WorkPlan } | null>(null);
   const [hoveredPlanId, setHoveredPlanId] = useState<string | null>(null);
   const [zoomScale, setZoomScale] = useState(1.0);
   const zoomAnchorRef = useRef<{ xRatio: number; yRatio: number } | null>(null);
@@ -439,14 +439,13 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
                                     onDragOver={(e) => handleDragOver(e, day)}
                                     onDragLeave={() => setDragInfo(prev => prev ? {...prev, activeDay: null} : null)}
                                     onDrop={(e) => handleDrop(e, day)}
-                                    onContextMenu={(e) => {
+                                    onClick={(e) => {
                                         if (e.target === e.currentTarget) {
-                                            e.preventDefault();
                                             const rect = e.currentTarget.getBoundingClientRect();
                                             const snappedMinutes = Math.max(0, Math.floor(((e.clientY - rect.top - GRID_TOP_OFFSET) / rowHeight) * 60 / 15) * 15);
                                             const timeDate = new Date(day);
                                             timeDate.setHours(0, snappedMinutes, 0, 0);
-                                            setContextMenu({ x: e.clientX, y: e.clientY, date: timeDate, timeStr: format(timeDate, 'HH:mm') });
+                                            onSlotClick(timeDate);
                                         }
                                     }}
                                 >
@@ -517,12 +516,12 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
                                                     zIndex: isHovered ? 100 : (isTarget ? 50 : 10 + plan.column),
                                                     transform: isHovered ? 'scale(1.02)' : 'scale(1)',
                                                 }}
-                                                className={`absolute cursor-grab active:cursor-grabbing overflow-hidden transition-all flex flex-col backdrop-blur-md group ${isDone ? `bg-slate-50/75 border-slate-100 opacity-60` : `bg-${plan.color}-50/90 border-${plan.color}-200/60 hover:border-${plan.color}-400 hover:bg-${plan.color}-50 text-${plan.color}-900`} ${dragInfo?.planId === plan.id && !dragInfo.isCopy ? 'opacity-20 scale-95' : ''} ${h < COMPACT_THRESHOLD ? 'p-1 px-1.5' : h < 75 ? 'p-2' : h < 115 ? 'p-2.5' : 'p-3'} ${isSearchActive && !isHighlighted ? 'opacity-20 grayscale pointer-events-none' : 'opacity-100'} ${isTarget ? 'ring-2 ring-indigo-500/40 border-indigo-400 z-50 shadow-xl' : ''} ${isHovered ? 'shadow-xl z-[100]' : 'shadow-sm'} rounded-xl border`}
+                                                className={`absolute cursor-grab active:cursor-grabbing overflow-hidden transition-all flex flex-col backdrop-blur-md group ${isDone ? `bg-${plan.color}-50/40 border-${plan.color}-200/40` : `bg-${plan.color}-50/90 border-${plan.color}-200/60 hover:border-${plan.color}-400 hover:bg-${plan.color}-50 text-${plan.color}-900`} ${dragInfo?.planId === plan.id && !dragInfo.isCopy ? 'opacity-20 scale-95' : ''} ${h < COMPACT_THRESHOLD ? 'p-1 px-1.5' : h < 75 ? 'p-2' : h < 115 ? 'p-2.5' : 'p-3'} ${isSearchActive && !isHighlighted ? 'opacity-20 grayscale pointer-events-none' : 'opacity-100'} ${isTarget ? 'ring-2 ring-indigo-500/40 border-indigo-400 z-50 shadow-xl' : ''} ${isHovered ? 'shadow-xl z-[100]' : 'shadow-sm'} rounded-xl border`}
                                                 onClick={() => onPlanClick(plan)}
                                             >
                                                 {h < COMPACT_THRESHOLD ? (
                                                     <div className="flex items-center justify-between gap-1 h-full">
-                                                        <span className={`text-[10px] font-bold truncate flex-1 ${isDone ? 'text-slate-400 line-through' : ''}`}>
+                                                        <span className={`text-[10px] font-bold truncate flex-1 ${isDone ? `text-slate-400 line-through opacity-80` : ''}`}>
                                                            <span className="opacity-70 mr-1 text-[9px]">[{STATUS_LABELS[plan.status]}]</span>
                                                            {plan.title}
                                                         </span>
@@ -532,7 +531,7 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
                                                     <div className="flex flex-col h-full overflow-hidden">
                                                         {/* 第一行：标题与图标 */}
                                                         <div className="flex items-start justify-between gap-1.5 mb-1.5 min-w-0 flex-shrink-0">
-                                                            <div className={`font-bold truncate leading-tight ${h >= 115 ? 'text-[15px]' : h >= 75 ? 'text-[13px]' : 'text-[11px]'} ${isDone ? 'text-slate-400 line-through font-normal' : 'text-slate-800'} flex-1`}>
+                                                            <div className={`font-bold truncate leading-tight ${h >= 115 ? 'text-[15px]' : h >= 75 ? 'text-[13px]' : 'text-[11px]'} ${isDone ? 'text-slate-400 line-through font-normal opacity-70' : 'text-slate-800'} flex-1`}>
                                                                 {plan.title}
                                                             </div>
                                                             {getSimpleStatusIcon(plan.status, plan.color, h < 75 ? 10 : 12)}
@@ -543,7 +542,7 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
                                                             <div className={`flex-shrink-0 inline-flex items-center px-1 py-0.5 rounded text-[8px] font-black uppercase tracking-tighter ${STATUS_BADGE_CLASSES[plan.status]}`}>
                                                                 {STATUS_LABELS[plan.status]}
                                                             </div>
-                                                            <div className={`flex items-center gap-1 font-bold font-mono min-w-0 ${isDone ? 'text-slate-300' : `text-${plan.color}-600/80`}`}>
+                                                            <div className={`flex items-center gap-1 font-bold font-mono min-w-0 ${isDone ? `text-${plan.color}-600/40` : `text-${plan.color}-600/80`}`}>
                                                                 {h >= 115 && <Clock size={11} strokeWidth={2.5} className="mr-0.5 opacity-60" />}
                                                                 <span className={`${h < 75 ? 'text-[9px]' : 'text-[10px]'} truncate`}>
                                                                     {timeRangeStr}
@@ -556,7 +555,7 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
                                                         {h >= SHOW_TAGS_THRESHOLD && plan.tags && plan.tags.length > 0 && (
                                                             <div className="flex flex-wrap gap-1 mt-0.5 mb-1 overflow-hidden flex-shrink-0 max-h-[36px]">
                                                                 {plan.tags.slice(0, 3).map(tag => (
-                                                                    <span key={tag} className={`px-1.5 py-0.5 rounded-md text-[8px] font-bold whitespace-nowrap ${isDone ? 'bg-slate-100 text-slate-400' : `bg-${plan.color}-100/50 text-${plan.color}-700 border border-${plan.color}-200/30`}`}>
+                                                                    <span key={tag} className={`px-1.5 py-0.5 rounded-md text-[8px] font-bold whitespace-nowrap ${isDone ? `bg-${plan.color}-100/30 text-${plan.color}-400` : `bg-${plan.color}-100/50 text-${plan.color}-700 border border-${plan.color}-200/30`}`}>
                                                                         {tag}
                                                                     </span>
                                                                 ))}
@@ -591,46 +590,32 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
         <div ref={menuRef} 
             className="fixed z-[9999] bg-white/90 backdrop-blur-xl rounded-2xl shadow-2xl border border-slate-200/50 p-1.5 w-48 animate-in fade-in zoom-in-95 duration-150 origin-top-left" 
             style={{ 
-                top: Math.min(contextMenu.y, window.innerHeight - (contextMenu.plan ? 300 : 80)), 
+                top: Math.min(contextMenu.y, window.innerHeight - 300), 
                 left: Math.min(contextMenu.x, window.innerWidth - 200) 
             }}
         >
-            {contextMenu.plan ? (
-                <>
-                    <div className="px-3 py-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider">日程管理</div>
-                    <button onClick={() => { onDuplicatePlan(contextMenu.plan!.id); setContextMenu(null); }} className="w-full text-left flex items-center gap-2.5 p-2 rounded-lg hover:bg-indigo-50 text-indigo-600 font-bold text-xs transition-all">
-                        <Copy size={14} /> 复制日程 (复刻)
-                    </button>
-                    <button onClick={() => { 
-                        const tomorrow = addDays(new Date(contextMenu.plan!.startDate), 1);
-                        onDuplicatePlan(contextMenu.plan!.id, tomorrow); 
-                        setContextMenu(null); 
-                    }} className="w-full text-left flex items-center gap-2.5 p-2 rounded-lg hover:bg-blue-50 text-blue-600 font-bold text-xs transition-all">
-                        <CalendarPlus size={14} /> 明天继续 (复制到明天)
-                    </button>
-                    
-                    <div className="h-px bg-slate-100 my-1.5 mx-1"></div>
-                    <div className="px-3 py-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider">状态 (当前: {STATUS_LABELS[contextMenu.plan.status]})</div>
-                    {contextMenu.plan.status !== PlanStatus.DONE && (
-                      <button onClick={() => { onPlanUpdate({...contextMenu.plan!, status: PlanStatus.DONE}); setContextMenu(null); }} className="w-full text-left flex items-center gap-2.5 p-2 rounded-lg hover:bg-emerald-50 text-emerald-600 font-bold text-xs transition-all">
-                          <CheckCircle2 size={14} /> 标记完成
-                      </button>
-                    )}
-                    <button onClick={() => { onDeletePlan(contextMenu.plan!.id); setContextMenu(null); }} className="w-full text-left flex items-center gap-2.5 p-2 rounded-lg hover:bg-rose-50 text-rose-500 font-bold text-xs transition-all">
-                        <Trash2 size={14} /> 删除日程
-                    </button>
-                </>
-            ) : (
-                <button onClick={() => { onSlotClick(contextMenu.date!); setContextMenu(null); }} className="w-full flex items-center gap-2.5 p-2 rounded-lg hover:bg-slate-100 text-slate-700 font-bold text-xs transition-all group">
-                    <div className="w-7 h-7 flex items-center justify-center bg-indigo-50 text-indigo-600 rounded-md group-hover:bg-indigo-600 group-hover:text-white transition-colors">
-                        <Plus size={16} />
-                    </div>
-                    <div className="flex flex-col text-left">
-                        <span>新建日程</span>
-                        <span className="text-[10px] text-slate-400 font-normal">{contextMenu.timeStr}</span>
-                    </div>
-                </button>
+            <div className="px-3 py-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider">日程管理</div>
+            <button onClick={() => { onDuplicatePlan(contextMenu.plan!.id); setContextMenu(null); }} className="w-full text-left flex items-center gap-2.5 p-2 rounded-lg hover:bg-indigo-50 text-indigo-600 font-bold text-xs transition-all">
+                <Copy size={14} /> 复制日程 (复刻)
+            </button>
+            <button onClick={() => { 
+                const tomorrow = addDays(new Date(contextMenu.plan!.startDate), 1);
+                onDuplicatePlan(contextMenu.plan!.id, tomorrow); 
+                setContextMenu(null); 
+            }} className="w-full text-left flex items-center gap-2.5 p-2 rounded-lg hover:bg-blue-50 text-blue-600 font-bold text-xs transition-all">
+                <CalendarPlus size={14} /> 明天继续 (复制到明天)
+            </button>
+            
+            <div className="h-px bg-slate-100 my-1.5 mx-1"></div>
+            <div className="px-3 py-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider">状态 (当前: {STATUS_LABELS[contextMenu.plan.status]})</div>
+            {contextMenu.plan.status !== PlanStatus.DONE && (
+              <button onClick={() => { onPlanUpdate({...contextMenu.plan!, status: PlanStatus.DONE}); setContextMenu(null); }} className="w-full text-left flex items-center gap-2.5 p-2 rounded-lg hover:bg-emerald-50 text-emerald-600 font-bold text-xs transition-all">
+                  <CheckCircle2 size={14} /> 标记完成
+              </button>
             )}
+            <button onClick={() => { onDeletePlan(contextMenu.plan!.id); setContextMenu(null); }} className="w-full text-left flex items-center gap-2.5 p-2 rounded-lg hover:bg-rose-50 text-rose-500 font-bold text-xs transition-all">
+                <Trash2 size={14} /> 删除日程
+            </button>
         </div>,
         document.body
       )}

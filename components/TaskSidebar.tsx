@@ -54,7 +54,6 @@ export const TaskSidebar: React.FC<TaskSidebarProps> = ({
 }) => {
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   
-  // 智能折叠状态
   const [isAiLabExpanded, setIsAiLabExpanded] = useState(true);
   const [isTemplatesExpanded, setIsTemplatesExpanded] = useState(true);
   const [hasUserToggledAi, setHasUserToggledAi] = useState(false);
@@ -64,7 +63,6 @@ export const TaskSidebar: React.FC<TaskSidebarProps> = ({
     return plans.filter(p => isSameDay(new Date(p.startDate), currentDate)).sort((a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime());
   }, [plans, currentDate]);
 
-  // 智能折叠逻辑：任务超过4个时自动收起，任务少时且用户未手动操作过则自动展开
   useEffect(() => {
     if (dailyPlans.length > 4) {
       if (!hasUserToggledAi) setIsAiLabExpanded(false);
@@ -105,8 +103,6 @@ export const TaskSidebar: React.FC<TaskSidebarProps> = ({
 
   return (
     <div className="w-full h-full flex flex-col bg-white border-r border-slate-200/60 flex-shrink-0 z-20 overflow-hidden relative">
-      
-      {/* AI Hub Section - 还原原始大卡片设计 + 优化高度 + 智能折叠 */}
       <div className="p-5 flex-none space-y-3 bg-white border-b border-slate-50">
         <button 
           onClick={() => { setIsAiLabExpanded(!isAiLabExpanded); setHasUserToggledAi(true); }}
@@ -124,7 +120,6 @@ export const TaskSidebar: React.FC<TaskSidebarProps> = ({
         
         {isAiLabExpanded && (
           <div className="grid grid-cols-2 gap-3 pt-1 animate-in fade-in slide-in-from-top-2 duration-300">
-            {/* 还原：珍珠白周报卡片 - 优化高度 */}
             <button 
               onClick={onWeeklyReport}
               disabled={isProcessingReport}
@@ -140,7 +135,6 @@ export const TaskSidebar: React.FC<TaskSidebarProps> = ({
               <span className="text-[10px] font-bold text-slate-400 whitespace-nowrap">汇总节奏与洞察</span>
             </button>
 
-            {/* 还原：深蓝渐变镜像诊断卡片 - 优化高度 */}
             <button 
               onClick={onMonthlyReview}
               disabled={isProcessingReview}
@@ -181,19 +175,19 @@ export const TaskSidebar: React.FC<TaskSidebarProps> = ({
         {dailyPlans.length > 0 ? (
           dailyPlans.map(plan => {
             const isDone = plan.status === PlanStatus.DONE;
-            const statusInfo = STATUS_CONFIG[plan.status];
+            const statusInfo = STATUS_CONFIG[plan.status] || STATUS_CONFIG[PlanStatus.TODO];
             const StatusIconComp = statusInfo.icon;
             const duration = formatDuration(plan.startDate, plan.endDate);
             return (
-              <div key={plan.id} onClick={() => onPlanClick(plan)} onContextMenu={(e) => { e.preventDefault(); setContextMenu({ x: e.clientX, y: e.clientY, plan }); }} className={`group relative flex items-start gap-3 p-3.5 rounded-xl border transition-all cursor-pointer select-none hover:shadow-sm animate-in fade-in slide-in-from-bottom-2 duration-300 ${isDone ? 'bg-slate-50/50 border-slate-100' : 'bg-white border-slate-100 hover:border-blue-100'}`}>
+              <div key={plan.id} onClick={() => onPlanClick(plan)} onContextMenu={(e) => { e.preventDefault(); setContextMenu({ x: e.clientX, y: e.clientY, plan }); }} className={`group relative flex items-start gap-3 p-3.5 rounded-xl border transition-all cursor-pointer select-none hover:shadow-sm animate-in fade-in slide-in-from-bottom-2 duration-300 ${isDone ? `bg-${plan.color}-50/30 border-${plan.color}-100` : 'bg-white border-slate-100 hover:border-blue-100'}`}>
                 <button onClick={(e) => handleToggleStatus(e, plan)} className={`flex-shrink-0 mt-0.5 transition-all duration-300 ${isDone ? 'text-emerald-500' : 'text-slate-200 group-hover:text-blue-400'}`}><StatusIconComp size={20} strokeWidth={2.5} className={isDone ? 'fill-emerald-50' : ''} /></button>
                 <div className="flex-1 min-w-0">
-                    <div className={`text-[14px] font-bold tracking-tight truncate leading-tight mb-2 ${isDone ? 'text-slate-300 line-through' : 'text-slate-700'}`}>{plan.title}</div>
+                    <div className={`text-[14px] font-bold tracking-tight truncate leading-tight mb-2 ${isDone ? 'text-slate-500 line-through opacity-70' : 'text-slate-700'}`}>{plan.title}</div>
                     <div className="flex flex-wrap items-center gap-y-1.5 gap-x-3">
                         <div className={`inline-flex items-center px-1.5 py-0.5 rounded-[4px] text-[9px] font-black uppercase tracking-tighter ${statusInfo.badgeClass}`}>{statusInfo.label}</div>
                         <div className="flex items-center gap-3 text-[10px] font-bold">
-                            <div className="text-slate-400 flex items-center gap-1"><Clock size={11} strokeWidth={3} /><span>{format(new Date(plan.startDate), 'HH:mm')} - {format(new Date(plan.endDate), 'HH:mm')}</span></div>
-                            <div className="text-blue-500 bg-blue-50/50 px-1.5 py-0.5 rounded border border-blue-100/50 flex items-center gap-1"><Timer size={10} strokeWidth={3} /><span>{duration}</span></div>
+                            <div className={`flex items-center gap-1 ${isDone ? `text-${plan.color}-400` : 'text-slate-400'}`}><Clock size={11} strokeWidth={3} /><span>{format(new Date(plan.startDate), 'HH:mm')} - {format(new Date(plan.endDate), 'HH:mm')}</span></div>
+                            <div className={`px-1.5 py-0.5 rounded border flex items-center gap-1 ${isDone ? `text-${plan.color}-400 bg-${plan.color}-50/50 border-${plan.color}-100/30` : 'text-blue-500 bg-blue-50/50 border-blue-100/50'}`}><Timer size={10} strokeWidth={3} /><span>{duration}</span></div>
                         </div>
                     </div>
                 </div>
@@ -207,7 +201,6 @@ export const TaskSidebar: React.FC<TaskSidebarProps> = ({
         )}
       </div>
 
-      {/* 原子模版 - 还原原始大卡片设计 + 智能折叠 + 并排引导语 */}
       <div className="border-t border-slate-100 bg-slate-50/30 flex-none p-4">
         <button 
           onClick={() => { setIsTemplatesExpanded(!isTemplatesExpanded); setHasUserToggledTemplates(true); }}
