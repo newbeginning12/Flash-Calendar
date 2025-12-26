@@ -109,7 +109,16 @@ export const App: React.FC = () => {
     const weekPlansCount = plans.filter(p => { const d = new Date(p.startDate); return isWithinInterval(d, { start: weekStart, end: weekEnd }); }).length;
     if (weekPlansCount === 0) { setUnsupportedMessage("当前选择的周内暂无日程数据，无法生成周报数据。"); setTimeout(() => setUnsupportedMessage(null), 3000); return; }
     setIsProcessingReport(true);
-    try { const result = await processWeeklyReport(plans, settings); if (result) { setReportData(result); setIsReportModalOpen(true); setSearchTerm(''); } } 
+    try { 
+      const result = await processWeeklyReport(plans, settings); 
+      if (result) { 
+        const report = { ...result, id: crypto.randomUUID(), timestamp: new Date().toISOString() };
+        await storageService.saveWeeklyReport(report);
+        setReportData(report); 
+        setIsReportModalOpen(true); 
+        setSearchTerm(''); 
+      } 
+    } 
     catch (e) { console.error(e); } finally { setIsProcessingReport(false); }
   };
 
@@ -117,8 +126,18 @@ export const App: React.FC = () => {
     if (isProcessingReview) return;
     const monthStart = startOfMonth(currentDate);
     const monthEnd = endOfMonth(currentDate);
-    const monthPlansCount = plans.filter(p => { const d = new Date(p.startDate); return isWithinInterval(d, { start: monthStart, end: monthEnd }); }).length;
-    if (monthPlansCount === 0) { setUnsupportedMessage("当前选择的月份内暂无日程数据，无法进行镜像诊断。"); setTimeout(() => setUnsupportedMessage(null), 3000); return; }
+    
+    // Fix: Replaced undefined variable 'weekEnd' with 'monthEnd' and removed redundant counting logic.
+    const monthPlansCount = plans.filter(p => { 
+      const d = new Date(p.startDate); 
+      return isWithinInterval(d, { start: monthStart, end: monthEnd }); 
+    }).length;
+
+    if (monthPlansCount === 0) { 
+      setUnsupportedMessage("当前选择的月份内暂无日程数据，无法进行镜像诊断。"); 
+      setTimeout(() => setUnsupportedMessage(null), 3000); 
+      return; 
+    }
     setIsProcessingReview(true);
     try {
       const result = await processMonthlyReview(plans, settings);
@@ -355,7 +374,12 @@ export const App: React.FC = () => {
        <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} settings={settings} onSave={(s) => { setSettings(s); localStorage.setItem('zhihui_settings', JSON.stringify(s)); setIsSettingsOpen(false); }} onExport={() => storageService.exportData(plans, settings)} onImport={async (d) => { if (d.plans) { setPlans(d.plans); await storageService.savePlans(d.plans); } if (d.settings) { setSettings(d.settings); localStorage.setItem('zhihui_settings', JSON.stringify(d.settings)); } setIsSettingsOpen(false); }} />
        <WeeklyReportModal isOpen={isReportModalOpen} onClose={() => setIsReportModalOpen(false)} data={reportData} />
        <MonthlyReviewModal isOpen={isMonthlyModalOpen} onClose={() => setIsMonthlyModalOpen(false)} data={monthlyData} />
-       <FlashCommand plans={plans} settings={settings} onPlanCreated={handleSavePlan} onAnalysisCreated={(data) => { setReportData(data); setIsReportModalOpen(true); }} />
+       <FlashCommand plans={plans} settings={settings} onPlanCreated={handleSavePlan} onAnalysisCreated={async (data) => { 
+          const report = { ...data, id: crypto.randomUUID(), timestamp: new Date().toISOString() };
+          await storageService.saveWeeklyReport(report);
+          setReportData(report); 
+          setIsReportModalOpen(true); 
+        }} />
     </div>
   );
 };

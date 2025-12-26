@@ -57,6 +57,8 @@ export interface AppNotification {
 }
 
 export interface WeeklyReportData {
+  id?: string;
+  timestamp?: string;
   achievements: string[];
   summary: string;
   nextWeekPlans: string[];

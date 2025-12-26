@@ -1,10 +1,11 @@
 
-import { WorkPlan, AISettings, MonthlyAnalysisData } from '../types';
+import { WorkPlan, AISettings, MonthlyAnalysisData, WeeklyReportData } from '../types';
 
 const DB_NAME = 'FlashCalendarDB';
-const DB_VERSION = 2; 
+const DB_VERSION = 3; // 升级版本以增加 store
 const STORE_NAME = 'plans';
 const REPORT_STORE = 'monthly_reports';
+const WEEKLY_REPORT_STORE = 'weekly_reports';
 
 export interface BackupData {
   version: number;
@@ -32,6 +33,9 @@ export const storageService = {
         }
         if (!db.objectStoreNames.contains(REPORT_STORE)) {
           db.createObjectStore(REPORT_STORE, { keyPath: 'id' });
+        }
+        if (!db.objectStoreNames.contains(WEEKLY_REPORT_STORE)) {
+          db.createObjectStore(WEEKLY_REPORT_STORE, { keyPath: 'id' });
         }
       };
     });
@@ -64,7 +68,6 @@ export const storageService = {
           const store = transaction.objectStore(STORE_NAME);
           const clearRequest = store.clear();
           clearRequest.onsuccess = () => {
-              // 修复点：增加 id 检查，防止 key path evaluation 报错
               plans.forEach(plan => {
                   if (plan && plan.id) {
                       store.put(plan);
@@ -103,6 +106,39 @@ export const storageService = {
         getAllRequest.onsuccess = () => {
           const results = getAllRequest.result || [];
           resolve(results.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()));
+        };
+      };
+      request.onerror = () => reject(request.error);
+    });
+  },
+
+  async saveWeeklyReport(report: WeeklyReportData): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const request = indexedDB.open(DB_NAME, DB_VERSION);
+      request.onsuccess = () => {
+        const db = request.result;
+        const transaction = db.transaction(WEEKLY_REPORT_STORE, 'readwrite');
+        const store = transaction.objectStore(WEEKLY_REPORT_STORE);
+        if (!report.id) report.id = crypto.randomUUID();
+        if (!report.timestamp) report.timestamp = new Date().toISOString();
+        store.put(report);
+        transaction.oncomplete = () => resolve();
+      };
+      request.onerror = () => reject(request.error);
+    });
+  },
+
+  async getAllWeeklyReports(): Promise<WeeklyReportData[]> {
+    return new Promise((resolve, reject) => {
+      const request = indexedDB.open(DB_NAME, DB_VERSION);
+      request.onsuccess = () => {
+        const db = request.result;
+        const transaction = db.transaction(WEEKLY_REPORT_STORE, 'readonly');
+        const store = transaction.objectStore(WEEKLY_REPORT_STORE);
+        const getAllRequest = store.getAll();
+        getAllRequest.onsuccess = () => {
+          const results = getAllRequest.result || [];
+          resolve(results.sort((a, b) => new Date(b.timestamp!).getTime() - new Date(a.timestamp!).getTime()));
         };
       };
       request.onerror = () => reject(request.error);

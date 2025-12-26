@@ -58,7 +58,9 @@ const callOpenAICompatible = async (
 const formatPlansForContext = (plans: WorkPlan[]) => {
     return plans.map(p => {
         const statusMap = { [PlanStatus.DONE]: '已完成', [PlanStatus.IN_PROGRESS]: '进行中', [PlanStatus.TODO]: '待办' };
-        return `- [${statusMap[p.status]}] ${p.title} (${p.startDate.slice(0, 10)})`;
+        const tagsStr = p.tags && p.tags.length > 0 ? ` [标签: ${p.tags.join(', ')}]` : '';
+        const descStr = p.description ? ` (描述: ${p.description.slice(0, 50)}${p.description.length > 50 ? '...' : ''})` : '';
+        return `- [${statusMap[p.status]}] ${p.title}${tagsStr}${descStr} (${p.startDate.slice(0, 10)})`;
     }).join('\n');
 };
 
@@ -126,7 +128,7 @@ export const enhanceFuzzyTask = async (
   settings: AISettings
 ): Promise<Partial<WorkPlan> | null> => {
   const systemPrompt = `
-    你是一个闪念优化专家。用户输入了一个碎片化的想法，请将其优化。
+    你是一个闪念优化专家。用户 input 了一个碎片化的想法，请将其优化。
     1. 提取简短有力的标题 (title)。
     2. 根据内容分配合适的颜色 (color: blue, indigo, purple, rose, orange, emerald)。
     3. 识别 1-2 个精准标签 (tags)。
@@ -158,13 +160,44 @@ export const processWeeklyReport = async (plans: WorkPlan[], settings: AISetting
     const weekEnd = endOfWeek(now, { weekStartsOn: 1 });
     const currentWeekPlans = plans.filter(p => { const d = new Date(p.startDate); return d >= weekStart && d <= weekEnd; });
     const context = formatPlansForContext(currentWeekPlans);
-    const systemPrompt = `你是高级办公助手。根据数据生成本周总结：1. achievements: 完成列表。2. summary: 评价。3. nextWeekPlans: 推测下周。4. risks: 风险。返回 JSON。`;
+    
+    const systemPrompt = `
+      你是一个极专业的高级办公助手。请根据提供的本周原始日程数据生成一份结构化周报。
+      数据包含任务标题、状态、标签以及详情描述。
+
+      【核心要求】：
+      1. **严谨区分相似任务**：用户可能在同一天有标题相似但性质不同的任务。你**必须**参考【标签】和【描述】来区分它们（例如：区分“静态页面开发”与“接口联调”）。
+      2. **achievements (本周完成工作)**：应体现工作的具体进展，不要简单合并不同性质的任务，保留关键细节。
+      3. **summary (本周总结)**：对本周的整体效率、产出质量、工作重心进行精炼点评。
+      4. **nextWeekPlans (下周计划)**：基于本周未完成项或业务逻辑，推测并建议下周的重点工作。
+      5. **risks (风险与帮助)**：识别潜在的进度滞后、协作阻碍或技术难点。
+
+      必须返回 JSON 格式：
+      {
+        "achievements": ["具体完成项1", "具体完成项2", ...],
+        "summary": "专业的工作总结点评...",
+        "nextWeekPlans": ["合理的下周计划1", ...],
+        "risks": "具体的风险提示或协调建议"
+      }
+    `;
+
     let raw: string | null = null;
     if (settings.provider === AIProvider.GOOGLE) {
         const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-        const response = await ai.models.generateContent({ model: settings.model, contents: `数据：\n${context}`, config: { responseMimeType: "application/json", systemInstruction: systemPrompt } });
+        const response = await ai.models.generateContent({ 
+            model: settings.model, 
+            contents: `以下是本周日程数据：\n${context}`, 
+            config: { 
+                responseMimeType: "application/json", 
+                systemInstruction: systemPrompt,
+                temperature: 0.2
+            } 
+        });
         raw = response.text;
-    } else { raw = await callOpenAICompatible(settings, [{ role: 'system', content: systemPrompt }, { role: 'user', content: context }], true, signal); }
+    } else { 
+        raw = await callOpenAICompatible(settings, [{ role: 'system', content: systemPrompt }, { role: 'user', content: `数据：\n${context}` }], true, signal); 
+    }
+    
     if (!raw) return null;
     return extractJSON(raw) as WeeklyReportData;
 };
