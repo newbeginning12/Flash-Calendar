@@ -3,7 +3,7 @@ import React, { useState, useRef, useEffect, useMemo, useCallback, useLayoutEffe
 import { createPortal } from 'react-dom';
 import { WorkPlan, PlanStatus } from '../types';
 import { format, addDays, isSameDay, getHours, getMinutes, differenceInMinutes, addMinutes, getWeek, startOfMonth } from 'date-fns';
-import { Plus, Clock, Move, Tag, CheckCircle2, Circle, PlayCircle, Edit2, Trash2, AlignLeft, ZoomIn, ZoomOut, Maximize2, Minimize2, Search, RotateCcw, Copy, CalendarPlus, Timer } from 'lucide-react';
+import { Plus, Clock, Move, Tag, CheckCircle2, Circle, PlayCircle, Edit2, Trash2, AlignLeft, ZoomIn, ZoomOut, Maximize2, Minimize2, Search, RotateCcw, Copy, CalendarPlus, Timer, Focus } from 'lucide-react';
 
 interface WeeklyCalendarProps {
   currentDate: Date;
@@ -33,6 +33,9 @@ const COLORS = ['blue', 'indigo', 'purple', 'rose', 'orange', 'emerald'];
 const BASE_ROW_HEIGHT = 68; 
 const BASE_COL_MIN_WIDTH = 180; 
 const GRID_TOP_OFFSET = 24; 
+
+const CORE_START_HOUR = 8;
+const CORE_END_HOUR = 20;
 
 const STATUS_LABELS = {
   [PlanStatus.TODO]: '待办',
@@ -117,6 +120,8 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; plan: WorkPlan } | null>(null);
   const [hoveredPlanId, setHoveredPlanId] = useState<string | null>(null);
   const [zoomScale, setZoomScale] = useState(1.0);
+  const [isFocusMode, setIsFocusMode] = useState(false); // 专注模式状态
+  
   const zoomAnchorRef = useRef<{ xRatio: number; yRatio: number } | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -134,6 +139,53 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
 
   const rowHeight = BASE_ROW_HEIGHT * zoomScale;
   const colMinWidth = BASE_COL_MIN_WIDTH * zoomScale;
+
+  // 动态行高计算逻辑
+  const getHourHeight = useCallback((hour: number) => {
+    if (!isFocusMode) return rowHeight;
+    // 专注模式下，0-8点和20-24点高度缩小
+    if (hour < CORE_START_HOUR || hour >= CORE_END_HOUR) return rowHeight * 0.35;
+    return rowHeight;
+  }, [isFocusMode, rowHeight]);
+
+  // 计算某个时间点在 Y 轴上的 Top 偏移量
+  const getTimeTop = useCallback((date: Date) => {
+    const h = getHours(date);
+    const m = getMinutes(date);
+    let top = GRID_TOP_OFFSET;
+    for (let i = 0; i < h; i++) {
+        top += getHourHeight(i);
+    }
+    top += (m / 60) * getHourHeight(h);
+    return top;
+  }, [getHourHeight]);
+
+  // 根据 Top 偏移量反推分钟数（用于拖拽和点击）
+  const getMinutesFromTop = useCallback((top: number) => {
+    let remainingTop = top - GRID_TOP_OFFSET;
+    if (remainingTop < 0) return 0;
+    
+    let totalMinutes = 0;
+    for (let i = 0; i < 24; i++) {
+        const hHeight = getHourHeight(i);
+        if (remainingTop <= hHeight) {
+            totalMinutes += (remainingTop / hHeight) * 60;
+            return Math.min(1439, totalMinutes);
+        }
+        remainingTop -= hHeight;
+        totalMinutes += 60;
+    }
+    return 1439;
+  }, [getHourHeight]);
+
+  // 计算总网格高度
+  const totalGridHeight = useMemo(() => {
+    let total = GRID_TOP_OFFSET;
+    for (let i = 0; i < 24; i++) {
+        total += getHourHeight(i);
+    }
+    return total;
+  }, [getHourHeight]);
 
   const calculateWeekStart = (date: Date) => {
     const d = new Date(date);
@@ -154,12 +206,13 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
   }, [weekStart]);
 
   const currentTimeTop = useMemo(() => {
-    return (getHours(now) * 60 + getMinutes(now)) / 60 * rowHeight + GRID_TOP_OFFSET;
-  }, [now, rowHeight]);
+    return getTimeTop(now);
+  }, [now, getTimeTop]);
 
   useEffect(() => {
     if (containerRef.current && !targetPlanId) {
-      const initialScroll = currentTimeTop - 150;
+      // 默认滚动到核心时段开始处，或者当前时间前一点
+      const initialScroll = getTimeTop(new Date()) - 150;
       containerRef.current.scrollTop = Math.max(0, initialScroll);
     }
   }, []); 
@@ -168,12 +221,11 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
     if (targetPlanId && containerRef.current) {
       const targetPlan = plans.find(p => p.id === targetPlanId);
       if (targetPlan) {
-        const start = new Date(targetPlan.startDate);
-        const top = (getHours(start) * 60 + getMinutes(start)) / 60 * rowHeight + GRID_TOP_OFFSET;
+        const top = getTimeTop(new Date(targetPlan.startDate));
         containerRef.current.scrollTo({ top: top - 150, behavior: 'smooth' });
       }
     }
-  }, [targetPlanId, plans, rowHeight]);
+  }, [targetPlanId, plans, getTimeTop]);
 
   useLayoutEffect(() => {
     const container = containerRef.current;
@@ -183,7 +235,7 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
     container.scrollLeft = xRatio * scrollWidth - clientWidth / 2;
     container.scrollTop = yRatio * scrollHeight - clientHeight / 2;
     zoomAnchorRef.current = null;
-  }, [zoomScale]);
+  }, [zoomScale, isFocusMode]); // 当专注模式改变时，也需要保持视觉锚点
 
   const handleZoomUpdate = useCallback((newScale: number) => {
     const container = containerRef.current;
@@ -197,6 +249,18 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
     };
     setZoomScale(clampedScale);
   }, [zoomScale]);
+
+  const handleToggleFocusMode = () => {
+    const container = containerRef.current;
+    if (container) {
+        const { scrollLeft, scrollTop, clientWidth, clientHeight, scrollWidth, scrollHeight } = container;
+        zoomAnchorRef.current = {
+          xRatio: (scrollLeft + clientWidth / 2) / scrollWidth,
+          yRatio: (scrollTop + clientHeight / 2) / scrollHeight
+        };
+    }
+    setIsFocusMode(!isFocusMode);
+  };
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -265,7 +329,8 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
     e.dataTransfer.dropEffect = (template || isAltCopy) ? 'copy' : 'move';
     
     const rect = e.currentTarget.getBoundingClientRect();
-    const rawMinutes = ((e.clientY - rect.top - GRID_TOP_OFFSET) / rowHeight) * 60;
+    const topOffset = e.clientY - rect.top;
+    const rawMinutes = getMinutesFromTop(topOffset);
     const snappedMinutes = Math.max(0, Math.floor(rawMinutes / 15) * 15);
 
     setDragInfo(prev => {
@@ -302,7 +367,10 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
     try {
         const jsonStr = e.dataTransfer.getData('application/json');
         const rect = e.currentTarget.getBoundingClientRect();
-        const snappedMinutes = Math.max(0, Math.floor(((e.clientY - rect.top - GRID_TOP_OFFSET) / rowHeight) * 60 / 15) * 15);
+        const topOffset = e.clientY - rect.top;
+        const rawMinutes = getMinutesFromTop(topOffset);
+        const snappedMinutes = Math.max(0, Math.floor(rawMinutes / 15) * 15);
+        
         const targetStart = new Date(day);
         targetStart.setHours(0, snappedMinutes, 0, 0);
 
@@ -379,7 +447,20 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
 
   return (
     <div className="flex flex-col h-full bg-white rounded-3xl shadow-[0_4px_30px_rgb(0,0,0,0.03)] border border-slate-100 overflow-hidden relative group/calendar">
-      <div className="absolute bottom-6 right-6 z-[60] flex items-center gap-1 bg-white/70 backdrop-blur-2xl border border-white/60 shadow-[0_15px_45px_-12px_rgba(0,0,0,0.15)] rounded-2xl p-2 opacity-0 group-hover/calendar:opacity-100 transition-all duration-300 scale-95 group-hover/calendar:scale-100 select-none">
+      
+      {/* 增强型悬浮控制栏 */}
+      <div className="absolute bottom-6 right-6 z-[60] flex items-center gap-2 bg-white/70 backdrop-blur-2xl border border-white/60 shadow-[0_15px_45px_-12px_rgba(0,0,0,0.15)] rounded-2xl p-2 opacity-0 group-hover/calendar:opacity-100 transition-all duration-300 scale-95 group-hover/calendar:scale-100 select-none">
+          <button 
+            onClick={handleToggleFocusMode} 
+            className={`flex items-center gap-2 px-3 h-8 rounded-lg transition-all text-xs font-bold ${isFocusMode ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-500 hover:bg-slate-100'}`}
+            title={isFocusMode ? "退出专注模式" : "开启时间轴专注模式"}
+          >
+            <Focus size={14} className={isFocusMode ? "animate-pulse" : ""} />
+            <span>专注时段</span>
+          </button>
+          
+          <div className="w-px h-4 bg-slate-200 mx-1"></div>
+
           <button onClick={() => handleZoomUpdate(zoomScale - 0.2)} className="w-8 h-8 flex items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 active:scale-90 transition-all"><ZoomOut size={16} /></button>
           <div className="flex items-center gap-2 px-2 group/slider">
             <input type="range" min="0.6" max="2.0" step="0.05" value={zoomScale} onChange={(e) => handleZoomUpdate(parseFloat(e.target.value))} className="w-24 h-1 bg-slate-200 rounded-full appearance-none cursor-pointer accent-indigo-600 focus:outline-none" />
@@ -391,7 +472,7 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
       </div>
 
       <div ref={containerRef} className="flex-1 overflow-auto custom-scrollbar relative bg-slate-50/10 scroll-smooth">
-        <div className="min-w-max flex flex-col">
+        <div className="min-w-max flex flex-col transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)]">
             <div className="sticky top-0 z-40 flex border-b border-slate-200/60 bg-white">
                 <div className="sticky left-0 z-50 bg-white border-r border-slate-50 flex flex-col items-center justify-center leading-none" style={{ width: SIDEBAR_WIDTH }}>
                     <span className="text-[9px] font-bold text-slate-400 mb-1">{format(weekStart, 'M月')}</span>
@@ -413,17 +494,37 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
             <div className="flex relative">
                 <div className="sticky left-0 z-30 bg-white border-r border-slate-100 flex-shrink-0" style={{ width: SIDEBAR_WIDTH }}>
                     <div style={{ height: `${GRID_TOP_OFFSET}px` }}></div>
-                    {HOURS.map((hour) => (
-                        <div key={hour} className="relative w-full" style={{ height: `${rowHeight}px` }}>
-                            <span className="absolute -top-2.5 right-3 text-[10px] text-slate-400 font-bold font-mono opacity-50 transition-all origin-right">{hour.toString().padStart(2, '0')}:00</span>
-                        </div>
-                    ))}
+                    {HOURS.map((hour) => {
+                        const hHeight = getHourHeight(hour);
+                        const isCollapsed = isFocusMode && (hour < CORE_START_HOUR || hour >= CORE_END_HOUR);
+                        return (
+                            <div 
+                                key={hour} 
+                                className={`relative w-full transition-all duration-500 ${isCollapsed ? 'bg-slate-50/30 overflow-hidden' : ''}`} 
+                                style={{ height: `${hHeight}px` }}
+                            >
+                                <span className={`absolute -top-2.5 right-3 text-[10px] font-bold font-mono opacity-50 transition-all origin-right ${isCollapsed ? 'opacity-20 scale-75' : 'text-slate-400'}`}>
+                                    {hour.toString().padStart(2, '0')}:00
+                                </span>
+                            </div>
+                        );
+                    })}
                 </div>
 
-                <div className="flex-1 relative" style={{ height: 24 * rowHeight + GRID_TOP_OFFSET }}>
+                <div className="flex-1 relative" style={{ height: `${totalGridHeight}px` }}>
                     <div className="absolute inset-0 flex flex-col pointer-events-none">
                         <div style={{ height: `${GRID_TOP_OFFSET}px` }}></div>
-                        {HOURS.map((h) => <div key={h} className="border-b border-slate-100/60" style={{ height: `${rowHeight}px` }} />)}
+                        {HOURS.map((hour) => {
+                            const hHeight = getHourHeight(hour);
+                            const isCollapsed = isFocusMode && (hour < CORE_START_HOUR || hour >= CORE_END_HOUR);
+                            return (
+                                <div 
+                                    key={hour} 
+                                    className={`border-b transition-all duration-500 ${isCollapsed ? 'border-slate-100/30' : 'border-slate-100/60'}`} 
+                                    style={{ height: `${hHeight}px` }} 
+                                />
+                            );
+                        })}
                     </div>
 
                     <div className="flex-1 relative h-full flex">
@@ -442,7 +543,10 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
                                     onClick={(e) => {
                                         if (e.target === e.currentTarget) {
                                             const rect = e.currentTarget.getBoundingClientRect();
-                                            const snappedMinutes = Math.max(0, Math.floor(((e.clientY - rect.top - GRID_TOP_OFFSET) / rowHeight) * 60 / 15) * 15);
+                                            const topOffset = e.clientY - rect.top;
+                                            const rawMinutes = getMinutesFromTop(topOffset);
+                                            const snappedMinutes = Math.max(0, Math.floor(rawMinutes / 15) * 15);
+                                            
                                             const timeDate = new Date(day);
                                             timeDate.setHours(0, snappedMinutes, 0, 0);
                                             onSlotClick(timeDate);
@@ -451,10 +555,10 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
                                 >
                                     {isDraggingOverMe && dragInfo && (
                                         <div 
-                                            className={`absolute inset-x-1 z-[35] rounded-xl border-2 border-dashed ${dragInfo.isCopy ? 'border-indigo-500 bg-indigo-100/20' : `border-${dragInfo.color}-400/60 bg-${dragInfo.color}-100/15`} pointer-events-none flex flex-col items-center justify-center transition-all duration-75`}
+                                            className={`absolute inset-x-1 z-[35] rounded-xl border-2 border-dashed transition-all duration-300 ${dragInfo.isCopy ? 'border-indigo-500 bg-indigo-100/20' : `border-${dragInfo.color}-400/60 bg-${dragInfo.color}-100/15`} pointer-events-none flex flex-col items-center justify-center`}
                                             style={{ 
-                                                top: `${(dragInfo.activeMinutes / 60) * rowHeight + GRID_TOP_OFFSET}px`, 
-                                                height: `${(dragInfo.durationMins / 60) * rowHeight}px` 
+                                                top: `${getTimeTop(new Date(new Date(day).setHours(0, dragInfo.activeMinutes, 0, 0)))}px`, 
+                                                height: `${(dragInfo.durationMins / 60) * getHourHeight(Math.floor(dragInfo.activeMinutes / 60))}px` 
                                             }}
                                         >
                                             <div 
@@ -467,16 +571,16 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
                                                 {dragInfo.isCopy ? <Copy size={10} className="text-indigo-400" /> : <Clock size={10} className="text-blue-400" />}
                                                 <span>
                                                     {dragInfo.isCopy ? '复制到: ' : ''}
-                                                    {format(addMinutes(new Date().setHours(0, dragInfo.activeMinutes, 0, 0), 0), 'HH:mm')} 
+                                                    {format(new Date(new Date(day).setHours(0, dragInfo.activeMinutes, 0, 0)), 'HH:mm')} 
                                                     <span className="mx-1 opacity-50">-</span>
-                                                    {format(addMinutes(new Date().setHours(0, dragInfo.activeMinutes, 0, 0), dragInfo.durationMins), 'HH:mm')}
+                                                    {format(addMinutes(new Date(new Date(day).setHours(0, dragInfo.activeMinutes, 0, 0)), dragInfo.durationMins), 'HH:mm')}
                                                 </span>
                                             </div>
                                         </div>
                                     )}
 
                                     {isSameDay(day, now) && (
-                                        <div className="absolute left-0 right-0 z-20 pointer-events-none flex items-center" style={{ top: `${currentTimeTop}px` }}>
+                                        <div className="absolute left-0 right-0 z-20 pointer-events-none flex items-center transition-all duration-500" style={{ top: `${currentTimeTop}px` }}>
                                             <div className="w-2.5 h-2.5 rounded-full bg-rose-500 -ml-1.25 shadow-sm ring-2 ring-white"></div>
                                             <div className="h-px w-full bg-rose-500"></div>
                                         </div>
@@ -485,8 +589,32 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
                                     {dayPlans.map(plan => {
                                         const start = new Date(plan.startDate);
                                         const end = new Date(plan.endDate);
-                                        const top = (getHours(start) * 60 + getMinutes(start)) / 60 * rowHeight + GRID_TOP_OFFSET;
-                                        const h = Math.max((differenceInMinutes(end, start) / 60 * rowHeight) - 2, 18);
+                                        const top = getTimeTop(start);
+                                        
+                                        // 核心逻辑：计划高度也需要根据跨越的小时动态计算
+                                        let h = 0;
+                                        const diff = differenceInMinutes(end, start);
+                                        const startHour = getHours(start);
+                                        const startMin = getMinutes(start);
+                                        
+                                        // 简化版高度计算：对于大部分情况（<=1小时），直接取起始小时的高度
+                                        if (diff <= 60) {
+                                            h = (diff / 60) * getHourHeight(startHour);
+                                        } else {
+                                            // 跨小时的高度计算
+                                            let remainingMins = diff;
+                                            let currentH = startHour;
+                                            let currentM = startMin;
+                                            while (remainingMins > 0) {
+                                                const minsInThisHour = Math.min(60 - currentM, remainingMins);
+                                                h += (minsInThisHour / 60) * getHourHeight(currentH);
+                                                remainingMins -= minsInThisHour;
+                                                currentH = (currentH + 1) % 24;
+                                                currentM = 0;
+                                            }
+                                        }
+                                        
+                                        const cardHeight = Math.max(h - 2, 18);
                                         const isDone = plan.status === PlanStatus.DONE;
                                         const timeRangeStr = `${format(start, 'HH:mm')} - ${format(end, 'HH:mm')}`;
                                         const durationStr = formatDuration(plan.startDate, plan.endDate);
@@ -512,14 +640,17 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
                                                 onMouseEnter={() => setHoveredPlanId(plan.id)}
                                                 onMouseLeave={() => setHoveredPlanId(null)}
                                                 style={{ 
-                                                    top: `${top}px`, height: `${h}px`, left: `${leftPct}%`, width: `calc(${widthPct}% - 4px)`,
+                                                    top: `${top}px`, 
+                                                    height: `${cardHeight}px`, 
+                                                    left: `${leftPct}%`, 
+                                                    width: `calc(${widthPct}% - 4px)`,
                                                     zIndex: isHovered ? 100 : (isTarget ? 50 : 10 + plan.column),
                                                     transform: isHovered ? 'scale(1.02)' : 'scale(1)',
                                                 }}
-                                                className={`absolute cursor-grab active:cursor-grabbing overflow-hidden transition-all flex flex-col backdrop-blur-md group ${isDone ? `bg-${plan.color}-50/40 border-${plan.color}-200/40` : `bg-${plan.color}-50/90 border-${plan.color}-200/60 hover:border-${plan.color}-400 hover:bg-${plan.color}-50 text-${plan.color}-900`} ${dragInfo?.planId === plan.id && !dragInfo.isCopy ? 'opacity-20 scale-95' : ''} ${h < COMPACT_THRESHOLD ? 'p-1 px-1.5' : h < 75 ? 'p-2' : h < 115 ? 'p-2.5' : 'p-3'} ${isSearchActive && !isHighlighted ? 'opacity-20 grayscale pointer-events-none' : 'opacity-100'} ${isTarget ? 'ring-2 ring-indigo-500/40 border-indigo-400 z-50 shadow-xl' : ''} ${isHovered ? 'shadow-xl z-[100]' : 'shadow-sm'} rounded-xl border`}
+                                                className={`absolute cursor-grab active:cursor-grabbing overflow-hidden transition-all duration-500 flex flex-col backdrop-blur-md group ${isDone ? `bg-${plan.color}-50/40 border-${plan.color}-200/40` : `bg-${plan.color}-50/90 border-${plan.color}-200/60 hover:border-${plan.color}-400 hover:bg-${plan.color}-50 text-${plan.color}-900`} ${dragInfo?.planId === plan.id && !dragInfo.isCopy ? 'opacity-20 scale-95' : ''} ${cardHeight < COMPACT_THRESHOLD ? 'p-1 px-1.5' : cardHeight < 75 ? 'p-2' : cardHeight < 115 ? 'p-2.5' : 'p-3'} ${isSearchActive && !isHighlighted ? 'opacity-20 grayscale pointer-events-none' : 'opacity-100'} ${isTarget ? 'ring-2 ring-indigo-500/40 border-indigo-400 z-50 shadow-xl' : ''} ${isHovered ? 'shadow-xl z-[100]' : 'shadow-sm'} rounded-xl border`}
                                                 onClick={() => onPlanClick(plan)}
                                             >
-                                                {h < COMPACT_THRESHOLD ? (
+                                                {cardHeight < COMPACT_THRESHOLD ? (
                                                     <div className="flex items-center justify-between gap-1 h-full">
                                                         <span className={`text-[10px] font-bold truncate flex-1 ${isDone ? `text-slate-400 line-through opacity-80` : ''}`}>
                                                            <span className="opacity-70 mr-1 text-[9px]">[{STATUS_LABELS[plan.status]}]</span>
@@ -529,30 +660,27 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
                                                     </div>
                                                 ) : (
                                                     <div className="flex flex-col h-full overflow-hidden">
-                                                        {/* 第一行：标题与图标 */}
                                                         <div className="flex items-start justify-between gap-1.5 mb-1.5 min-w-0 flex-shrink-0">
-                                                            <div className={`font-bold truncate leading-tight ${h >= 115 ? 'text-[15px]' : h >= 75 ? 'text-[13px]' : 'text-[11px]'} ${isDone ? 'text-slate-400 line-through font-normal opacity-70' : 'text-slate-800'} flex-1`}>
+                                                            <div className={`font-bold truncate leading-tight ${cardHeight >= 115 ? 'text-[15px]' : cardHeight >= 75 ? 'text-[13px]' : 'text-[11px]'} ${isDone ? 'text-slate-400 line-through font-normal opacity-70' : 'text-slate-800'} flex-1`}>
                                                                 {plan.title}
                                                             </div>
-                                                            {getSimpleStatusIcon(plan.status, plan.color, h < 75 ? 10 : 12)}
+                                                            {getSimpleStatusIcon(plan.status, plan.color, cardHeight < 75 ? 10 : 12)}
                                                         </div>
 
-                                                        {/* 第二行：元数据 (状态标签、时间+时长) */}
                                                         <div className={`flex items-center gap-1.5 mb-1.5 overflow-hidden whitespace-nowrap flex-shrink-0`}>
                                                             <div className={`flex-shrink-0 inline-flex items-center px-1 py-0.5 rounded text-[8px] font-black uppercase tracking-tighter ${STATUS_BADGE_CLASSES[plan.status]}`}>
                                                                 {STATUS_LABELS[plan.status]}
                                                             </div>
                                                             <div className={`flex items-center gap-1 font-bold font-mono min-w-0 ${isDone ? `text-${plan.color}-600/40` : `text-${plan.color}-600/80`}`}>
-                                                                {h >= 115 && <Clock size={11} strokeWidth={2.5} className="mr-0.5 opacity-60" />}
-                                                                <span className={`${h < 75 ? 'text-[9px]' : 'text-[10px]'} truncate`}>
+                                                                {cardHeight >= 115 && <Clock size={11} strokeWidth={2.5} className="mr-0.5 opacity-60" />}
+                                                                <span className={`${cardHeight < 75 ? 'text-[9px]' : 'text-[10px]'} truncate`}>
                                                                     {timeRangeStr}
-                                                                    {h >= 75 && <span className="ml-1 opacity-60 font-normal">({durationStr})</span>}
+                                                                    {cardHeight >= 75 && <span className="ml-1 opacity-60 font-normal">({durationStr})</span>}
                                                                 </span>
                                                             </div>
                                                         </div>
 
-                                                        {/* 第三行：标签 (只要高度允许就显示) */}
-                                                        {h >= SHOW_TAGS_THRESHOLD && plan.tags && plan.tags.length > 0 && (
+                                                        {cardHeight >= SHOW_TAGS_THRESHOLD && plan.tags && plan.tags.length > 0 && (
                                                             <div className="flex flex-wrap gap-1 mt-0.5 mb-1 overflow-hidden flex-shrink-0 max-h-[36px]">
                                                                 {plan.tags.slice(0, 3).map(tag => (
                                                                     <span key={tag} className={`px-1.5 py-0.5 rounded-md text-[8px] font-bold whitespace-nowrap ${isDone ? `bg-${plan.color}-100/30 text-${plan.color}-400` : `bg-${plan.color}-100/50 text-${plan.color}-700 border border-${plan.color}-200/30`}`}>
@@ -563,11 +691,10 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
                                                             </div>
                                                         )}
 
-                                                        {/* 第四行：描述 (在高度充足且无其他列重叠时显示更多) */}
-                                                        {h >= SHOW_DESC_THRESHOLD && plan.description && (
+                                                        {cardHeight >= SHOW_DESC_THRESHOLD && plan.description && (
                                                             <div className={`mt-auto text-[11px] leading-relaxed flex items-start gap-1.5 pt-2 border-t border-black/5 ${isDone ? 'text-slate-300' : 'text-slate-600'} overflow-hidden`}>
                                                                 <AlignLeft size={10} className="mt-1 flex-shrink-0 opacity-40" />
-                                                                <span className={`flex-1 ${h > 160 ? 'line-clamp-4' : 'line-clamp-2'}`}>
+                                                                <span className={`flex-1 ${cardHeight > 160 ? 'line-clamp-4' : 'line-clamp-2'}`}>
                                                                     {plan.description}
                                                                 </span>
                                                             </div>
