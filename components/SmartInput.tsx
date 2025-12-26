@@ -6,7 +6,7 @@ import { WorkPlan } from '../types';
 import { format } from 'date-fns';
 
 interface SmartInputProps {
-  onSubmit: (input: string) => Promise<void>;
+  onSubmit: (input: string) => Promise<boolean>; // 修改返回类型，用于判断是否清空
   onStop: () => void;
   onSuggestionClick: (suggestion: SmartSuggestion) => Promise<void>;
   isProcessing: boolean;
@@ -117,16 +117,23 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onSubmit, onStop, onSugg
     if (!searchValue?.trim()) return;
     const toSubmit = searchValue;
     onClearUnsupported?.();
-    await onSubmit(toSubmit);
+    const success = await onSubmit(toSubmit);
+    // AI 成功处理后，由 App 侧清空，此处不再重复处理以防状态冲突
   };
 
-  const handleEnterKey = (e: React.KeyboardEvent) => {
+  const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter') {
       e.preventDefault();
       if (isProcessing) { onStop(); return; }
       if (isListening) { stopListening(); return; }
       if (!searchValue?.trim()) { startListening(); return; }
       handleSubmit();
+    } else if (e.key === 'Escape') {
+      // ESC 全局重置逻辑
+      onSearchChange?.('');
+      onClearUnsupported?.();
+      setIsFocused(false);
+      inputRef.current?.blur();
     }
   };
 
@@ -246,7 +253,7 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onSubmit, onStop, onSugg
           ? 'h-9 rounded-xl bg-slate-100/60 border border-slate-200/50 focus-within:bg-white focus-within:border-indigo-400 focus-within:ring-[6px] focus-within:ring-indigo-500/5' 
           : 'h-14 rounded-2xl bg-white shadow-xl border border-slate-100 focus-within:ring-4 focus-within:ring-indigo-500/10'
         }
-        ${unsupportedMessage ? 'ring-2 ring-indigo-500/10 border-indigo-300 bg-white shadow-[0_0_20px_-5px_rgba(99,102,241,0.1)]' : ''}
+        ${unsupportedMessage ? 'ring-2 ring-indigo-500/20 border-indigo-400 bg-white shadow-[0_0_20px_-5px_rgba(99,102,241,0.15)]' : ''}
       `}>
         <div className="pl-3 flex items-center gap-3">
           <AIAssistantIcon isListening={isListening} isProcessing={isProcessing} analyser={analyser} size={14} />
@@ -274,7 +281,7 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onSubmit, onStop, onSugg
               onChange={(e) => onSearchChange?.(e.target.value)}
               onFocus={() => setIsFocused(true)}
               onBlur={() => setTimeout(() => setIsFocused(false), 200)}
-              onKeyDown={handleEnterKey}
+              onKeyDown={handleKeyDown}
               className={`w-full h-full bg-transparent border-none outline-none text-sm font-bold text-slate-800 tracking-tight transition-all duration-300 ${isListening && !searchValue ? 'opacity-0' : 'opacity-100'}`}
            />
         </div>

@@ -13,7 +13,7 @@ interface TaskSidebarProps {
   onDuplicatePlan: (id: string, targetDate?: Date) => void;
   onDeletePlan: (id: string) => void;
   onCreateNew: () => void;
-  onQuickAdd: (title: string, duration: number, color: string) => void;
+  onQuickAdd: (title: string, duration: number, color: string, tags: string[]) => void;
   onJumpToToday?: () => void;
   onMonthlyReview: () => void;
   onWeeklyReport: () => void;
@@ -225,7 +225,7 @@ export const TaskSidebar: React.FC<TaskSidebarProps> = ({
                       key={template.title} 
                       draggable 
                       onDragStart={(e) => handleDragStart(e, template)} 
-                      onClick={() => onQuickAdd(template.title, template.minutes, template.color)} 
+                      onClick={() => onQuickAdd(template.title, template.minutes, template.color, template.tags)} 
                       className="flex flex-col p-3 rounded-xl border border-slate-100 bg-white cursor-grab active:cursor-grabbing transition-all hover:border-blue-200 hover:shadow-[0_4px_12px_rgba(59,130,246,0.05)] group text-left relative overflow-hidden"
                     >
                         <div className="flex items-center justify-between mb-2">

@@ -1,3 +1,4 @@
+
 import React, { useState, useRef, useEffect, useMemo, useCallback, useLayoutEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { WorkPlan, PlanStatus } from '../types';
@@ -8,6 +9,7 @@ interface WeeklyCalendarProps {
   currentDate: Date;
   plans: WorkPlan[];
   searchTerm?: string;
+  onClearSearch?: () => void; // 新增：清空搜索
   targetPlanId?: string | null;
   onPlanClick: (plan: WorkPlan) => void;
   onSlotClick: (date: Date) => void;
@@ -107,6 +109,7 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
   currentDate, 
   plans, 
   searchTerm = '',
+  onClearSearch,
   targetPlanId = null,
   onPlanClick, 
   onSlotClick, 
@@ -436,6 +439,12 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
                                     onDragLeave={() => setDragInfo(prev => prev ? {...prev, activeDay: null} : null)}
                                     onDrop={(e) => handleDrop(e, day)}
                                     onClick={(e) => {
+                                        // 如果当前有搜索词，点击日历任何空白区域将清空搜索
+                                        if (searchTerm.trim()) {
+                                            onClearSearch?.();
+                                            return;
+                                        }
+
                                         if (e.target === e.currentTarget) {
                                             const rect = e.currentTarget.getBoundingClientRect();
                                             const topOffset = e.clientY - rect.top;

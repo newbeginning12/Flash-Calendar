@@ -109,7 +109,7 @@ export const App: React.FC = () => {
     const weekPlansCount = plans.filter(p => { const d = new Date(p.startDate); return isWithinInterval(d, { start: weekStart, end: weekEnd }); }).length;
     if (weekPlansCount === 0) { setUnsupportedMessage("当前选择的周内暂无日程数据，无法生成周报数据。"); setTimeout(() => setUnsupportedMessage(null), 3000); return; }
     setIsProcessingReport(true);
-    try { const result = await processWeeklyReport(plans, settings); if (result) { setReportData(result); setIsReportModalOpen(true); } } 
+    try { const result = await processWeeklyReport(plans, settings); if (result) { setReportData(result); setIsReportModalOpen(true); setSearchTerm(''); } } 
     catch (e) { console.error(e); } finally { setIsProcessingReport(false); }
   };
 
@@ -126,6 +126,7 @@ export const App: React.FC = () => {
         const report = { ...result.data, id: crypto.randomUUID(), timestamp: new Date().toISOString() };
         await storageService.saveMonthlyReport(report);
         setMonthlyData(report); setIsMonthlyModalOpen(true);
+        setSearchTerm('');
       }
     } catch (e) { console.error(e); } finally { setIsProcessingReview(false); }
   };
@@ -141,7 +142,8 @@ export const App: React.FC = () => {
     setCurrentDate(planDate);
     setTargetPlanId(plan.id);
     setIsSearchFocused(false);
-    if (plan.isFuzzy) setIsShelfOpen(true); // 如果是模糊计划，打开侧边仓
+    setSearchTerm(''); // 点击搜索结果后自动清空
+    if (plan.isFuzzy) setIsShelfOpen(true); 
     setTimeout(() => setTargetPlanId(null), 2500);
   };
 
@@ -150,6 +152,9 @@ export const App: React.FC = () => {
     const newPlans = exists ? plans.map(p => p.id === plan.id ? plan : p) : [...plans, plan];
     setPlans(newPlans);
     await storageService.savePlans(newPlans);
+    setIsPlanModalOpen(false);
+    setEditingPlan(null);
+
     if (!plan.isFuzzy && !plan.isEnhancing) {
         setCurrentDate(new Date(plan.startDate));
         setTargetPlanId(plan.id);
@@ -157,29 +162,31 @@ export const App: React.FC = () => {
     }
   };
 
-  const handleSmartInput = async (input: string) => {
-      if (isProcessingInput) return;
+  const handleSmartInput = async (input: string): Promise<boolean> => {
+      if (isProcessingInput) return false;
       setUnsupportedMessage(null);
       setIsProcessingInput(true);
       const controller = new AbortController(); abortControllerRef.current = controller;
       try {
           const result = await processUserIntent(input, plans, settings, controller.signal);
-          if (controller.signal.aborted) return;
+          if (controller.signal.aborted) return false;
           if (result) {
               if (result.type === 'CREATE_PLAN' && result.data) {
                   const basePlan: WorkPlan = { id: crypto.randomUUID(), title: '新建日程', startDate: new Date().toISOString(), endDate: new Date(Date.now() + 3600000).toISOString(), status: PlanStatus.TODO, tags: [], color: 'blue', links: [], ...result.data };
                   setEditingPlan(basePlan as WorkPlan); setIsPlanModalOpen(true);
+                  setSearchTerm(''); // 成功：清空
+                  return true;
               } else if (result.type === 'UNSUPPORTED') {
                   setUnsupportedMessage(result.message || "由于缺乏具体时间，建议使用挂载仓快速记录。");
                   setTimeout(() => setUnsupportedMessage(null), 4000);
+                  return false; // 不支持：保留内容以便修改
               }
           }
-      } catch (error: any) { console.error("AI Error:", error); } finally { setIsProcessingInput(false); }
+      } catch (error: any) { console.error("AI Error:", error); return false; } finally { setIsProcessingInput(false); }
+      return false;
   };
 
-  // 即时捕获处理逻辑：分两步
   const handleShelfCapture = async (text: string) => {
-      // 第一步：即时生成记录（不调用 AI，秒回）
       const newId = crypto.randomUUID();
       const rawPlan: WorkPlan = {
           id: newId,
@@ -188,17 +195,16 @@ export const App: React.FC = () => {
           endDate: addMinutes(new Date(), 60).toISOString(),
           status: PlanStatus.TODO,
           tags: [],
-          color: 'slate', // 默认灰色
+          color: 'slate', 
           links: [],
           isFuzzy: true,
-          isEnhancing: true // 标记正在处理中
+          isEnhancing: true 
       };
       
       const newPlans = [...plans, rawPlan];
       setPlans(newPlans);
       await storageService.savePlans(newPlans);
 
-      // 第二步：后台异步增强
       try {
           const enhancedData = await enhanceFuzzyTask(text, settings);
           if (enhancedData) {
@@ -208,7 +214,6 @@ export const App: React.FC = () => {
                   return updated;
               });
           } else {
-              // 处理失败则取消增强状态
               setPlans(prev => prev.map(p => p.id === newId ? { ...p, isEnhancing: false } : p));
           }
       } catch (e) {
@@ -220,6 +225,7 @@ export const App: React.FC = () => {
   const handleSuggestionClick = async (suggestion: SmartSuggestion) => {
       setEditingPlan({ id: crypto.randomUUID(), title: suggestion.planData.title, description: suggestion.planData.description, startDate: suggestion.planData.startDate, endDate: suggestion.planData.endDate, status: PlanStatus.TODO, tags: suggestion.planData.tags || [], color: 'blue', links: [] });
       setIsPlanModalOpen(true);
+      setSearchTerm('');
   };
 
   const resize = useCallback((e: MouseEvent) => {
@@ -256,10 +262,25 @@ export const App: React.FC = () => {
                 const d = new Date(); const np: WorkPlan = { id: crypto.randomUUID(), title: '新建日程', startDate: d.toISOString(), endDate: addMinutes(d, 60).toISOString(), status: PlanStatus.TODO, tags: [], color: 'blue', links: [] };
                 setEditingPlan(np); setIsPlanModalOpen(true);
               }} 
-              onQuickAdd={async (t, dur, c) => {
-                const d = new Date(); const np: WorkPlan = { id: crypto.randomUUID(), title: t, startDate: d.toISOString(), endDate: addMinutes(d, dur).toISOString(), status: PlanStatus.TODO, tags: ['快速'], color: c, links: [] };
-                const nps = [...plans, np]; setPlans(nps); await storageService.savePlans(nps);
-                setTargetPlanId(np.id); setTimeout(() => setTargetPlanId(null), 2500);
+              onQuickAdd={async (t, dur, c, tags) => {
+                const d = new Date(); 
+                const start = isSameDay(d, currentDate) ? d : new Date(new Date(currentDate).setHours(9, 0, 0, 0));
+                const np: WorkPlan = { 
+                  id: crypto.randomUUID(), 
+                  title: t, 
+                  startDate: start.toISOString(), 
+                  endDate: addMinutes(start, dur).toISOString(), 
+                  status: PlanStatus.TODO, 
+                  tags: tags || ['快速'], 
+                  color: c, 
+                  links: [] 
+                };
+                const nps = [...plans, np]; 
+                setPlans(nps); 
+                await storageService.savePlans(nps);
+                setCurrentDate(start);
+                setTargetPlanId(np.id); 
+                setTimeout(() => setTargetPlanId(null), 2500);
               }}
               onJumpToToday={() => setCurrentDate(new Date())}
               onMonthlyReview={handleMonthlyReview}
@@ -291,7 +312,32 @@ export const App: React.FC = () => {
            </header>
 
            <div className="flex-1 overflow-hidden relative p-4">
-              <WeeklyCalendar currentDate={currentDate} plans={plans} searchTerm={searchTerm} targetPlanId={targetPlanId} onPlanClick={(p) => { setEditingPlan(p); setIsPlanModalOpen(true); }} onSlotClick={(d) => { const np: WorkPlan = { id: crypto.randomUUID(), title: '新建日程', startDate: d.toISOString(), endDate: addMinutes(d, 60).toISOString(), status: PlanStatus.TODO, tags: [], color: 'blue', links: [] }; setEditingPlan(np); setIsPlanModalOpen(true); }} onPlanUpdate={handleSavePlan} onDuplicatePlan={async (id, td) => { const s = plans.find(x => x.id === id); if(!s) return; const d = differenceInMinutes(new Date(s.endDate), new Date(s.startDate)); const start = td || new Date(); const end = addMinutes(start, d); const np = { ...s, id: crypto.randomUUID(), startDate: start.toISOString(), endDate: end.toISOString(), status: PlanStatus.TODO }; const nps = [...plans, np]; setPlans(nps); await storageService.savePlans(nps); if(td) { setTargetPlanId(np.id); setTimeout(() => setTargetPlanId(null), 2500); } else { setEditingPlan(np); setIsPlanModalOpen(true); } }} onDateSelect={setCurrentDate} onDeletePlan={async (id) => { const np = plans.filter(x => x.id !== id); setPlans(np); await storageService.savePlans(np); setIsPlanModalOpen(false); }} onDragCreate={(startDate, duration, title, color, tags) => { const newPlan: WorkPlan = { id: crypto.randomUUID(), title: title || '新建日程', startDate: startDate.toISOString(), endDate: addMinutes(startDate, duration).toISOString(), status: PlanStatus.TODO, tags: tags || [], color: color || 'blue', links: [] }; setEditingPlan(newPlan); setIsPlanModalOpen(true); }} />
+              <WeeklyCalendar 
+                currentDate={currentDate} 
+                plans={plans} 
+                searchTerm={searchTerm} 
+                onClearSearch={() => setSearchTerm('')}
+                targetPlanId={targetPlanId} 
+                onPlanClick={(p) => { setEditingPlan(p); setIsPlanModalOpen(true); }} 
+                onSlotClick={(d) => { const np: WorkPlan = { id: crypto.randomUUID(), title: '新建日程', startDate: d.toISOString(), endDate: addMinutes(d, 60).toISOString(), status: PlanStatus.TODO, tags: [], color: 'blue', links: [] }; setEditingPlan(np); setIsPlanModalOpen(true); }} 
+                onPlanUpdate={handleSavePlan} 
+                onDuplicatePlan={async (id, td) => { const s = plans.find(x => x.id === id); if(!s) return; const d = differenceInMinutes(new Date(s.endDate), new Date(s.startDate)); const start = td || new Date(); const end = addMinutes(start, d); const np = { ...s, id: crypto.randomUUID(), startDate: start.toISOString(), endDate: end.toISOString(), status: PlanStatus.TODO }; const nps = [...plans, np]; setPlans(nps); await storageService.savePlans(nps); if(td) { setTargetPlanId(np.id); setTimeout(() => setTargetPlanId(null), 2500); } else { setEditingPlan(np); setIsPlanModalOpen(true); } }} onDateSelect={setCurrentDate} onDeletePlan={async (id) => { const np = plans.filter(x => x.id !== id); setPlans(np); await storageService.savePlans(np); setIsPlanModalOpen(false); }} onDragCreate={async (startDate, duration, title, color, tags) => { 
+                const newPlan: WorkPlan = { 
+                  id: crypto.randomUUID(), 
+                  title: title || '新建日程', 
+                  startDate: startDate.toISOString(), 
+                  endDate: addMinutes(startDate, duration).toISOString(), 
+                  status: PlanStatus.TODO, 
+                  tags: tags || [], 
+                  color: color || 'blue', 
+                  links: [] 
+                }; 
+                const nps = [...plans, newPlan];
+                setPlans(nps);
+                await storageService.savePlans(nps);
+                setTargetPlanId(newPlan.id); 
+                setTimeout(() => setTargetPlanId(null), 2500);
+              }} />
            </div>
        </div>
 
