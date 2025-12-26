@@ -104,6 +104,9 @@ export const TaskSidebar: React.FC<TaskSidebarProps> = ({
       e.dataTransfer.setData('application/json', JSON.stringify(dragData)); e.dataTransfer.effectAllowed = 'copyMove';
   };
 
+  // 是否有任何 AI 任务正在运行
+  const isAnyAiProcessing = isProcessingReport || isProcessingReview;
+
   return (
     <div className="w-full h-full flex flex-col bg-white border-r border-slate-200/60 flex-shrink-0 z-20 overflow-hidden relative">
       <div className="p-5 flex-none space-y-3 bg-white border-b border-slate-50">
@@ -125,7 +128,7 @@ export const TaskSidebar: React.FC<TaskSidebarProps> = ({
           <div className="grid grid-cols-2 gap-3 pt-1 animate-in fade-in slide-in-from-top-2 duration-300">
             <button 
               onClick={onWeeklyReport}
-              disabled={isProcessingReport}
+              disabled={isAnyAiProcessing}
               className="group relative flex flex-col items-start py-4 px-4 rounded-[28px] bg-white border border-slate-100 shadow-[0_8px_25px_rgb(0,0,0,0.03)] hover:shadow-[0_15px_35px_rgba(59,130,246,0.06)] hover:border-blue-100 transition-all duration-300 active:scale-95 disabled:opacity-50 overflow-hidden text-left"
             >
               <div className="absolute right-0 top-0 opacity-[0.03] translate-x-1/4 -translate-y-1/4 group-hover:scale-110 transition-transform duration-700">
@@ -140,7 +143,7 @@ export const TaskSidebar: React.FC<TaskSidebarProps> = ({
 
             <button 
               onClick={onMonthlyReview}
-              disabled={isProcessingReview}
+              disabled={isAnyAiProcessing}
               className="group relative flex flex-col items-start py-4 px-4 rounded-[28px] bg-gradient-to-br from-blue-500 to-indigo-500 shadow-[0_10px_30px_rgba(59,130,246,0.25)] hover:shadow-[0_18px_45px_rgba(59,130,246,0.4)] hover:from-blue-600 hover:to-indigo-600 transition-all duration-300 active:scale-95 disabled:opacity-50 overflow-hidden text-left"
             >
               <div className="absolute inset-0 bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity duration-500" />

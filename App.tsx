@@ -103,7 +103,7 @@ export const App: React.FC = () => {
   }, []);
 
   const handleWeeklyReport = async () => {
-    if (isProcessingReport) return;
+    if (isProcessingReport || isProcessingReview) return;
     const weekStart = startOfWeek(currentDate, { weekStartsOn: 1 });
     const weekEnd = endOfWeek(currentDate, { weekStartsOn: 1 });
     const weekPlansCount = plans.filter(p => { const d = new Date(p.startDate); return isWithinInterval(d, { start: weekStart, end: weekEnd }); }).length;
@@ -123,11 +123,10 @@ export const App: React.FC = () => {
   };
 
   const handleMonthlyReview = async () => {
-    if (isProcessingReview) return;
+    if (isProcessingReview || isProcessingReport) return;
     const monthStart = startOfMonth(currentDate);
     const monthEnd = endOfMonth(currentDate);
     
-    // Fix: Replaced undefined variable 'weekEnd' with 'monthEnd' and removed redundant counting logic.
     const monthPlansCount = plans.filter(p => { 
       const d = new Date(p.startDate); 
       return isWithinInterval(d, { start: monthStart, end: monthEnd }); 

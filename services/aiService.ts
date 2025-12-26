@@ -13,7 +13,6 @@ const extractJSON = (text: string) => {
   try {
     const codeBlockMatch = text.match(/```json\s*([\s\S]*?)\s*```/);
     if (codeBlockMatch) return JSON.parse(codeBlockMatch[1]);
-    const firstOpenBrace = text.indexOf('{');
     const objectMatch = text.match(/\{[\s\S]*\}/);
     if (objectMatch) return JSON.parse(objectMatch[0]);
     return JSON.parse(text);
@@ -120,9 +119,6 @@ export const processUserIntent = async (
   return extractJSON(rawResponseText) as AIProcessingResult;
 };
 
-/**
- * 后台增强模糊任务：解析用户的碎片化闪念
- */
 export const enhanceFuzzyTask = async (
   rawText: string,
   settings: AISettings
@@ -165,13 +161,6 @@ export const processWeeklyReport = async (plans: WorkPlan[], settings: AISetting
       你是一个极专业的高级办公助手。请根据提供的本周原始日程数据生成一份结构化周报。
       数据包含任务标题、状态、标签以及详情描述。
 
-      【核心要求】：
-      1. **严谨区分相似任务**：用户可能在同一天有标题相似但性质不同的任务。你**必须**参考【标签】和【描述】来区分它们（例如：区分“静态页面开发”与“接口联调”）。
-      2. **achievements (本周完成工作)**：应体现工作的具体进展，不要简单合并不同性质的任务，保留关键细节。
-      3. **summary (本周总结)**：对本周的整体效率、产出质量、工作重心进行精炼点评。
-      4. **nextWeekPlans (下周计划)**：基于本周未完成项或业务逻辑，推测并建议下周的重点工作。
-      5. **risks (风险与帮助)**：识别潜在的进度滞后、协作阻碍或技术难点。
-
       必须返回 JSON 格式：
       {
         "achievements": ["具体完成项1", "具体完成项2", ...],
@@ -206,13 +195,50 @@ export const processMonthlyReview = async (allPlans: WorkPlan[], settings: AISet
   const now = new Date();
   const monthPlans = allPlans.filter(p => new Date(p.startDate) >= new Date(now.getFullYear(), now.getMonth(), 1));
   const plansContext = formatPlansForContext(monthPlans);
-  const systemPrompt = `你是一位最坦诚的诊断顾问。必须返回 JSON 格式。包含 grade, gradeTitle, healthScore, chaosLevel, patterns, candidAdvice, metrics。`;
+  
+  const systemPrompt = `
+    你是一位最坦诚、犀利且专业的行为诊断顾问。
+    请基于用户本月的日程数据（包含标题、描述、标签、状态），给出一份深度“镜像诊断书”。
+    
+    【输出要求】：
+    1. 必须返回严格的 JSON 格式。
+    2. grade: 从 S 到 F 的等级。
+    3. gradeTitle: 简短、有力的评价（如“多核运转的平衡者”或“碎片化陷阱中的囚徒”）。
+    4. healthScore: 0-100 的整数，代表日程管理质量。
+    5. chaosLevel: 0-100 的整数，代表混乱程度。
+    6. patterns: 必须是对象数组，每个对象包含 id, label, description, type('warning'|'positive'|'info')。
+    7. candidAdvice: 必须是对象数组，每个对象包含 truth (深刻的真相揭露) 和 action (具体的改进方案)。
+    8. metrics: 包含 taggedRatio (0-1), descriptionRate (0-1), deepWorkRatio (0-1)。
+
+    示例 JSON 结构：
+    {
+      "grade": "B",
+      "gradeTitle": "执行力尚可但缺乏深度工作",
+      "healthScore": 75,
+      "chaosLevel": 40,
+      "patterns": [{ "id": "1", "label": "会议过载", "description": "...", "type": "warning" }],
+      "candidAdvice": [{ "truth": "你以为在忙，其实只是在开会。", "action": "缩减会议时长" }],
+      "metrics": { "taggedRatio": 0.8, "descriptionRate": 0.5, "deepWorkRatio": 0.2 }
+    }
+  `;
+
   let rawResponseText: string | null = null;
   if (settings.provider === AIProvider.GOOGLE) {
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-    const response = await ai.models.generateContent({ model: settings.model, contents: `诊断本月：\n${plansContext}`, config: { responseMimeType: "application/json", systemInstruction: systemPrompt, temperature: 0.8 } });
+    const response = await ai.models.generateContent({ 
+      model: settings.model, 
+      contents: `请诊断用户本月数据：\n${plansContext}`, 
+      config: { 
+        responseMimeType: "application/json", 
+        systemInstruction: systemPrompt, 
+        temperature: 0.7 
+      } 
+    });
     rawResponseText = response.text;
-  } else { rawResponseText = await callOpenAICompatible(settings, [{ role: 'system', content: systemPrompt }, { role: 'user', content: plansContext }], true, signal); }
+  } else { 
+    rawResponseText = await callOpenAICompatible(settings, [{ role: 'system', content: systemPrompt }, { role: 'user', content: plansContext }], true, signal); 
+  }
+  
   if (!rawResponseText) return null;
   return { type: 'MONTH_REVIEW', data: extractJSON(rawResponseText) as MonthlyAnalysisData };
 };
