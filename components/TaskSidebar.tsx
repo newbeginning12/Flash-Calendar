@@ -59,8 +59,11 @@ export const TaskSidebar: React.FC<TaskSidebarProps> = ({
   const [hasUserToggledAi, setHasUserToggledAi] = useState(false);
   const [hasUserToggledTemplates, setHasUserToggledTemplates] = useState(false);
 
+  // 优化：在此处显式排除 isFuzzy 的记录，确保“今日汇总”只显示已排程的任务
   const dailyPlans = useMemo(() => {
-    return plans.filter(p => isSameDay(new Date(p.startDate), currentDate)).sort((a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime());
+    return plans
+      .filter(p => !p.isFuzzy && isSameDay(new Date(p.startDate), currentDate))
+      .sort((a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime());
   }, [plans, currentDate]);
 
   useEffect(() => {
@@ -241,7 +244,6 @@ export const TaskSidebar: React.FC<TaskSidebarProps> = ({
       {contextMenu && createPortal(
         <div className="fixed z-[9999] bg-white/90 backdrop-blur-xl rounded-2xl shadow-2xl border border-slate-200/50 w-48 overflow-hidden p-1.5 animate-in fade-in zoom-in-95 duration-150 origin-top-left" style={{ top: Math.min(contextMenu.y, window.innerHeight - 300), left: Math.min(contextMenu.x, window.innerWidth - 200) }}>
             <div className="px-3 py-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider">复刻与复制</div>
-            <button onClick={() => { onDuplicatePlan(contextMenu.plan.id); setContextMenu(null); }} className="w-full text-left flex items-center gap-2.5 p-2 rounded-lg hover:bg-indigo-50 text-indigo-600 font-bold text-xs transition-all"><Copy size={14} /> 复刻任务</button>
             <button onClick={() => { const tomorrow = addDays(new Date(contextMenu.plan.startDate), 1); onDuplicatePlan(contextMenu.plan.id, tomorrow); setContextMenu(null); }} className="w-full text-left flex items-center gap-2.5 p-2 rounded-lg hover:bg-blue-50 text-blue-600 font-bold text-xs transition-all"><CalendarPlus size={14} /> 明天继续</button>
             <div className="h-px bg-slate-100 my-1.5 mx-1"></div>
             <div className="px-3 py-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider">状态标记</div>

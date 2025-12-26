@@ -18,8 +18,9 @@ import { FlashCommand } from './components/FlashCommand';
 import { NotificationCenter } from './components/NotificationCenter';
 import { WeeklyReportModal } from './components/WeeklyReportModal';
 import { MonthlyReviewModal } from './components/MonthlyReviewModal';
+import { SmartShelf } from './components/SmartShelf';
 import { 
-  processUserIntent, generateSmartSuggestions, DEFAULT_MODEL, SmartSuggestion, processMonthlyReview, processWeeklyReport
+  processUserIntent, generateSmartSuggestions, DEFAULT_MODEL, SmartSuggestion, processMonthlyReview, processWeeklyReport, enhanceFuzzyTask
 } from './services/aiService';
 import { storageService, BackupData } from './services/storageService';
 import { format, addDays, isSameDay, addMinutes, endOfDay, differenceInMinutes, isAfter, startOfWeek, endOfWeek, startOfMonth, endOfMonth, isWithinInterval } from 'date-fns';
@@ -41,7 +42,6 @@ export const App: React.FC = () => {
   const [isDatePickerOpen, setIsDatePickerOpen] = useState(false);
   const [smartSuggestions, setSmartSuggestions] = useState<SmartSuggestion[]>([]);
   
-  // 拆分加载状态以实现并发和独立反馈
   const [isProcessingInput, setIsProcessingInput] = useState(false);
   const [isProcessingReport, setIsProcessingReport] = useState(false);
   const [isProcessingReview, setIsProcessingReview] = useState(false);
@@ -54,8 +54,9 @@ export const App: React.FC = () => {
   const [monthlyData, setMonthlyData] = useState<MonthlyAnalysisData | null>(null);
   const [isMonthlyModalOpen, setIsMonthlyModalOpen] = useState(false);
 
-  const [unsupportedMessage, setUnsupportedMessage] = useState<string | null>(null);
+  const [isShelfOpen, setIsShelfOpen] = useState(false);
 
+  const [unsupportedMessage, setUnsupportedMessage] = useState<string | null>(null);
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [isNotificationOpen, setIsNotificationOpen] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_SIDEBAR_WIDTH);
@@ -73,7 +74,7 @@ export const App: React.FC = () => {
   useEffect(() => {
     const checkOverdue = () => {
       const now = new Date();
-      const overduePlans = plans.filter(p => p.status !== PlanStatus.DONE && isAfter(now, new Date(p.endDate)) && !lastCheckedOverdueRef.current.has(p.id));
+      const overduePlans = plans.filter(p => !p.isFuzzy && p.status !== PlanStatus.DONE && isAfter(now, new Date(p.endDate)) && !lastCheckedOverdueRef.current.has(p.id));
       overduePlans.forEach(p => {
         addNotification({ type: 'OVERDUE', title: '任务已逾期', message: `计划 “${p.title}” 已超过结束时间，请及时处理。`, planId: p.id });
         lastCheckedOverdueRef.current.add(p.id);
@@ -103,80 +104,36 @@ export const App: React.FC = () => {
 
   const handleWeeklyReport = async () => {
     if (isProcessingReport) return;
-    
-    // 数据校验：检查当前选择的周是否有日程
     const weekStart = startOfWeek(currentDate, { weekStartsOn: 1 });
     const weekEnd = endOfWeek(currentDate, { weekStartsOn: 1 });
-    const weekPlansCount = plans.filter(p => {
-        const d = new Date(p.startDate);
-        return isWithinInterval(d, { start: weekStart, end: weekEnd });
-    }).length;
-
-    if (weekPlansCount === 0) {
-        setUnsupportedMessage("当前选择的周内暂无日程数据，无法生成周报。");
-        setTimeout(() => setUnsupportedMessage(null), 3000);
-        return;
-    }
-
+    const weekPlansCount = plans.filter(p => { const d = new Date(p.startDate); return isWithinInterval(d, { start: weekStart, end: weekEnd }); }).length;
+    if (weekPlansCount === 0) { setUnsupportedMessage("当前选择的周内暂无日程数据，无法生成周报数据。"); setTimeout(() => setUnsupportedMessage(null), 3000); return; }
     setIsProcessingReport(true);
-    try {
-        const result = await processWeeklyReport(plans, settings);
-        if (result) {
-            setReportData(result);
-            setIsReportModalOpen(true);
-        }
-    } catch (e) {
-        console.error(e);
-    } finally {
-        setIsProcessingReport(false);
-    }
+    try { const result = await processWeeklyReport(plans, settings); if (result) { setReportData(result); setIsReportModalOpen(true); } } 
+    catch (e) { console.error(e); } finally { setIsProcessingReport(false); }
   };
 
   const handleMonthlyReview = async () => {
     if (isProcessingReview) return;
-
-    // 数据校验：检查当前选择的月是否有日程
     const monthStart = startOfMonth(currentDate);
     const monthEnd = endOfMonth(currentDate);
-    const monthPlansCount = plans.filter(p => {
-        const d = new Date(p.startDate);
-        return isWithinInterval(d, { start: monthStart, end: monthEnd });
-    }).length;
-
-    if (monthPlansCount === 0) {
-        setUnsupportedMessage("当前选择的月份内暂无日程数据，无法进行镜像诊断。");
-        setTimeout(() => setUnsupportedMessage(null), 3000);
-        return;
-    }
-
+    const monthPlansCount = plans.filter(p => { const d = new Date(p.startDate); return isWithinInterval(d, { start: monthStart, end: monthEnd }); }).length;
+    if (monthPlansCount === 0) { setUnsupportedMessage("当前选择的月份内暂无日程数据，无法进行镜像诊断。"); setTimeout(() => setUnsupportedMessage(null), 3000); return; }
     setIsProcessingReview(true);
     try {
       const result = await processMonthlyReview(plans, settings);
       if (result && result.type === 'MONTH_REVIEW') {
-        const report = {
-            ...result.data,
-            id: crypto.randomUUID(),
-            timestamp: new Date().toISOString()
-        };
+        const report = { ...result.data, id: crypto.randomUUID(), timestamp: new Date().toISOString() };
         await storageService.saveMonthlyReport(report);
-        setMonthlyData(report);
-        setIsMonthlyModalOpen(true);
+        setMonthlyData(report); setIsMonthlyModalOpen(true);
       }
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setIsProcessingReview(false);
-    }
+    } catch (e) { console.error(e); } finally { setIsProcessingReview(false); }
   };
 
   const filteredResults = useMemo(() => {
     if (!searchTerm.trim()) return [];
     const lowerSearch = searchTerm.toLowerCase();
-    return plans.filter(plan => 
-      plan.title.toLowerCase().includes(lowerSearch) ||
-      plan.tags.some(t => t.toLowerCase().includes(lowerSearch)) ||
-      (plan.description && plan.description.toLowerCase().includes(lowerSearch))
-    ).sort((a, b) => new Date(b.startDate).getTime() - new Date(a.startDate).getTime());
+    return plans.filter(plan => plan.title.toLowerCase().includes(lowerSearch) || plan.tags.some(t => t.toLowerCase().includes(lowerSearch)) || (plan.description && plan.description.toLowerCase().includes(lowerSearch))).sort((a, b) => new Date(b.startDate).getTime() - new Date(a.startDate).getTime());
   }, [searchTerm, plans]);
 
   const handleResultClick = (plan: WorkPlan) => {
@@ -184,6 +141,7 @@ export const App: React.FC = () => {
     setCurrentDate(planDate);
     setTargetPlanId(plan.id);
     setIsSearchFocused(false);
+    if (plan.isFuzzy) setIsShelfOpen(true); // 如果是模糊计划，打开侧边仓
     setTimeout(() => setTargetPlanId(null), 2500);
   };
 
@@ -192,8 +150,11 @@ export const App: React.FC = () => {
     const newPlans = exists ? plans.map(p => p.id === plan.id ? plan : p) : [...plans, plan];
     setPlans(newPlans);
     await storageService.savePlans(newPlans);
-    setCurrentDate(new Date(plan.startDate)); setTargetPlanId(plan.id); setTimeout(() => setTargetPlanId(null), 2500);
-    setIsPlanModalOpen(false); setEditingPlan(null);
+    if (!plan.isFuzzy && !plan.isEnhancing) {
+        setCurrentDate(new Date(plan.startDate));
+        setTargetPlanId(plan.id);
+        setTimeout(() => setTargetPlanId(null), 2500);
+    }
   };
 
   const handleSmartInput = async (input: string) => {
@@ -209,11 +170,51 @@ export const App: React.FC = () => {
                   const basePlan: WorkPlan = { id: crypto.randomUUID(), title: '新建日程', startDate: new Date().toISOString(), endDate: new Date(Date.now() + 3600000).toISOString(), status: PlanStatus.TODO, tags: [], color: 'blue', links: [], ...result.data };
                   setEditingPlan(basePlan as WorkPlan); setIsPlanModalOpen(true);
               } else if (result.type === 'UNSUPPORTED') {
-                  setUnsupportedMessage(result.message);
+                  setUnsupportedMessage(result.message || "由于缺乏具体时间，建议使用挂载仓快速记录。");
                   setTimeout(() => setUnsupportedMessage(null), 4000);
               }
           }
       } catch (error: any) { console.error("AI Error:", error); } finally { setIsProcessingInput(false); }
+  };
+
+  // 即时捕获处理逻辑：分两步
+  const handleShelfCapture = async (text: string) => {
+      // 第一步：即时生成记录（不调用 AI，秒回）
+      const newId = crypto.randomUUID();
+      const rawPlan: WorkPlan = {
+          id: newId,
+          title: text,
+          startDate: new Date().toISOString(),
+          endDate: addMinutes(new Date(), 60).toISOString(),
+          status: PlanStatus.TODO,
+          tags: [],
+          color: 'slate', // 默认灰色
+          links: [],
+          isFuzzy: true,
+          isEnhancing: true // 标记正在处理中
+      };
+      
+      const newPlans = [...plans, rawPlan];
+      setPlans(newPlans);
+      await storageService.savePlans(newPlans);
+
+      // 第二步：后台异步增强
+      try {
+          const enhancedData = await enhanceFuzzyTask(text, settings);
+          if (enhancedData) {
+              setPlans(prev => {
+                  const updated = prev.map(p => p.id === newId ? { ...p, ...enhancedData, isEnhancing: false } : p);
+                  storageService.savePlans(updated);
+                  return updated;
+              });
+          } else {
+              // 处理失败则取消增强状态
+              setPlans(prev => prev.map(p => p.id === newId ? { ...p, isEnhancing: false } : p));
+          }
+      } catch (e) {
+          console.error("Enhance failed", e);
+          setPlans(prev => prev.map(p => p.id === newId ? { ...p, isEnhancing: false } : p));
+      }
   };
   
   const handleSuggestionClick = async (suggestion: SmartSuggestion) => {
@@ -241,7 +242,7 @@ export const App: React.FC = () => {
               currentDate={currentDate} 
               plans={plans} 
               onPlanClick={(p) => { setEditingPlan(p); setIsPlanModalOpen(true); }} 
-              onPlanUpdate={async (p) => { const np = plans.map(x => x.id === p.id ? p : x); setPlans(np); await storageService.savePlans(np); }} 
+              onPlanUpdate={handleSavePlan} 
               onDeletePlan={async (id) => { const np = plans.filter(x => x.id !== id); setPlans(np); await storageService.savePlans(np); setIsPlanModalOpen(false); }} 
               onDuplicatePlan={async (id, td) => {
                 const s = plans.find(x => x.id === id); if(!s) return;
@@ -275,78 +276,34 @@ export const App: React.FC = () => {
            <header className="h-16 flex items-center justify-between px-6 bg-white/80 backdrop-blur-xl border-b border-slate-200/60 flex-shrink-0 z-[70] sticky top-0 shadow-sm">
                 <div className="flex items-center gap-8 flex-shrink-0">
                     <div className="flex items-center gap-4">
-                        <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="p-2 -ml-2 text-slate-400 hover:text-slate-800 hover:bg-slate-100 rounded-lg transition-all hidden lg:block">
-                            <PanelLeft size={20} />
-                        </button>
-                        <div className="flex items-center gap-2.5 group cursor-default">
-                            <div className="w-8 h-8 flex-shrink-0 group-hover:scale-110 transition-transform duration-300"><AppIcon /></div>
-                            <h1 className="text-xl font-black bg-gradient-to-r from-slate-900 to-slate-600 bg-clip-text text-transparent tracking-tighter hidden sm:block whitespace-nowrap">闪历</h1>
-                        </div>
+                        <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="p-2 -ml-2 text-slate-400 hover:text-slate-800 hover:bg-slate-100 rounded-lg transition-all hidden lg:block"><PanelLeft size={20} /></button>
+                        <div className="flex items-center gap-2.5 group cursor-default"><div className="w-8 h-8 flex-shrink-0 group-hover:scale-110 transition-transform duration-300"><AppIcon /></div><h1 className="text-xl font-black bg-gradient-to-r from-slate-900 to-slate-600 bg-clip-text text-transparent tracking-tighter hidden sm:block whitespace-nowrap">闪历</h1></div>
                     </div>
-
-                    <div className="relative flex items-center bg-slate-100/60 hover:bg-slate-100 border border-slate-200/50 rounded-xl p-0.5">
-                        <button onClick={() => setCurrentDate(addDays(currentDate, -7))} className="p-1.5 text-slate-400 hover:text-slate-800 hover:bg-white rounded-lg transition-all"><ChevronLeft size={16} /></button>
-                        <button onClick={() => setIsDatePickerOpen(!isDatePickerOpen)} className="flex items-center gap-2 px-3 py-1 text-sm font-bold text-slate-700 min-w-[100px] justify-center hover:text-indigo-600 transition-colors">{format(currentDate, 'M月yyyy')}</button>
-                        <button onClick={() => setCurrentDate(addDays(currentDate, 7))} className="p-1.5 text-slate-400 hover:text-slate-800 hover:bg-white rounded-lg transition-all"><ChevronRight size={16} /></button>
-                        {isDatePickerOpen && <DatePicker currentDate={currentDate} onDateSelect={setCurrentDate} onClose={() => setIsDatePickerOpen(false)} />}
-                    </div>
+                    <div className="relative flex items-center bg-slate-100/60 hover:bg-slate-100 border border-slate-200/50 rounded-xl p-0.5"><button onClick={() => setCurrentDate(addDays(currentDate, -7))} className="p-1.5 text-slate-400 hover:text-slate-800 hover:bg-white rounded-lg transition-all"><ChevronLeft size={16} /></button><button onClick={() => setIsDatePickerOpen(!isDatePickerOpen)} className="flex items-center gap-2 px-3 py-1 text-sm font-bold text-slate-700 min-w-[100px] justify-center hover:text-indigo-600 transition-colors">{format(currentDate, 'M月yyyy')}</button><button onClick={() => setCurrentDate(addDays(currentDate, 7))} className="p-1.5 text-slate-400 hover:text-slate-800 hover:bg-white rounded-lg transition-all"><ChevronRight size={16} /></button>{isDatePickerOpen && <DatePicker currentDate={currentDate} onDateSelect={setCurrentDate} onClose={() => setIsDatePickerOpen(false)} />}</div>
                 </div>
 
                 <div className="flex items-center gap-4 justify-end flex-1">
-                    <div className="w-[260px] lg:w-[380px] transition-all duration-300 ml-auto">
-                        <SmartInput 
-                            onSubmit={handleSmartInput} 
-                            onStop={() => { abortControllerRef.current?.abort(); setIsProcessingInput(false); }} 
-                            onSuggestionClick={handleSuggestionClick} 
-                            isProcessing={isProcessingInput} 
-                            suggestions={smartSuggestions}
-                            layout="header"
-                            searchValue={searchTerm}
-                            onSearchChange={setSearchTerm}
-                            searchResults={filteredResults}
-                            onSearchResultClick={handleResultClick}
-                            unsupportedMessage={unsupportedMessage}
-                            onClearUnsupported={() => setUnsupportedMessage(null)}
-                        />
-                    </div>
-
-                    <button 
-                        onClick={() => {
-                          const d = new Date(); const np: WorkPlan = { id: crypto.randomUUID(), title: '新建日程', startDate: d.toISOString(), endDate: addMinutes(d, 60).toISOString(), status: PlanStatus.TODO, tags: [], color: 'blue', links: [] };
-                          setEditingPlan(np); setIsPlanModalOpen(true);
-                        }}
-                        className="h-9 flex items-center justify-center gap-2 px-4 bg-slate-900 hover:bg-black text-white rounded-xl shadow-md active:scale-95 transition-all group whitespace-nowrap flex-shrink-0"
-                    >
-                        <PlusCircle size={15} />
-                        <span className="text-sm font-bold tracking-tight">新建日程</span>
-                    </button>
-
+                    <div className="w-[260px] lg:w-[380px] transition-all duration-300 ml-auto"><SmartInput onSubmit={handleSmartInput} onStop={() => { abortControllerRef.current?.abort(); setIsProcessingInput(false); }} onSuggestionClick={handleSuggestionClick} isProcessing={isProcessingInput} suggestions={smartSuggestions} layout="header" searchValue={searchTerm} onSearchChange={setSearchTerm} searchResults={filteredResults} onSearchResultClick={handleResultClick} unsupportedMessage={unsupportedMessage} onClearUnsupported={() => setUnsupportedMessage(null)} /></div>
+                    <button onClick={() => { const d = new Date(); const np: WorkPlan = { id: crypto.randomUUID(), title: '新建日程', startDate: d.toISOString(), endDate: addMinutes(d, 60).toISOString(), status: PlanStatus.TODO, tags: [], color: 'blue', links: [] }; setEditingPlan(np); setIsPlanModalOpen(true); }} className="h-9 flex items-center justify-center gap-2 px-4 bg-slate-900 hover:bg-black text-white rounded-xl shadow-md active:scale-95 transition-all group whitespace-nowrap flex-shrink-0"><PlusCircle size={15} /><span className="text-sm font-bold tracking-tight">新建日程</span></button>
                     <div className="h-6 w-px bg-slate-200/60 mx-1"></div>
-
-                    <div className="flex items-center gap-1">
-                        <div className="relative">
-                            <button onClick={() => setIsNotificationOpen(!isNotificationOpen)} className="p-2 text-slate-400 hover:text-slate-800 hover:bg-slate-100 rounded-full transition-colors relative">
-                                <Bell size={20} />
-                                {notifications.some(n => !n.read) && <span className="absolute top-2 right-2 w-2 h-2 bg-rose-500 rounded-full border border-white animate-pulse"></span>}
-                            </button>
-                            <NotificationCenter isOpen={isNotificationOpen} onClose={() => setIsNotificationOpen(false)} notifications={notifications} onMarkRead={(id) => setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true } : n))} onClearAll={() => setNotifications([])} onDelete={(id) => setNotifications(prev => prev.filter(n => n.id !== id))} onItemClick={(n) => { if(n.planId) { const p = plans.find(x => x.id === n.planId); if(p) handleResultClick(p); } setIsNotificationOpen(false); }} />
-                        </div>
-                        <button onClick={() => setIsSettingsOpen(true)} className="p-2 text-slate-400 hover:text-slate-800 hover:bg-slate-100 rounded-full transition-colors"><Settings size={20} /></button>
-                    </div>
+                    <div className="flex items-center gap-1"><div className="relative"><button onClick={() => setIsNotificationOpen(!isNotificationOpen)} className="p-2 text-slate-400 hover:text-slate-800 hover:bg-slate-100 rounded-full transition-colors relative"><Bell size={20} />{notifications.some(n => !n.read) && <span className="absolute top-2 right-2 w-2 h-2 bg-rose-500 rounded-full border border-white animate-pulse"></span>}</button><NotificationCenter isOpen={isNotificationOpen} onClose={() => setIsNotificationOpen(false)} notifications={notifications} onMarkRead={(id) => setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true } : n))} onClearAll={() => setNotifications([])} onDelete={(id) => setNotifications(prev => prev.filter(n => n.id !== id))} onItemClick={(n) => { if(n.planId) { const p = plans.find(x => x.id === n.planId); if(p) handleResultClick(p); } setIsNotificationOpen(false); }} /></div><button onClick={() => setIsSettingsOpen(true)} className="p-2 text-slate-400 hover:text-slate-800 hover:bg-slate-100 rounded-full transition-colors"><Settings size={20} /></button></div>
                 </div>
            </header>
 
            <div className="flex-1 overflow-hidden relative p-4">
-              <WeeklyCalendar currentDate={currentDate} plans={plans} searchTerm={searchTerm} targetPlanId={targetPlanId} onPlanClick={(p) => { setEditingPlan(p); setIsPlanModalOpen(true); }} onSlotClick={(d) => { const np: WorkPlan = { id: crypto.randomUUID(), title: '新建日程', startDate: d.toISOString(), endDate: addMinutes(d, 60).toISOString(), status: PlanStatus.TODO, tags: [], color: 'blue', links: [] }; setEditingPlan(np); setIsPlanModalOpen(true); }} onPlanUpdate={async (p) => { const np = plans.map(x => x.id === p.id ? p : x); setPlans(np); await storageService.savePlans(np); }} onDuplicatePlan={async (id, td) => {
-                const s = plans.find(x => x.id === id); if(!s) return;
-                const d = differenceInMinutes(new Date(s.endDate), new Date(s.startDate));
-                const start = td || new Date(); const end = addMinutes(start, d);
-                const np = { ...s, id: crypto.randomUUID(), startDate: start.toISOString(), endDate: end.toISOString(), status: PlanStatus.TODO };
-                const nps = [...plans, np]; setPlans(nps); await storageService.savePlans(nps);
-                if(td) { setTargetPlanId(np.id); setTimeout(() => setTargetPlanId(null), 2500); } else { setEditingPlan(np); setIsPlanModalOpen(true); }
-              }} onDateSelect={setCurrentDate} onDeletePlan={async (id) => { const np = plans.filter(x => x.id !== id); setPlans(np); await storageService.savePlans(np); setIsPlanModalOpen(false); }} onDragCreate={(startDate, duration, title, color, tags) => { const newPlan: WorkPlan = { id: crypto.randomUUID(), title: title || '新建日程', startDate: startDate.toISOString(), endDate: addMinutes(startDate, duration).toISOString(), status: PlanStatus.TODO, tags: tags || [], color: color || 'blue', links: [] }; setEditingPlan(newPlan); setIsPlanModalOpen(true); }} />
+              <WeeklyCalendar currentDate={currentDate} plans={plans} searchTerm={searchTerm} targetPlanId={targetPlanId} onPlanClick={(p) => { setEditingPlan(p); setIsPlanModalOpen(true); }} onSlotClick={(d) => { const np: WorkPlan = { id: crypto.randomUUID(), title: '新建日程', startDate: d.toISOString(), endDate: addMinutes(d, 60).toISOString(), status: PlanStatus.TODO, tags: [], color: 'blue', links: [] }; setEditingPlan(np); setIsPlanModalOpen(true); }} onPlanUpdate={handleSavePlan} onDuplicatePlan={async (id, td) => { const s = plans.find(x => x.id === id); if(!s) return; const d = differenceInMinutes(new Date(s.endDate), new Date(s.startDate)); const start = td || new Date(); const end = addMinutes(start, d); const np = { ...s, id: crypto.randomUUID(), startDate: start.toISOString(), endDate: end.toISOString(), status: PlanStatus.TODO }; const nps = [...plans, np]; setPlans(nps); await storageService.savePlans(nps); if(td) { setTargetPlanId(np.id); setTimeout(() => setTargetPlanId(null), 2500); } else { setEditingPlan(np); setIsPlanModalOpen(true); } }} onDateSelect={setCurrentDate} onDeletePlan={async (id) => { const np = plans.filter(x => x.id !== id); setPlans(np); await storageService.savePlans(np); setIsPlanModalOpen(false); }} onDragCreate={(startDate, duration, title, color, tags) => { const newPlan: WorkPlan = { id: crypto.randomUUID(), title: title || '新建日程', startDate: startDate.toISOString(), endDate: addMinutes(startDate, duration).toISOString(), status: PlanStatus.TODO, tags: tags || [], color: color || 'blue', links: [] }; setEditingPlan(newPlan); setIsPlanModalOpen(true); }} />
            </div>
        </div>
+
+       <SmartShelf 
+         plans={plans} 
+         isOpen={isShelfOpen} 
+         onToggle={setIsShelfOpen} 
+         onPlanClick={(p) => { setEditingPlan(p); setIsPlanModalOpen(true); }} 
+         onPlanUpdate={handleSavePlan} 
+         onDeletePlan={async (id) => { const np = plans.filter(x => x.id !== id); setPlans(np); await storageService.savePlans(np); }} 
+         onCapture={handleShelfCapture}
+       />
 
        <PlanModal plan={editingPlan} isOpen={isPlanModalOpen} onClose={() => setIsPlanModalOpen(false)} onSave={handleSavePlan} onDelete={async (id) => { const np = plans.filter(x => x.id !== id); setPlans(np); await storageService.savePlans(np); setIsPlanModalOpen(false); }} />
        <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} settings={settings} onSave={(s) => { setSettings(s); localStorage.setItem('zhihui_settings', JSON.stringify(s)); setIsSettingsOpen(false); }} onExport={() => storageService.exportData(plans, settings)} onImport={async (d) => { if (d.plans) { setPlans(d.plans); await storageService.savePlans(d.plans); } if (d.settings) { setSettings(d.settings); localStorage.setItem('zhihui_settings', JSON.stringify(d.settings)); } setIsSettingsOpen(false); }} />

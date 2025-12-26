@@ -21,6 +21,8 @@ export interface WorkPlan {
   tags: string[];
   color: string; // Tailwind color class helper
   links: LinkResource[];
+  isFuzzy?: boolean; // 新增：是否为模糊/未排程计划
+  isEnhancing?: boolean; // 新增：是否正在被 AI 后台增强处理
 }
 
 export interface CalendarEventPosition {
