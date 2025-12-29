@@ -3,7 +3,7 @@ import React, { useState, useRef, useEffect, useMemo, useCallback, useLayoutEffe
 import { createPortal } from 'react-dom';
 import { WorkPlan, PlanStatus } from '../types';
 import { format, addDays, isSameDay, getHours, getMinutes, differenceInMinutes, addMinutes, startOfMonth } from 'date-fns';
-import { Plus, Clock, CheckCircle2, Circle, PlayCircle, Trash2, AlignLeft, ZoomIn, ZoomOut, RotateCcw, Copy, CalendarPlus, Focus, Inbox, MousePointer2, ChevronLeft, ChevronRight, ChevronDownCircle } from 'lucide-react';
+import { Plus, Clock, CheckCircle2, Circle, PlayCircle, Trash2, AlignLeft, ZoomIn, ZoomOut, RotateCcw, Copy, CalendarPlus, Focus, Inbox, MousePointer2, ChevronLeft, ChevronRight, ChevronDownCircle, Link as LinkIcon, ExternalLink } from 'lucide-react';
 
 interface WeeklyCalendarProps {
   currentDate: Date;
@@ -499,8 +499,9 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
                                         const isTarget = targetPlanId === plan.id;
                                         const isHovered = hoveredPlanId === plan.id;
                                         const COMPACT_THRESHOLD = 38;
-                                        const SHOW_TAGS_THRESHOLD = 80;
-                                        const SHOW_DESC_THRESHOLD = 115;
+                                        const SHOW_META_THRESHOLD = 58;
+                                        const SHOW_DESC_THRESHOLD = 75;
+                                        const SHOW_LINKS_THRESHOLD = 110;
                                         
                                         return (
                                             <div 
@@ -531,29 +532,57 @@ export const WeeklyCalendar: React.FC<WeeklyCalendarProps> = ({
                                                   </div>
                                                 ) : (
                                                   <div className="flex flex-col h-full overflow-hidden">
-                                                    <div className="flex items-start justify-between gap-1.5 mb-1.5 min-w-0 flex-shrink-0">
+                                                    <div className="flex items-start justify-between gap-1.5 mb-1 min-w-0 flex-shrink-0">
                                                       <div className={`font-bold truncate leading-tight ${cardHeight >= 115 ? 'text-[15px]' : cardHeight >= 75 ? 'text-[13px]' : 'text-[11px]'} ${isDone ? 'text-slate-400 line-through font-normal opacity-70' : 'text-slate-800'} flex-1`}>{plan.title}</div>
                                                       {getSimpleStatusIcon(plan.status, plan.color, cardHeight < 75 ? 10 : 12)}
                                                     </div>
+                                                    
                                                     <div className="flex items-center gap-1.5 mb-1.5 overflow-hidden whitespace-nowrap flex-shrink-0">
                                                       <div className={`flex-shrink-0 inline-flex items-center px-1 py-0.5 rounded text-[8px] font-black uppercase tracking-tighter ${STATUS_BADGE_CLASSES[plan.status]}`}>{STATUS_LABELS[plan.status]}</div>
                                                       <div className={`flex items-center gap-1 font-bold font-mono min-w-0 ${isDone ? `text-${plan.color}-600/40` : `text-${plan.color}-600/80`}`}>
-                                                        {cardHeight >= 115 && <Clock size={11} strokeWidth={2.5} className="mr-0.5 opacity-60" />}
-                                                        <span className={`${cardHeight < 75 ? 'text-[9px]' : 'text-[10px]'} truncate`}>{timeRangeStr}{cardHeight >= 75 && <span className="ml-1 opacity-60 font-normal">({durationStr})</span>}</span>
+                                                        <span className={`${cardHeight < 75 ? 'text-[9px]' : 'text-[10px]'} truncate`}>{timeRangeStr}</span>
                                                       </div>
                                                     </div>
-                                                    {cardHeight >= SHOW_TAGS_THRESHOLD && plan.tags && plan.tags.length > 0 && (
-                                                      <div className="flex flex-wrap gap-1 mt-0.5 mb-1 overflow-hidden flex-shrink-0 max-h-[36px]">
-                                                        {plan.tags.slice(0, 3).map(tag => (
-                                                          <span key={tag} className={`px-1.5 py-0.5 rounded-md text-[8px] font-bold whitespace-nowrap ${isDone ? `bg-${plan.color}-100/30 text-${plan.color}-400` : `bg-${plan.color}-100/50 text-${plan.color}-700 border border-${plan.color}-200/30`}`}>{tag}</span>
+
+                                                    {/* Meta Section: Tags and Description moved up */}
+                                                    <div className="flex flex-col gap-1 overflow-hidden min-h-0">
+                                                      {cardHeight >= SHOW_META_THRESHOLD && (
+                                                        <div className="flex flex-wrap items-center gap-1 overflow-hidden flex-shrink-0">
+                                                          {plan.tags && plan.tags.length > 0 && (
+                                                            <div className="flex flex-wrap gap-1">
+                                                              {plan.tags.slice(0, 2).map(tag => (
+                                                                <span key={tag} className={`px-1.5 py-0.5 rounded-md text-[8px] font-bold whitespace-nowrap ${isDone ? `bg-${plan.color}-100/30 text-${plan.color}-400` : `bg-${plan.color}-100/50 text-${plan.color}-700 border border-${plan.color}-200/30`}`}>{tag}</span>
+                                                              ))}
+                                                              {plan.tags.length > 2 && <span className="text-[8px] text-slate-400 font-bold">+{plan.tags.length - 2}</span>}
+                                                            </div>
+                                                          )}
+                                                          {plan.links && plan.links.length > 0 && cardHeight >= SHOW_LINKS_THRESHOLD && (
+                                                            <div className={`flex items-center gap-0.5 px-1.5 py-0.5 rounded-md text-[8px] font-black uppercase border ${isDone ? 'border-slate-100 text-slate-300' : 'border-blue-100 text-blue-600 bg-blue-50/30'}`}>
+                                                              <LinkIcon size={8} strokeWidth={3} />
+                                                              <span>{plan.links.length} Link{plan.links.length > 1 ? 's' : ''}</span>
+                                                            </div>
+                                                          )}
+                                                        </div>
+                                                      )}
+                                                      
+                                                      {cardHeight >= SHOW_DESC_THRESHOLD && plan.description && (
+                                                        <div className={`text-[11px] leading-relaxed flex items-start gap-1.5 ${isDone ? 'text-slate-300' : 'text-slate-600'} overflow-hidden`}>
+                                                          <AlignLeft size={10} className="mt-1 flex-shrink-0 opacity-40" />
+                                                          <span className={`flex-1 ${cardHeight > 160 ? 'line-clamp-4' : 'line-clamp-2'}`}>{plan.description}</span>
+                                                        </div>
+                                                      )}
+                                                    </div>
+
+                                                    {/* Link List Section if height is very large */}
+                                                    {cardHeight >= 160 && plan.links && plan.links.length > 0 && (
+                                                      <div className="mt-auto pt-2 border-t border-black/5 flex flex-col gap-1 overflow-hidden max-h-[60px]">
+                                                        {plan.links.slice(0, 2).map(link => (
+                                                          <div key={link.id} className="flex items-center gap-1.5 text-[10px] text-indigo-600 font-bold truncate">
+                                                            <ExternalLink size={10} className="opacity-50" />
+                                                            <span className="truncate">{link.title}</span>
+                                                          </div>
                                                         ))}
-                                                        {plan.tags.length > 3 && <span className="text-[8px] text-slate-400">+{plan.tags.length - 3}</span>}
-                                                      </div>
-                                                    )}
-                                                    {cardHeight >= SHOW_DESC_THRESHOLD && plan.description && (
-                                                      <div className={`mt-auto text-[11px] leading-relaxed flex items-start gap-1.5 pt-2 border-t border-black/5 ${isDone ? 'text-slate-300' : 'text-slate-600'} overflow-hidden`}>
-                                                        <AlignLeft size={10} className="mt-1 flex-shrink-0 opacity-40" />
-                                                        <span className={`flex-1 ${cardHeight > 160 ? 'line-clamp-4' : 'line-clamp-2'}`}>{plan.description}</span>
+                                                        {plan.links.length > 2 && <div className="text-[8px] text-slate-400 font-bold ml-4">及另外 {plan.links.length - 2} 个链接</div>}
                                                       </div>
                                                     )}
                                                   </div>
