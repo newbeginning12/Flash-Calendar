@@ -19,6 +19,8 @@ interface TaskSidebarProps {
   onWeeklyReport: () => void;
   isProcessingReport?: boolean;
   isProcessingReview?: boolean;
+  onOpenTrash?: () => void;
+  trashCount?: number;
 }
 
 interface ContextMenuState {
@@ -50,7 +52,9 @@ const formatDuration = (start: string, end: string) => {
 export const TaskSidebar: React.FC<TaskSidebarProps> = ({ 
   currentDate, plans, onPlanClick, onPlanUpdate, onDuplicatePlan, onDeletePlan, onCreateNew, onQuickAdd, onJumpToToday, onMonthlyReview, onWeeklyReport, 
   isProcessingReport = false,
-  isProcessingReview = false
+  isProcessingReview = false,
+  onOpenTrash,
+  trashCount = 0
 }) => {
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   
@@ -242,6 +246,24 @@ export const TaskSidebar: React.FC<TaskSidebarProps> = ({
                 ))}
             </div>
         )}
+
+        {/* Recycle Bin Entry */}
+        <div className="mt-4 pt-3 border-t border-slate-100/50">
+          <button 
+            onClick={onOpenTrash}
+            className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl bg-slate-100/50 hover:bg-slate-100 text-slate-500 hover:text-slate-700 transition-all group"
+          >
+            <div className="flex items-center gap-2">
+              <Trash2 size={14} className="group-hover:text-rose-500 transition-colors" />
+              <span className="text-[11px] font-black uppercase tracking-wider">最近删除</span>
+            </div>
+            {trashCount > 0 && (
+              <span className="bg-slate-200 group-hover:bg-rose-100 group-hover:text-rose-600 text-[9px] font-black px-1.5 py-0.5 rounded-full transition-colors">
+                {trashCount}
+              </span>
+            )}
+          </button>
+        </div>
       </div>
 
       {contextMenu && createPortal(

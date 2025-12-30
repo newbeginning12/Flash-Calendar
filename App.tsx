@@ -19,11 +19,12 @@ import { NotificationCenter } from './components/NotificationCenter';
 import { WeeklyReportModal } from './components/WeeklyReportModal';
 import { MonthlyReviewModal } from './components/MonthlyReviewModal';
 import { SmartShelf } from './components/SmartShelf';
+import { RecycleBinModal } from './components/RecycleBinModal';
 import { 
   processUserIntent, generateSmartSuggestions, DEFAULT_MODEL, SmartSuggestion, processMonthlyReview, processWeeklyReport, enhanceFuzzyTask
 } from './services/aiService';
 import { storageService, BackupData } from './services/storageService';
-import { format, addDays, isSameDay, addMinutes, endOfDay, differenceInMinutes, isAfter, startOfWeek, endOfWeek, startOfMonth, endOfMonth, isWithinInterval } from 'date-fns';
+import { format, addDays, isSameDay, addMinutes, endOfDay, differenceInMinutes, isAfter, startOfWeek, endOfWeek, startOfMonth, endOfMonth, isWithinInterval, differenceInDays } from 'date-fns';
 
 const MIN_SIDEBAR_WIDTH = 240;
 const DEFAULT_SIDEBAR_WIDTH = 280;
@@ -68,6 +69,7 @@ export const App: React.FC = () => {
   const [isMonthlyModalOpen, setIsMonthlyModalOpen] = useState(false);
 
   const [isShelfOpen, setIsShelfOpen] = useState(false);
+  const [isTrashOpen, setIsTrashOpen] = useState(false);
 
   const [unsupportedMessage, setUnsupportedMessage] = useState<string | null>(null);
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
@@ -79,6 +81,10 @@ export const App: React.FC = () => {
   const sidebarRef = useRef<HTMLDivElement>(null);
   const lastCheckedOverdueRef = useRef<Set<string>>(new Set());
 
+  // --- Derived State for Active/Deleted Plans ---
+  const activePlans = useMemo(() => plans.filter(p => !p.deletedAt), [plans]);
+  const trashPlans = useMemo(() => plans.filter(p => !!p.deletedAt), [plans]);
+
   const addNotification = useCallback((notif: Omit<AppNotification, 'id' | 'timestamp' | 'read'>) => {
     const newNotif: AppNotification = { ...notif, id: crypto.randomUUID(), timestamp: new Date().toISOString(), read: false };
     setNotifications(prev => [newNotif, ...prev].slice(0, 50));
@@ -87,7 +93,8 @@ export const App: React.FC = () => {
   useEffect(() => {
     const checkOverdue = () => {
       const now = new Date();
-      const overduePlans = plans.filter(p => !p.isFuzzy && p.status !== PlanStatus.DONE && isAfter(now, new Date(p.endDate)) && !lastCheckedOverdueRef.current.has(p.id));
+      // Only check overdue for active plans
+      const overduePlans = activePlans.filter(p => !p.isFuzzy && p.status !== PlanStatus.DONE && isAfter(now, new Date(p.endDate)) && !lastCheckedOverdueRef.current.has(p.id));
       overduePlans.forEach(p => {
         addNotification({ type: 'OVERDUE', title: '任务已逾期', message: `计划 “${p.title}” 已超过结束时间，请及时处理。`, planId: p.id });
         lastCheckedOverdueRef.current.add(p.id);
@@ -96,13 +103,26 @@ export const App: React.FC = () => {
     checkOverdue();
     const interval = setInterval(checkOverdue, 60000);
     return () => clearInterval(interval);
-  }, [plans, addNotification]);
+  }, [activePlans, addNotification]);
 
   useEffect(() => {
     const init = async () => {
       try {
         await storageService.init();
-        const storedPlans = await storageService.getAllPlans();
+        let storedPlans = await storageService.getAllPlans();
+        
+        // Auto-purge expired trash (7 days)
+        const now = new Date();
+        const purgedPlans = storedPlans.filter(p => {
+          if (!p.deletedAt) return true;
+          return differenceInDays(now, new Date(p.deletedAt)) < 7;
+        });
+
+        if (purgedPlans.length !== storedPlans.length) {
+          await storageService.savePlans(purgedPlans);
+          storedPlans = purgedPlans;
+        }
+
         setPlans(storedPlans);
         const savedSettings = localStorage.getItem('zhihui_settings');
         if (savedSettings) setSettings(JSON.parse(savedSettings));
@@ -119,11 +139,12 @@ export const App: React.FC = () => {
     if (isProcessingReport || isProcessingReview) return;
     const weekStart = startOfWeek(currentDate, { weekStartsOn: 1 });
     const weekEnd = endOfWeek(currentDate, { weekStartsOn: 1 });
-    const weekPlansCount = plans.filter(p => { const d = new Date(p.startDate); return isWithinInterval(d, { start: weekStart, end: weekEnd }); }).length;
+    // IMPORTANT: AI only uses activePlans
+    const weekPlansCount = activePlans.filter(p => { const d = new Date(p.startDate); return isWithinInterval(d, { start: weekStart, end: weekEnd }); }).length;
     if (weekPlansCount === 0) { setUnsupportedMessage("当前选择的周内暂无日程数据，无法生成周报数据。"); setTimeout(() => setUnsupportedMessage(null), 3000); return; }
     setIsProcessingReport(true);
     try { 
-      const result = await processWeeklyReport(plans, settings); 
+      const result = await processWeeklyReport(activePlans, settings); 
       if (result) { 
         const report = { ...result, id: crypto.randomUUID(), timestamp: new Date().toISOString() };
         await storageService.saveWeeklyReport(report);
@@ -140,7 +161,8 @@ export const App: React.FC = () => {
     const monthStart = startOfMonth(currentDate);
     const monthEnd = endOfMonth(currentDate);
     
-    const monthPlansCount = plans.filter(p => { 
+    // IMPORTANT: AI only uses activePlans
+    const monthPlansCount = activePlans.filter(p => { 
       const d = new Date(p.startDate); 
       return isWithinInterval(d, { start: monthStart, end: monthEnd }); 
     }).length;
@@ -152,7 +174,7 @@ export const App: React.FC = () => {
     }
     setIsProcessingReview(true);
     try {
-      const result = await processMonthlyReview(plans, settings);
+      const result = await processMonthlyReview(activePlans, settings);
       if (result && result.type === 'MONTH_REVIEW') {
         const report = { ...result.data, id: crypto.randomUUID(), timestamp: new Date().toISOString() };
         await storageService.saveMonthlyReport(report);
@@ -165,15 +187,16 @@ export const App: React.FC = () => {
   const filteredResults = useMemo(() => {
     if (!searchTerm.trim()) return [];
     const lowerSearch = searchTerm.toLowerCase();
-    return plans.filter(plan => plan.title.toLowerCase().includes(lowerSearch) || plan.tags.some(t => t.toLowerCase().includes(lowerSearch)) || (plan.description && plan.description.toLowerCase().includes(lowerSearch))).sort((a, b) => new Date(b.startDate).getTime() - new Date(a.startDate).getTime());
-  }, [searchTerm, plans]);
+    // Search only in active plans
+    return activePlans.filter(plan => plan.title.toLowerCase().includes(lowerSearch) || plan.tags.some(t => t.toLowerCase().includes(lowerSearch)) || (plan.description && plan.description.toLowerCase().includes(lowerSearch))).sort((a, b) => new Date(b.startDate).getTime() - new Date(a.startDate).getTime());
+  }, [searchTerm, activePlans]);
 
   const handleResultClick = (plan: WorkPlan) => {
     const planDate = new Date(plan.startDate);
     setCurrentDate(planDate);
     setTargetPlanId(plan.id);
     setIsSearchFocused(false);
-    setSearchTerm(''); // 点击搜索结果后自动清空
+    setSearchTerm(''); 
     if (plan.isFuzzy) setIsShelfOpen(true); 
     setTimeout(() => setTargetPlanId(null), 2500);
   };
@@ -186,11 +209,34 @@ export const App: React.FC = () => {
     setIsPlanModalOpen(false);
     setEditingPlan(null);
 
-    if (!plan.isFuzzy && !plan.isEnhancing) {
+    if (!plan.isFuzzy && !plan.isEnhancing && !plan.deletedAt) {
         setCurrentDate(new Date(plan.startDate));
         setTargetPlanId(plan.id);
         setTimeout(() => setTargetPlanId(null), 2500);
     }
+  };
+
+  const handleSoftDelete = async (id: string) => {
+    const plan = plans.find(p => p.id === id);
+    if (!plan) return;
+
+    const newPlans = plans.map(p => p.id === id ? { ...p, deletedAt: new Date().toISOString() } : p);
+    setPlans(newPlans);
+    await storageService.savePlans(newPlans);
+    setIsPlanModalOpen(false);
+    setEditingPlan(null);
+  };
+
+  const handleRestorePlan = useCallback(async (plan: WorkPlan) => {
+    const newPlans = plans.map(p => p.id === plan.id ? { ...p, deletedAt: undefined } : p);
+    setPlans(newPlans);
+    await storageService.savePlans(newPlans);
+  }, [plans]);
+
+  const handlePermanentDelete = async (id: string) => {
+    const newPlans = plans.filter(p => p.id !== id);
+    setPlans(newPlans);
+    await storageService.savePlans(newPlans);
   };
 
   const handleSmartInput = async (input: string): Promise<boolean> => {
@@ -199,7 +245,8 @@ export const App: React.FC = () => {
       setIsProcessingInput(true);
       const controller = new AbortController(); abortControllerRef.current = controller;
       try {
-          const result = await processUserIntent(input, plans, settings, controller.signal);
+          // AI context: only active plans
+          const result = await processUserIntent(input, activePlans, settings, controller.signal);
           if (controller.signal.aborted) return false;
           if (result) {
               if (result.type === 'CREATE_PLAN' && result.data) {
@@ -304,10 +351,10 @@ export const App: React.FC = () => {
           <div style={{ width: sidebarWidth }} className="h-full">
             <TaskSidebar 
               currentDate={currentDate} 
-              plans={plans} 
+              plans={activePlans} 
               onPlanClick={(p) => { setEditingPlan(p); setIsPlanModalOpen(true); }} 
               onPlanUpdate={handleSavePlan} 
-              onDeletePlan={async (id) => { const np = plans.filter(x => x.id !== id); setPlans(np); await storageService.savePlans(np); setIsPlanModalOpen(false); }} 
+              onDeletePlan={handleSoftDelete} 
               onDuplicatePlan={async (id, td) => {
                 const s = plans.find(x => x.id === id); if(!s) return;
                 const d = differenceInMinutes(new Date(s.endDate), new Date(s.startDate));
@@ -369,6 +416,8 @@ export const App: React.FC = () => {
               onWeeklyReport={handleWeeklyReport}
               isProcessingReport={isProcessingReport}
               isProcessingReview={isProcessingReview}
+              onOpenTrash={() => setIsTrashOpen(true)}
+              trashCount={trashPlans.length}
             />
           </div>
        </div>
@@ -391,7 +440,7 @@ export const App: React.FC = () => {
                       const start = new Date(); 
                       const end = addMinutes(start, 60);
                       const startDateStr = start.toISOString();
-                      const endDateStr = end.toISOString();
+                      const endDateStr = addMinutes(start, 60).toISOString();
                       const np: WorkPlan = { 
                         id: crypto.randomUUID(), 
                         title: '新建日程', 
@@ -404,14 +453,14 @@ export const App: React.FC = () => {
                       }; setEditingPlan(np); setIsPlanModalOpen(true); 
                     }} className="h-9 flex items-center justify-center gap-2 px-4 bg-slate-900 hover:bg-black text-white rounded-xl shadow-md active:scale-95 transition-all group whitespace-nowrap flex-shrink-0"><PlusCircle size={15} /><span className="text-sm font-bold tracking-tight">新建日程</span></button>
                     <div className="h-6 w-px bg-slate-200/60 mx-1"></div>
-                    <div className="flex items-center gap-1"><div className="relative"><button onClick={() => setIsNotificationOpen(!isNotificationOpen)} className="p-2 text-slate-400 hover:text-slate-800 hover:bg-slate-100 rounded-full transition-colors relative"><Bell size={20} />{notifications.some(n => !n.read) && <span className="absolute top-2 right-2 w-2 h-2 bg-rose-500 rounded-full border border-white animate-pulse"></span>}</button><NotificationCenter isOpen={isNotificationOpen} onClose={() => setIsNotificationOpen(false)} notifications={notifications} onMarkRead={(id) => setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true } : n))} onClearAll={() => setNotifications([])} onDelete={(id) => setNotifications(prev => prev.filter(n => n.id !== id))} onItemClick={(n) => { if(n.planId) { const p = plans.find(x => x.id === n.planId); if(p) handleResultClick(p); } setIsNotificationOpen(false); }} /></div><button onClick={() => setIsSettingsOpen(true)} className="p-2 text-slate-400 hover:text-slate-800 hover:bg-slate-100 rounded-full transition-colors"><Settings size={20} /></button></div>
+                    <div className="flex items-center gap-1"><div className="relative"><button onClick={() => setIsNotificationOpen(!isNotificationOpen)} className="p-2 text-slate-400 hover:text-slate-800 hover:bg-slate-100 rounded-full transition-colors relative"><Bell size={20} />{notifications.some(n => !n.read) && <span className="absolute top-2 right-2 w-2 h-2 bg-rose-500 rounded-full border border-white animate-pulse"></span>}</button><NotificationCenter isOpen={isNotificationOpen} onClose={() => setIsNotificationOpen(false)} notifications={notifications} onMarkRead={(id) => setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true } : n))} onClearAll={() => setNotifications([])} onDelete={(id) => setNotifications(prev => prev.filter(n => n.id !== id))} onItemClick={(n) => { if(n.planId) { const p = activePlans.find(x => x.id === n.planId); if(p) handleResultClick(p); } setIsNotificationOpen(false); }} /></div><button onClick={() => setIsSettingsOpen(true)} className="p-2 text-slate-400 hover:text-slate-800 hover:bg-slate-100 rounded-full transition-colors"><Settings size={20} /></button></div>
                 </div>
            </header>
 
            <div className="flex-1 overflow-hidden relative p-4">
               <WeeklyCalendar 
                 currentDate={currentDate} 
-                plans={plans} 
+                plans={activePlans} 
                 searchTerm={searchTerm} 
                 onClearSearch={() => setSearchTerm('')}
                 targetPlanId={targetPlanId} 
@@ -446,7 +495,7 @@ export const App: React.FC = () => {
                   }; 
                   const nps = [...plans, np]; setPlans(nps); await storageService.savePlans(nps); 
                   if(td) { setTargetPlanId(np.id); setTimeout(() => setTargetPlanId(null), 2500); } else { setEditingPlan(np); setIsPlanModalOpen(true); } 
-                }} onDateSelect={setCurrentDate} onDeletePlan={async (id) => { const np = plans.filter(x => x.id !== id); setPlans(np); await storageService.savePlans(np); setIsPlanModalOpen(false); }} onDragCreate={async (startDate, duration, title, color, tags) => { 
+                }} onDateSelect={setCurrentDate} onDeletePlan={handleSoftDelete} onDragCreate={async (startDate, duration, title, color, tags) => { 
                 const startDateStr = startDate.toISOString();
                 const endDateStr = addMinutes(startDate, duration).toISOString();
                 const newPlan: WorkPlan = { 
@@ -469,20 +518,28 @@ export const App: React.FC = () => {
        </div>
 
        <SmartShelf 
-         plans={plans} 
+         plans={activePlans} 
          isOpen={isShelfOpen} 
          onToggle={setIsShelfOpen} 
          onPlanClick={(p) => { setEditingPlan(p); setIsPlanModalOpen(true); }} 
          onPlanUpdate={handleSavePlan} 
-         onDeletePlan={async (id) => { const np = plans.filter(x => x.id !== id); setPlans(np); await storageService.savePlans(np); }} 
+         onDeletePlan={handleSoftDelete} 
          onCapture={handleShelfCapture}
        />
 
-       <PlanModal plan={editingPlan} isOpen={isPlanModalOpen} onClose={() => setIsPlanModalOpen(false)} onSave={handleSavePlan} onDelete={async (id) => { const np = plans.filter(x => x.id !== id); setPlans(np); await storageService.savePlans(np); setIsPlanModalOpen(false); }} />
-       <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} settings={settings} onSave={(s) => { setSettings(s); localStorage.setItem('zhihui_settings', JSON.stringify(s)); setIsSettingsOpen(false); }} onExport={() => storageService.exportData(plans, settings)} onImport={async (d) => { if (d.plans) { setPlans(d.plans); await storageService.savePlans(d.plans); } if (d.settings) { setSettings(d.settings); localStorage.setItem('zhihui_settings', JSON.stringify(d.settings)); } setIsSettingsOpen(false); }} />
+       <RecycleBinModal 
+         isOpen={isTrashOpen} 
+         onClose={() => setIsTrashOpen(false)} 
+         plans={trashPlans} 
+         onRestore={handleRestorePlan}
+         onPermanentDelete={handlePermanentDelete}
+       />
+
+       <PlanModal plan={editingPlan} isOpen={isPlanModalOpen} onClose={() => setIsPlanModalOpen(false)} onSave={handleSavePlan} onDelete={handleSoftDelete} />
+       <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} settings={settings} onSave={(s) => { setSettings(s); localStorage.setItem('zhihui_settings', JSON.stringify(s)); setIsSettingsOpen(false); }} onExport={() => storageService.exportData(activePlans, settings)} onImport={async (d) => { if (d.plans) { setPlans(d.plans); await storageService.savePlans(d.plans); } if (d.settings) { setSettings(d.settings); localStorage.setItem('zhihui_settings', JSON.stringify(d.settings)); } setIsSettingsOpen(false); }} />
        <WeeklyReportModal isOpen={isReportModalOpen} onClose={() => setIsReportModalOpen(false)} data={reportData} />
        <MonthlyReviewModal isOpen={isMonthlyModalOpen} onClose={() => setIsMonthlyModalOpen(false)} data={monthlyData} />
-       <FlashCommand plans={plans} settings={settings} onPlanCreated={handleSavePlan} onAnalysisCreated={async (data) => { 
+       <FlashCommand plans={activePlans} settings={settings} onPlanCreated={handleSavePlan} onAnalysisCreated={async (data) => { 
           const report = { ...data, id: crypto.randomUUID(), timestamp: new Date().toISOString() };
           await storageService.saveWeeklyReport(report);
           setReportData(report); 
