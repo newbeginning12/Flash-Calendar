@@ -28,6 +28,19 @@ import { format, addDays, isSameDay, addMinutes, endOfDay, differenceInMinutes, 
 const MIN_SIDEBAR_WIDTH = 240;
 const DEFAULT_SIDEBAR_WIDTH = 280;
 
+/**
+ * 根据起止时间自动计算初始状态
+ */
+const getInitialStatus = (startDate: string, endDate: string): PlanStatus => {
+  const now = new Date();
+  const start = new Date(startDate);
+  const end = new Date(endDate);
+  
+  if (end < now) return PlanStatus.DONE;
+  if (start <= now && now <= end) return PlanStatus.IN_PROGRESS;
+  return PlanStatus.TODO;
+};
+
 export const App: React.FC = () => {
   const [plans, setPlans] = useState<WorkPlan[]>([]);
   const [currentDate, setCurrentDate] = useState(new Date());
@@ -190,7 +203,20 @@ export const App: React.FC = () => {
           if (controller.signal.aborted) return false;
           if (result) {
               if (result.type === 'CREATE_PLAN' && result.data) {
-                  const basePlan: WorkPlan = { id: crypto.randomUUID(), title: '新建日程', startDate: new Date().toISOString(), endDate: new Date(Date.now() + 3600000).toISOString(), status: PlanStatus.TODO, tags: [], color: 'blue', links: [], ...result.data };
+                  const startDate = result.data.startDate || new Date().toISOString();
+                  const endDate = result.data.endDate || new Date(Date.now() + 3600000).toISOString();
+                  
+                  const basePlan: WorkPlan = { 
+                    id: crypto.randomUUID(), 
+                    title: '新建日程', 
+                    startDate, 
+                    endDate, 
+                    status: getInitialStatus(startDate, endDate), 
+                    tags: [], 
+                    color: 'blue', 
+                    links: [], 
+                    ...result.data 
+                  };
                   setEditingPlan(basePlan as WorkPlan); setIsPlanModalOpen(true);
                   setSearchTerm(''); // 成功：清空
                   return true;
@@ -206,12 +232,15 @@ export const App: React.FC = () => {
 
   const handleShelfCapture = async (text: string) => {
       const newId = crypto.randomUUID();
+      const startDate = new Date().toISOString();
+      const endDate = addMinutes(new Date(), 60).toISOString();
+      
       const rawPlan: WorkPlan = {
           id: newId,
           title: text,
-          startDate: new Date().toISOString(),
-          endDate: addMinutes(new Date(), 60).toISOString(),
-          status: PlanStatus.TODO,
+          startDate,
+          endDate,
+          status: getInitialStatus(startDate, endDate),
           tags: [],
           color: 'slate', 
           links: [],
@@ -241,7 +270,18 @@ export const App: React.FC = () => {
   };
   
   const handleSuggestionClick = async (suggestion: SmartSuggestion) => {
-      setEditingPlan({ id: crypto.randomUUID(), title: suggestion.planData.title, description: suggestion.planData.description, startDate: suggestion.planData.startDate, endDate: suggestion.planData.endDate, status: PlanStatus.TODO, tags: suggestion.planData.tags || [], color: 'blue', links: [] });
+      const { startDate, endDate } = suggestion.planData;
+      setEditingPlan({ 
+        id: crypto.randomUUID(), 
+        title: suggestion.planData.title, 
+        description: suggestion.planData.description, 
+        startDate, 
+        endDate, 
+        status: getInitialStatus(startDate, endDate), 
+        tags: suggestion.planData.tags || [], 
+        color: 'blue', 
+        links: [] 
+      });
       setIsPlanModalOpen(true);
       setSearchTerm('');
   };
@@ -272,23 +312,47 @@ export const App: React.FC = () => {
                 const s = plans.find(x => x.id === id); if(!s) return;
                 const d = differenceInMinutes(new Date(s.endDate), new Date(s.startDate));
                 const start = td || new Date(); const end = addMinutes(start, d);
-                const np = { ...s, id: crypto.randomUUID(), startDate: start.toISOString(), endDate: end.toISOString(), status: PlanStatus.TODO };
+                const startDateStr = start.toISOString();
+                const endDateStr = end.toISOString();
+                const np = { 
+                  ...s, 
+                  id: crypto.randomUUID(), 
+                  startDate: startDateStr, 
+                  endDate: endDateStr, 
+                  status: getInitialStatus(startDateStr, endDateStr) 
+                };
                 const nps = [...plans, np]; setPlans(nps); await storageService.savePlans(nps);
                 if(td) { setTargetPlanId(np.id); setTimeout(() => setTargetPlanId(null), 2500); } else { setEditingPlan(np); setIsPlanModalOpen(true); }
               }}
               onCreateNew={() => {
-                const d = new Date(); const np: WorkPlan = { id: crypto.randomUUID(), title: '新建日程', startDate: d.toISOString(), endDate: addMinutes(d, 60).toISOString(), status: PlanStatus.TODO, tags: [], color: 'blue', links: [] };
+                const start = new Date();
+                const end = addMinutes(start, 60);
+                const startDateStr = start.toISOString();
+                const endDateStr = end.toISOString();
+                const np: WorkPlan = { 
+                  id: crypto.randomUUID(), 
+                  title: '新建日程', 
+                  startDate: startDateStr, 
+                  endDate: endDateStr, 
+                  status: getInitialStatus(startDateStr, endDateStr), 
+                  tags: [], 
+                  color: 'blue', 
+                  links: [] 
+                };
                 setEditingPlan(np); setIsPlanModalOpen(true);
               }} 
               onQuickAdd={async (t, dur, c, tags) => {
                 const d = new Date(); 
                 const start = isSameDay(d, currentDate) ? d : new Date(new Date(currentDate).setHours(9, 0, 0, 0));
+                const end = addMinutes(start, dur);
+                const startDateStr = start.toISOString();
+                const endDateStr = end.toISOString();
                 const np: WorkPlan = { 
                   id: crypto.randomUUID(), 
                   title: t, 
-                  startDate: start.toISOString(), 
-                  endDate: addMinutes(start, dur).toISOString(), 
-                  status: PlanStatus.TODO, 
+                  startDate: startDateStr, 
+                  endDate: endDateStr, 
+                  status: getInitialStatus(startDateStr, endDateStr), 
                   tags: tags || ['快速'], 
                   color: c, 
                   links: [] 
@@ -323,7 +387,22 @@ export const App: React.FC = () => {
 
                 <div className="flex items-center gap-4 justify-end flex-1">
                     <div className="w-[260px] lg:w-[380px] transition-all duration-300 ml-auto"><SmartInput onSubmit={handleSmartInput} onStop={() => { abortControllerRef.current?.abort(); setIsProcessingInput(false); }} onSuggestionClick={handleSuggestionClick} isProcessing={isProcessingInput} suggestions={smartSuggestions} layout="header" searchValue={searchTerm} onSearchChange={setSearchTerm} searchResults={filteredResults} onSearchResultClick={handleResultClick} unsupportedMessage={unsupportedMessage} onClearUnsupported={() => setUnsupportedMessage(null)} /></div>
-                    <button onClick={() => { const d = new Date(); const np: WorkPlan = { id: crypto.randomUUID(), title: '新建日程', startDate: d.toISOString(), endDate: addMinutes(d, 60).toISOString(), status: PlanStatus.TODO, tags: [], color: 'blue', links: [] }; setEditingPlan(np); setIsPlanModalOpen(true); }} className="h-9 flex items-center justify-center gap-2 px-4 bg-slate-900 hover:bg-black text-white rounded-xl shadow-md active:scale-95 transition-all group whitespace-nowrap flex-shrink-0"><PlusCircle size={15} /><span className="text-sm font-bold tracking-tight">新建日程</span></button>
+                    <button onClick={() => { 
+                      const start = new Date(); 
+                      const end = addMinutes(start, 60);
+                      const startDateStr = start.toISOString();
+                      const endDateStr = end.toISOString();
+                      const np: WorkPlan = { 
+                        id: crypto.randomUUID(), 
+                        title: '新建日程', 
+                        startDate: startDateStr, 
+                        endDate: endDateStr, 
+                        status: getInitialStatus(startDateStr, endDateStr), 
+                        tags: [], 
+                        color: 'blue', 
+                        links: [] 
+                      }; setEditingPlan(np); setIsPlanModalOpen(true); 
+                    }} className="h-9 flex items-center justify-center gap-2 px-4 bg-slate-900 hover:bg-black text-white rounded-xl shadow-md active:scale-95 transition-all group whitespace-nowrap flex-shrink-0"><PlusCircle size={15} /><span className="text-sm font-bold tracking-tight">新建日程</span></button>
                     <div className="h-6 w-px bg-slate-200/60 mx-1"></div>
                     <div className="flex items-center gap-1"><div className="relative"><button onClick={() => setIsNotificationOpen(!isNotificationOpen)} className="p-2 text-slate-400 hover:text-slate-800 hover:bg-slate-100 rounded-full transition-colors relative"><Bell size={20} />{notifications.some(n => !n.read) && <span className="absolute top-2 right-2 w-2 h-2 bg-rose-500 rounded-full border border-white animate-pulse"></span>}</button><NotificationCenter isOpen={isNotificationOpen} onClose={() => setIsNotificationOpen(false)} notifications={notifications} onMarkRead={(id) => setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true } : n))} onClearAll={() => setNotifications([])} onDelete={(id) => setNotifications(prev => prev.filter(n => n.id !== id))} onItemClick={(n) => { if(n.planId) { const p = plans.find(x => x.id === n.planId); if(p) handleResultClick(p); } setIsNotificationOpen(false); }} /></div><button onClick={() => setIsSettingsOpen(true)} className="p-2 text-slate-400 hover:text-slate-800 hover:bg-slate-100 rounded-full transition-colors"><Settings size={20} /></button></div>
                 </div>
@@ -337,15 +416,45 @@ export const App: React.FC = () => {
                 onClearSearch={() => setSearchTerm('')}
                 targetPlanId={targetPlanId} 
                 onPlanClick={(p) => { setEditingPlan(p); setIsPlanModalOpen(true); }} 
-                onSlotClick={(d) => { const np: WorkPlan = { id: crypto.randomUUID(), title: '新建日程', startDate: d.toISOString(), endDate: addMinutes(d, 60).toISOString(), status: PlanStatus.TODO, tags: [], color: 'blue', links: [] }; setEditingPlan(np); setIsPlanModalOpen(true); }} 
+                onSlotClick={(d) => { 
+                  const startDateStr = d.toISOString();
+                  const endDateStr = addMinutes(d, 60).toISOString();
+                  const np: WorkPlan = { 
+                    id: crypto.randomUUID(), 
+                    title: '新建日程', 
+                    startDate: startDateStr, 
+                    endDate: endDateStr, 
+                    status: getInitialStatus(startDateStr, endDateStr), 
+                    tags: [], 
+                    color: 'blue', 
+                    links: [] 
+                  }; setEditingPlan(np); setIsPlanModalOpen(true); 
+                }} 
                 onPlanUpdate={handleSavePlan} 
-                onDuplicatePlan={async (id, td) => { const s = plans.find(x => x.id === id); if(!s) return; const d = differenceInMinutes(new Date(s.endDate), new Date(s.startDate)); const start = td || new Date(); const end = addMinutes(start, d); const np = { ...s, id: crypto.randomUUID(), startDate: start.toISOString(), endDate: end.toISOString(), status: PlanStatus.TODO }; const nps = [...plans, np]; setPlans(nps); await storageService.savePlans(nps); if(td) { setTargetPlanId(np.id); setTimeout(() => setTargetPlanId(null), 2500); } else { setEditingPlan(np); setIsPlanModalOpen(true); } }} onDateSelect={setCurrentDate} onDeletePlan={async (id) => { const np = plans.filter(x => x.id !== id); setPlans(np); await storageService.savePlans(np); setIsPlanModalOpen(false); }} onDragCreate={async (startDate, duration, title, color, tags) => { 
+                onDuplicatePlan={async (id, td) => { 
+                  const s = plans.find(x => x.id === id); if(!s) return; 
+                  const d = differenceInMinutes(new Date(s.endDate), new Date(s.startDate)); 
+                  const start = td || new Date(); const end = addMinutes(start, d); 
+                  const startDateStr = start.toISOString();
+                  const endDateStr = end.toISOString();
+                  const np = { 
+                    ...s, 
+                    id: crypto.randomUUID(), 
+                    startDate: startDateStr, 
+                    endDate: endDateStr, 
+                    status: getInitialStatus(startDateStr, endDateStr) 
+                  }; 
+                  const nps = [...plans, np]; setPlans(nps); await storageService.savePlans(nps); 
+                  if(td) { setTargetPlanId(np.id); setTimeout(() => setTargetPlanId(null), 2500); } else { setEditingPlan(np); setIsPlanModalOpen(true); } 
+                }} onDateSelect={setCurrentDate} onDeletePlan={async (id) => { const np = plans.filter(x => x.id !== id); setPlans(np); await storageService.savePlans(np); setIsPlanModalOpen(false); }} onDragCreate={async (startDate, duration, title, color, tags) => { 
+                const startDateStr = startDate.toISOString();
+                const endDateStr = addMinutes(startDate, duration).toISOString();
                 const newPlan: WorkPlan = { 
                   id: crypto.randomUUID(), 
                   title: title || '新建日程', 
-                  startDate: startDate.toISOString(), 
-                  endDate: addMinutes(startDate, duration).toISOString(), 
-                  status: PlanStatus.TODO, 
+                  startDate: startDateStr, 
+                  endDate: endDateStr, 
+                  status: getInitialStatus(startDateStr, endDateStr), 
                   tags: tags || [], 
                   color: color || 'blue', 
                   links: [] 

@@ -11,6 +11,19 @@ interface FlashCommandProps {
   onAnalysisCreated: (data: WeeklyReportData) => void;
 }
 
+/**
+ * 根据起止时间自动计算初始状态 (与 App.tsx 保持一致)
+ */
+const getInitialStatus = (startDate: string, endDate: string): PlanStatus => {
+  const now = new Date();
+  const start = new Date(startDate);
+  const end = new Date(endDate);
+  
+  if (end < now) return PlanStatus.DONE;
+  if (start <= now && now <= end) return PlanStatus.IN_PROGRESS;
+  return PlanStatus.TODO;
+};
+
 export const FlashCommand: React.FC<FlashCommandProps> = ({ plans, settings, onPlanCreated, onAnalysisCreated }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [input, setInput] = useState('');
@@ -58,12 +71,15 @@ export const FlashCommand: React.FC<FlashCommandProps> = ({ plans, settings, onP
 
         if (result) {
             if (result.type === 'CREATE_PLAN' && result.data) {
+                const startDate = result.data.startDate || new Date().toISOString();
+                const endDate = result.data.endDate || new Date(Date.now() + 3600000).toISOString();
+                
                 const newPlan: WorkPlan = {
                     id: crypto.randomUUID(),
                     title: '新建日程',
-                    startDate: new Date().toISOString(),
-                    endDate: new Date(Date.now() + 3600000).toISOString(),
-                    status: PlanStatus.TODO,
+                    startDate,
+                    endDate,
+                    status: getInitialStatus(startDate, endDate),
                     tags: [],
                     color: 'blue',
                     links: [],
