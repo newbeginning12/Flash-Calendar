@@ -97,4 +97,5 @@ export type AIProcessingResult =
   | { type: 'ANALYSIS'; data: WeeklyReportData }
   | { type: 'MONTH_REVIEW'; data: MonthlyAnalysisData }
   | { type: 'UNSUPPORTED'; message: string }
+  | { type: 'ERROR'; message: string; needConfig?: boolean }
   | null;
