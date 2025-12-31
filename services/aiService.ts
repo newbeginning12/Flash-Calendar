@@ -33,7 +33,7 @@ const handleAIError = (error: any): { message: string; needConfig: boolean } => 
   const errStr = String(error).toLowerCase();
   
   if (errStr.includes("api_key") || errStr.includes("401") || errStr.includes("unauthorized") || errStr.includes("not found")) {
-    return { message: "AI 授权失效或未配置，请在设置中选择 API Key。", needConfig: true };
+    return { message: "AI 授权失效或未配置，请在设置中输入有效的 API Key。", needConfig: true };
   }
   if (errStr.includes("429") || errStr.includes("quota")) {
     return { message: "AI 请求频率过快，请稍后再试。", needConfig: false };
@@ -42,9 +42,12 @@ const handleAIError = (error: any): { message: string; needConfig: boolean } => 
 };
 
 const getAIInstance = (settings: AISettings) => {
-    // 强制使用最新的初始化规范：new GoogleGenAI({ apiKey: process.env.API_KEY })
-    // 如果 settings 中有 Key 且不是 Google 模式，则 fallback 到兼容层
-    return new GoogleGenAI({ apiKey: process.env.API_KEY });
+    // 优先使用设置中的 Key，兼容旧有环境 Key
+    const apiKey = settings.apiKey || process.env.API_KEY;
+    if (!apiKey) {
+        throw new Error("Missing API Key");
+    }
+    return new GoogleGenAI({ apiKey });
 };
 
 const callOpenAICompatible = async (

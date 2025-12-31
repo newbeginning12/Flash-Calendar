@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { X, Cpu, RotateCcw, Save, Key, Globe, Check, HardDrive, Download, UploadCloud, Settings, AlertTriangle, FileText, CalendarDays, Sparkles, ExternalLink, ArrowRight, Circle } from 'lucide-react';
+import { X, Cpu, RotateCcw, Save, Key, Globe, Check, HardDrive, Download, UploadCloud, Settings, AlertTriangle, FileText, CalendarDays, Sparkles, ExternalLink, ArrowRight, Circle, Loader2 } from 'lucide-react';
 import { AISettings, AIProvider } from '../types';
 import { DEFAULT_MODEL } from '../services/aiService';
 import { storageService, BackupData } from '../services/storageService';
@@ -18,7 +18,7 @@ const PROVIDERS = [
   { id: AIProvider.DEEPSEEK, name: 'DeepSeek', icon: 'D', desc: '高性能国产模型，支持 V3 及 R1 推理' },
   { id: AIProvider.ALI_QWEN, name: '阿里通义千问', icon: 'Q', desc: '中文语境理解专家，响应速度极快' },
   { id: AIProvider.CUSTOM, name: '自定义接口', icon: 'C', desc: '连接任何 OpenAI 兼容的第三方平台' },
-  { id: AIProvider.GOOGLE, name: 'Google Gemini', icon: 'G', desc: '谷歌原厂模型，支持官方 Key 安全授权' },
+  { id: AIProvider.GOOGLE, name: 'Google Gemini', icon: 'G', desc: '谷歌原厂模型，支持 Flash 与 Pro 系列' },
 ];
 
 const PRESETS = {
@@ -40,6 +40,7 @@ const DEFAULT_URLS = {
   [AIProvider.DEEPSEEK]: 'https://api.deepseek.com',
   [AIProvider.ALI_QWEN]: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
   [AIProvider.CUSTOM]: 'https://api.openai.com/v1',
+  [AIProvider.GOOGLE]: '',
 };
 
 type TabType = 'ai' | 'data';
@@ -48,33 +49,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, s
   const [localSettings, setLocalSettings] = useState<AISettings>(settings);
   const [activeTab, setActiveTab] = useState<TabType>('ai');
   const [pendingData, setPendingData] = useState<BackupData | null>(null);
-  const [importError, setImportError] = useState<string | null>(null);
-  const [geminiKeySelected, setGeminiKeySelected] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     setLocalSettings({ ...settings });
     setPendingData(null);
-    setImportError(null);
-    
-    if (isOpen) {
-        checkGeminiKey();
-    }
   }, [settings, isOpen]);
-
-  const checkGeminiKey = async () => {
-    if ((window as any).aistudio) {
-        const hasKey = await (window as any).aistudio.hasSelectedApiKey();
-        setGeminiKeySelected(hasKey);
-    }
-  };
-
-  const handleOpenGeminiKeySelector = async () => {
-    if ((window as any).aistudio) {
-        await (window as any).aistudio.openSelectKey();
-        setGeminiKeySelected(true);
-    }
-  };
 
   if (!isOpen) return null;
 
@@ -84,11 +65,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, s
           provider,
           baseUrl: DEFAULT_URLS[provider as keyof typeof DEFAULT_URLS] || '',
           model: PRESETS[provider as keyof typeof PRESETS]?.[0]?.name || prev.model,
-          apiKey: provider === AIProvider.GOOGLE ? '' : prev.apiKey
+          apiKey: prev.provider === provider ? prev.apiKey : ''
       }));
   };
 
-  const isGoogle = localSettings.provider === AIProvider.GOOGLE;
+  const handleExport = async () => {
+      setIsExporting(true);
+      // 增加一个视觉上的延迟，确保用户能看到反馈
+      await new Promise(resolve => setTimeout(resolve, 800));
+      onExport();
+      setIsExporting(false);
+  };
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
@@ -119,7 +106,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, s
                      onClick={() => setActiveTab('data')}
                     className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-sm font-medium transition-all ${activeTab === 'data' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
                 >
-                    <HardDrive size={16} /> 数据
+                    <HardDrive size={16} /> 数据管理
                 </button>
             </div>
         </div>
@@ -137,13 +124,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, s
                                 <button
                                     key={p.id}
                                     onClick={() => handleProviderChange(p.id)}
-                                    className={`flex items-center gap-4 px-4 py-3.5 rounded-2xl border transition-all text-left ${
+                                    className={`flex items-center gap-4 px-4 py-3.5 rounded-2xl border transition-all text-left group ${
                                         isSelected 
-                                            ? 'bg-slate-900 text-white border-slate-900 shadow-lg ring-4 ring-slate-900/5' 
+                                            ? 'bg-slate-900 text-white border-slate-900 shadow-lg' 
                                             : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300 hover:bg-slate-50'
                                     }`}
                                 >
-                                    <div className={`w-10 h-10 flex items-center justify-center rounded-xl text-xs font-black flex-shrink-0 ${isSelected ? 'bg-white/20' : 'bg-slate-100'}`}>
+                                    <div className={`w-10 h-10 flex items-center justify-center rounded-xl text-xs font-black flex-shrink-0 ${isSelected ? 'bg-white/20' : 'bg-slate-100 group-hover:bg-white transition-colors'}`}>
                                         {p.icon}
                                     </div>
                                     <div className="flex-1 min-w-0">
@@ -151,9 +138,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, s
                                             {p.name}
                                             {isSelected && <span className="w-1.5 h-1.5 rounded-full bg-blue-400"></span>}
                                         </div>
-                                        <div className={`text-[10px] truncate mt-0.5 font-medium ${isSelected ? 'text-slate-400' : 'text-slate-400'}`}>
-                                            {p.desc}
-                                        </div>
+                                        <div className="text-[10px] font-medium opacity-60 mt-0.5 truncate">{p.desc}</div>
                                     </div>
                                     <div className={`flex-shrink-0 ${isSelected ? 'text-white' : 'text-slate-200'}`}>
                                         {isSelected ? <Check size={20} strokeWidth={3} /> : <Circle size={20} />}
@@ -165,62 +150,31 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, s
                  </div>
 
                  <div className="space-y-4 pt-4 border-t border-slate-100">
-                    {isGoogle ? (
-                        <div className="space-y-4">
-                            <div className="bg-indigo-50/50 border border-indigo-100 rounded-2xl p-5">
-                                <h4 className="text-sm font-bold text-indigo-900 mb-2 flex items-center gap-2">
-                                    <Key size={16} /> Gemini 授权
-                                </h4>
-                                <p className="text-xs text-indigo-700/70 mb-4 leading-relaxed">
-                                    为了保障个人数据安全，请点击下方按钮选择您的个人 Gemini API Key。
-                                </p>
-                                <button 
-                                    onClick={handleOpenGeminiKeySelector}
-                                    className={`w-full py-3 rounded-xl font-bold text-sm transition-all flex items-center justify-center gap-2 ${
-                                        geminiKeySelected 
-                                        ? 'bg-indigo-100 text-indigo-700 border border-indigo-200' 
-                                        : 'bg-indigo-600 text-white shadow-lg shadow-indigo-200 hover:bg-indigo-700'
-                                    }`}
-                                >
-                                    {geminiKeySelected ? <Check size={16} /> : <Sparkles size={16} />}
-                                    {geminiKeySelected ? '已授权 API Key' : '立即选择 API Key'}
-                                </button>
-                                <a 
-                                    href="https://ai.google.dev/gemini-api/docs/billing" 
-                                    target="_blank" 
-                                    rel="noopener noreferrer"
-                                    className="mt-3 flex items-center justify-center gap-1 text-[10px] font-bold text-indigo-400 hover:text-indigo-600 transition-colors uppercase tracking-wider"
-                                >
-                                    查看计费说明 <ExternalLink size={10} />
-                                </a>
-                            </div>
-                        </div>
-                    ) : (
-                        <div className="space-y-4">
-                            <div className="space-y-2">
-                                <label className="flex items-center gap-1.5 text-xs font-semibold text-slate-500 uppercase tracking-wide">
-                                    <Key size={12} /> API Key
-                                </label>
-                                <input 
-                                    type="password"
-                                    value={localSettings.apiKey || ''}
-                                    onChange={(e) => setLocalSettings({ ...localSettings, apiKey: e.target.value })}
-                                    placeholder="输入您的 API Key"
-                                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all font-mono"
-                                />
-                            </div>
-                            <div className="space-y-2">
-                                <label className="flex items-center gap-1.5 text-xs font-semibold text-slate-500 uppercase tracking-wide">
-                                    <Globe size={12} /> Base URL
-                                </label>
-                                <input 
-                                    type="text"
-                                    value={localSettings.baseUrl || ''}
-                                    onChange={(e) => setLocalSettings({ ...localSettings, baseUrl: e.target.value })}
-                                    placeholder="接口基准地址"
-                                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all font-mono"
-                                />
-                            </div>
+                    <div className="space-y-2">
+                        <label className="flex items-center gap-1.5 text-xs font-semibold text-slate-500 uppercase tracking-wide">
+                            <Key size={12} /> API Key
+                        </label>
+                        <input 
+                            type="password"
+                            value={localSettings.apiKey || ''}
+                            onChange={(e) => setLocalSettings({ ...localSettings, apiKey: e.target.value })}
+                            placeholder={`输入 ${PROVIDERS.find(p => p.id === localSettings.provider)?.name} 的 API Key`}
+                            className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all font-mono"
+                        />
+                    </div>
+                    
+                    {localSettings.provider !== AIProvider.GOOGLE && (
+                        <div className="space-y-2">
+                            <label className="flex items-center gap-1.5 text-xs font-semibold text-slate-500 uppercase tracking-wide">
+                                <Globe size={12} /> Base URL
+                            </label>
+                            <input 
+                                type="text"
+                                value={localSettings.baseUrl || ''}
+                                onChange={(e) => setLocalSettings({ ...localSettings, baseUrl: e.target.value })}
+                                placeholder="接口基准地址"
+                                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all font-mono"
+                            />
                         </div>
                     )}
 
@@ -240,7 +194,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, s
                                         onClick={() => setLocalSettings({ ...localSettings, model: preset.name })}
                                         className={`px-3 py-1 text-[10px] rounded-lg transition-all border ${
                                             localSettings.model === preset.name 
-                                                ? 'bg-slate-900 border-slate-900 text-white' 
+                                                ? 'bg-slate-900 border-slate-900 text-white shadow-sm' 
                                                 : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
                                         }`}
                                     >
@@ -260,19 +214,31 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, s
                      <HardDrive size={20} className="text-indigo-500 mt-1" />
                      <div className="flex-1">
                          <h4 className="text-sm font-bold text-slate-800">本地离线存储</h4>
-                         <p className="text-xs text-slate-500 mt-1 leading-relaxed">您的日程数据仅保存在当前浏览器的 IndexedDB 中。建议每周导出一次备份。</p>
+                         <p className="text-xs text-slate-500 mt-1 leading-relaxed">您的日程数据安全地保存在当前浏览器的本地数据库中。建议定期导出备份文件。</p>
                      </div>
                  </div>
 
                  <div className="grid grid-cols-1 gap-3">
-                     <button onClick={onExport} className="flex items-center justify-between p-4 bg-white border border-slate-200 rounded-2xl hover:bg-slate-50 group transition-all">
+                     <button 
+                        onClick={handleExport} 
+                        disabled={isExporting}
+                        className="flex items-center justify-between p-4 bg-white border border-slate-200 rounded-2xl hover:bg-slate-50 group transition-all disabled:opacity-70"
+                     >
                          <span className="flex items-center gap-3">
-                            <span className="p-2 bg-blue-50 text-blue-600 rounded-lg group-hover:scale-110 transition-transform"><Download size={18} /></span>
-                            <span className="text-sm font-bold text-slate-800">导出数据备份</span>
+                            <span className="p-2 bg-blue-50 text-blue-600 rounded-lg group-hover:scale-110 transition-transform">
+                                {isExporting ? <Loader2 size={18} className="animate-spin" /> : <Download size={18} />}
+                            </span>
+                            <span className="text-sm font-bold text-slate-800">
+                                {isExporting ? '正在生成备份文件...' : '导出数据备份'}
+                            </span>
                          </span>
-                         <ArrowRight size={16} className="text-slate-300" />
+                         {!isExporting && <ArrowRight size={16} className="text-slate-300" />}
                      </button>
-                     <button onClick={() => fileInputRef.current?.click()} className="flex items-center justify-between p-4 bg-white border border-slate-200 rounded-2xl hover:bg-slate-50 group transition-all">
+                     
+                     <button 
+                        onClick={() => fileInputRef.current?.click()} 
+                        className="flex items-center justify-between p-4 bg-white border border-slate-200 rounded-2xl hover:bg-slate-50 group transition-all"
+                     >
                          <span className="flex items-center gap-3">
                             <span className="p-2 bg-indigo-50 text-indigo-600 rounded-lg group-hover:scale-110 transition-transform"><UploadCloud size={18} /></span>
                             <span className="text-sm font-bold text-slate-800">导入数据恢复</span>
@@ -293,25 +259,63 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, s
         </div>
 
         {/* Footer */}
-        <div className="p-6 border-t border-slate-100 bg-white/50 backdrop-blur-md flex justify-end">
-            <button 
-                onClick={() => onSave(localSettings)}
-                className="flex items-center gap-2 px-8 py-2.5 bg-slate-900 hover:bg-black text-white rounded-2xl shadow-lg transition-all text-sm font-bold active:scale-95"
-            >
-                <Save size={16} />
-                保存配置
-            </button>
-        </div>
+        {activeTab === 'ai' && (
+            <div className="p-6 border-t border-slate-100 bg-white/50 backdrop-blur-md flex justify-end">
+                <button 
+                    onClick={() => onSave(localSettings)}
+                    className="flex items-center gap-2 px-8 py-2.5 bg-slate-900 hover:bg-black text-white rounded-2xl shadow-lg transition-all text-sm font-bold active:scale-95"
+                >
+                    <Save size={16} />
+                    保存配置
+                </button>
+            </div>
+        )}
 
-        {/* Import Confirmation */}
+        {/* Detailed Import Confirmation */}
         {pendingData && (
               <div className="absolute inset-0 z-[110] bg-white/80 backdrop-blur-xl flex flex-col items-center justify-center p-8 text-center animate-in fade-in zoom-in-95">
-                  <div className="w-16 h-16 bg-rose-50 text-rose-500 rounded-full flex items-center justify-center mb-6"><AlertTriangle size={32} /></div>
-                  <h3 className="text-lg font-bold mb-2">确认覆盖数据？</h3>
-                  <p className="text-xs text-slate-500 mb-8 max-w-[240px]">导入操作将清除当前所有日程并替换为备份中的内容。</p>
-                  <div className="flex flex-col gap-3 w-full max-w-[200px]">
-                      <button onClick={() => { onImport(pendingData); setPendingData(null); }} className="w-full py-2.5 bg-rose-500 text-white rounded-xl text-sm font-bold">确认导入</button>
-                      <button onClick={() => setPendingData(null)} className="w-full py-2.5 text-slate-500 font-bold text-sm">取消</button>
+                  <div className="w-16 h-16 bg-rose-50 text-rose-500 rounded-full flex items-center justify-center mb-6 shadow-inner ring-4 ring-rose-50/50">
+                      <AlertTriangle size={32} />
+                  </div>
+                  <h3 className="text-lg font-bold text-slate-900 mb-2">确认覆盖数据？</h3>
+                  <p className="text-xs text-slate-500 mb-6 max-w-[260px]">导入操作将清除当前所有本地日程并替换为备份中的内容。</p>
+                  
+                  <div className="w-full bg-white rounded-2xl border border-slate-100 p-5 mb-8 text-left shadow-sm">
+                      <div className="flex items-center justify-between mb-3 pb-3 border-b border-slate-50">
+                          <div className="flex items-center gap-2 text-slate-400">
+                             <CalendarDays size={14} />
+                             <span className="text-[11px] font-bold">备份时间</span>
+                          </div>
+                          <span className="text-xs font-bold text-slate-700">{new Date(pendingData.date).toLocaleDateString()}</span>
+                      </div>
+                      <div className="flex items-center justify-between mb-3 pb-3 border-b border-slate-50">
+                          <div className="flex items-center gap-2 text-slate-400">
+                             <FileText size={14} />
+                             <span className="text-[11px] font-bold">日程总数</span>
+                          </div>
+                          <span className="text-xs font-bold text-slate-700">{pendingData.plans?.length || 0} 条数据</span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2 text-slate-400">
+                             <Cpu size={14} />
+                             <span className="text-[11px] font-bold">AI 配置</span>
+                          </div>
+                          <span className="text-[10px] font-bold px-2 py-0.5 bg-slate-100 text-slate-500 rounded-full">
+                              {pendingData.settings ? '包含配置' : '仅数据'}
+                          </span>
+                      </div>
+                  </div>
+
+                  <div className="flex flex-col gap-3 w-full max-w-[240px]">
+                      <button 
+                        onClick={() => { onImport(pendingData); setPendingData(null); }} 
+                        className="w-full py-3 bg-rose-500 hover:bg-rose-600 text-white rounded-xl text-sm font-bold shadow-lg shadow-rose-500/20 transition-all hover:scale-[1.02] active:scale-[0.98]"
+                      >
+                          确认导入并覆盖
+                      </button>
+                      <button onClick={() => setPendingData(null)} className="w-full py-2.5 text-slate-500 font-bold text-sm hover:text-slate-800 transition-colors">
+                          取消
+                      </button>
                   </div>
               </div>
         )}
