@@ -2,7 +2,7 @@
 import { WorkPlan, AISettings, MonthlyAnalysisData, WeeklyReportData } from '../types';
 
 const DB_NAME = 'FlashCalendarDB';
-const DB_VERSION = 4; // 升级版本以增加 system store
+const DB_VERSION = 4;
 const STORE_NAME = 'plans';
 const REPORT_STORE = 'monthly_reports';
 const WEEKLY_REPORT_STORE = 'weekly_reports';
@@ -49,8 +49,7 @@ export const storageService = {
     });
   },
 
-  // --- OPFS 持久化逻辑 (Origin Private File System) ---
-  // OPFS 不受浏览器自动清理机制影响，是真正的永久存储
+  // --- OPFS 持久化逻辑 ---
   async saveToOPFS(data: BackupData): Promise<void> {
     try {
       const root = await navigator.storage.getDirectory();
@@ -76,11 +75,10 @@ export const storageService = {
     }
   },
 
-  // --- 本地文件系统镜像 (File System Access API) ---
-  // 允许用户关联本地 iCloud/OneDrive 文件夹中的文件
+  // --- 本地文件系统镜像 ---
   async requestFileMirror(): Promise<boolean> {
     if (!('showSaveFilePicker' in window)) {
-      alert('您的浏览器不支持文件系统访问 API，请使用 Chrome 或 Edge 浏览器以开启镜像功能。');
+      alert('您的浏览器不支持文件系统访问 API，请使用 Chrome 或 Edge 浏览器。');
       return false;
     }
 
@@ -93,7 +91,6 @@ export const storageService = {
         }],
       });
 
-      // 将句柄存入 IndexedDB 供以后使用
       const request = indexedDB.open(DB_NAME, DB_VERSION);
       return new Promise((resolve) => {
         request.onsuccess = () => {
@@ -105,9 +102,7 @@ export const storageService = {
       });
     } catch (e: any) {
       if (e.name === 'SecurityError') {
-        alert('安全限制：当前环境（如预览框架或跨域 iframe）禁止访问本地文件系统。请尝试在独立浏览器标签页中直接打开应用网址以使用此功能。');
-      } else if (e.name !== 'AbortError') {
-        console.error('Handle request failed', e);
+        alert('安全限制：请在独立浏览器标签页中打开应用。');
       }
       return false;
     }
@@ -127,16 +122,28 @@ export const storageService = {
     });
   },
 
+  async verifyMirrorPermission(handle: any): Promise<boolean> {
+    if (!handle) return false;
+    const opts = { mode: 'readwrite' };
+    if ((await handle.queryPermission(opts)) === 'granted') {
+      return true;
+    }
+    // 注意：requestPermission 只能由用户手势触发
+    return false;
+  },
+
   async writeToMirror(handle: any, data: BackupData): Promise<boolean> {
     try {
-      // 验证权限
+      // 核心：必须处于 granted 状态。如果是 prompt，写入会失败
       if ((await handle.queryPermission({ mode: 'readwrite' })) !== 'granted') {
-        // 如果没有权限，不静默报错，由用户点击触发恢复
         return false;
       }
       const writable = await handle.createWritable();
-      await writable.write(JSON.stringify(data, null, 2));
+      const content = JSON.stringify(data, null, 2);
+      await writable.write(content);
+      // 核心：必须等待 close() 完结，否则文件就是 0 字节
       await writable.close();
+      console.log('Mirror sync successful');
       return true;
     } catch (e) {
       console.warn('Mirror write failed:', e);
@@ -144,9 +151,9 @@ export const storageService = {
     }
   },
 
-  // --- 核心保存逻辑集成 ---
+  // --- 核心保存逻辑 ---
   async savePlans(plans: WorkPlan[], settings?: AISettings): Promise<void> {
-    // 1. 保存到 IndexedDB (UI 响应)
+    // 1. 保存到 IndexedDB
     await new Promise<void>((resolve, reject) => {
        const request = indexedDB.open(DB_NAME, DB_VERSION);
        request.onsuccess = () => {
@@ -161,7 +168,6 @@ export const storageService = {
        request.onerror = () => reject(request.error);
     });
 
-    // 2. 准备备份数据包
     const backup: BackupData = {
       version: 1,
       date: new Date().toISOString(),
@@ -169,17 +175,16 @@ export const storageService = {
       settings
     };
 
-    // 3. 异步镜像到 OPFS (多浏览器兼容的永久存储)
+    // 2. OPFS 后台静默备份
     this.saveToOPFS(backup);
 
-    // 4. 异步镜像到本地文件系统 (如果已配置)
+    // 3. 磁盘镜像同步（关键点：必须 await 以防 0 字节）
     const handle = await this.getFileMirrorHandle();
     if (handle) {
-      this.writeToMirror(handle, backup);
+      await this.writeToMirror(handle, backup);
     }
   },
 
-  // --- 报表存储 ---
   async saveMonthlyReport(report: MonthlyAnalysisData): Promise<void> {
     return new Promise((resolve, reject) => {
       const request = indexedDB.open(DB_NAME, DB_VERSION);

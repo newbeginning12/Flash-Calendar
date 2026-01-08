@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { X, Cpu, RotateCcw, Save, Key, Globe, Check, HardDrive, Download, UploadCloud, Settings, AlertTriangle, FileText, CalendarDays, Sparkles, ExternalLink, ArrowRight, Circle, Loader2, FolderSync, ShieldCheck, Plus } from 'lucide-react';
+import { X, Cpu, RotateCcw, Save, Key, Globe, Check, HardDrive, Download, UploadCloud, Settings, AlertTriangle, FileText, CalendarDays, Sparkles, ExternalLink, ArrowRight, Circle, Loader2, FolderSync, ShieldCheck, Plus, ShieldAlert } from 'lucide-react';
 import { AISettings, AIProvider } from '../types';
 import { DEFAULT_MODEL } from '../services/aiService';
 import { storageService, BackupData } from '../services/storageService';
@@ -51,6 +51,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, s
   const [pendingData, setPendingData] = useState<BackupData | null>(null);
   const [isExporting, setIsExporting] = useState(false);
   const [hasMirror, setHasMirror] = useState(false);
+  const [mirrorHasPermission, setMirrorHasPermission] = useState(false);
   const [isSettingMirror, setIsSettingMirror] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -58,9 +59,22 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, s
     setLocalSettings({ ...settings });
     setPendingData(null);
     if (isOpen) {
-        storageService.getFileMirrorHandle().then(h => setHasMirror(!!h));
+        checkMirrorStatus();
     }
   }, [settings, isOpen]);
+
+  const checkMirrorStatus = async () => {
+    const handle = await storageService.getFileMirrorHandle();
+    if (handle) {
+        setHasMirror(true);
+        // 实时检测当前是否真的有写入权限
+        const permission = await handle.queryPermission({ mode: 'readwrite' });
+        setMirrorHasPermission(permission === 'granted');
+    } else {
+        setHasMirror(false);
+        setMirrorHasPermission(false);
+    }
+  };
 
   if (!isOpen) return null;
 
@@ -84,9 +98,23 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, s
   const handleSetMirror = async () => {
       setIsSettingMirror(true);
       try {
-        const success = await storageService.requestFileMirror();
-        if (success) {
-            setHasMirror(true);
+        // 如果已经有句柄但没权限，触发 requestPermission 引导
+        const existingHandle = await storageService.getFileMirrorHandle();
+        if (existingHandle && !mirrorHasPermission) {
+            const result = await existingHandle.requestPermission({ mode: 'readwrite' });
+            if (result === 'granted') {
+                setMirrorHasPermission(true);
+                // 恢复权限后立即同步一次
+                const plans = await storageService.getAllPlans();
+                await storageService.savePlans(plans, settings);
+            }
+        } else {
+            // 全新关联
+            const success = await storageService.requestFileMirror();
+            if (success) {
+                setHasMirror(true);
+                setMirrorHasPermission(true);
+            }
         }
       } catch (err) {
         console.error('Mirror activation failed', err);
@@ -273,23 +301,30 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, s
                     <button 
                         onClick={handleSetMirror}
                         disabled={isSettingMirror}
-                        className={`w-full flex items-center justify-between p-4 rounded-2xl border transition-all group ${hasMirror ? 'bg-indigo-600 text-white border-indigo-600 shadow-lg' : 'bg-white border-slate-200 hover:border-indigo-300 hover:bg-indigo-50/20'}`}
+                        className={`w-full flex items-center justify-between p-4 rounded-2xl border transition-all group ${
+                            hasMirror && mirrorHasPermission 
+                            ? 'bg-indigo-600 text-white border-indigo-600 shadow-lg' 
+                            : hasMirror 
+                                ? 'bg-amber-500 text-white border-amber-500 shadow-lg'
+                                : 'bg-white border-slate-200 hover:border-indigo-300 hover:bg-indigo-50/20'
+                        }`}
                     >
                         <div className="flex items-center gap-4">
                             <div className={`p-2 rounded-xl flex items-center justify-center ${hasMirror ? 'bg-white/20' : 'bg-indigo-50 text-indigo-600'}`}>
-                                {isSettingMirror ? <Loader2 size={20} className="animate-spin" /> : <FolderSync size={20} />}
+                                {isSettingMirror ? <Loader2 size={20} className="animate-spin" /> : (hasMirror && !mirrorHasPermission ? <ShieldAlert size={20} /> : <FolderSync size={20} />)}
                             </div>
                             <div className="text-left">
                                 <div className="text-sm font-black">
-                                    {hasMirror ? '本地磁盘镜像已激活' : '关联本地同步文件夹'}
+                                    {hasMirror && mirrorHasPermission ? '本地磁盘镜像已激活' : hasMirror ? '镜像权限已过期，点击恢复' : '关联本地同步文件夹'}
                                 </div>
-                                <div className={`text-[10px] font-bold mt-0.5 ${hasMirror ? 'text-indigo-100/70' : 'text-slate-400'}`}>
-                                    {hasMirror ? '实时镜像写入中 · 配合 iCloud/OneDrive 实现同步' : '零服务器实现跨设备数据双向同步'}
+                                <div className={`text-[10px] font-bold mt-0.5 ${hasMirror ? 'text-white/70' : 'text-slate-400'}`}>
+                                    {hasMirror && mirrorHasPermission ? '实时镜像写入中 · 配合 iCloud/OneDrive 实现同步' : hasMirror ? '由于安全策略，需重新授予写入权限' : '零服务器实现跨设备数据双向同步'}
                                 </div>
                             </div>
                         </div>
                         {!hasMirror && <Plus size={18} className="text-slate-300 group-hover:text-indigo-500" />}
-                        {hasMirror && <Check size={18} className="text-white" strokeWidth={3} />}
+                        {hasMirror && mirrorHasPermission && <Check size={18} className="text-white" strokeWidth={3} />}
+                        {hasMirror && !mirrorHasPermission && <ArrowRight size={18} className="text-white animate-pulse" />}
                     </button>
                     {isSettingMirror && (
                       <div className="px-2 pt-1">
