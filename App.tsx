@@ -115,27 +115,47 @@ export const App: React.FC = () => {
     const init = async () => {
       try {
         await storageService.init();
+        
+        // 层级恢复策略
         let storedPlans = await storageService.getAllPlans();
+        
+        // 如果 IndexedDB 为空，尝试从 OPFS 恢复
+        if (storedPlans.length === 0) {
+            console.log('IndexedDB is empty, attempting OPFS recovery...');
+            const opfsBackup = await storageService.loadFromOPFS();
+            if (opfsBackup && opfsBackup.plans) {
+                storedPlans = opfsBackup.plans;
+                await storageService.savePlans(storedPlans, opfsBackup.settings);
+                addNotification({ type: 'SYSTEM', title: '数据已自动恢复', message: '由于浏览器缓存清理，系统已自动从永久备份 (OPFS) 中恢复了您的日程。' });
+            }
+        }
+
         const now = new Date();
         const purgedPlans = storedPlans.filter(p => {
           if (!p.deletedAt) return true;
           return differenceInDays(now, new Date(p.deletedAt)) < 7;
         });
+        
         if (purgedPlans.length !== storedPlans.length) {
           await storageService.savePlans(purgedPlans);
           storedPlans = purgedPlans;
         }
+        
         setPlans(storedPlans);
+        
         const savedSettings = localStorage.getItem('zhihui_settings');
         if (savedSettings) setSettings(JSON.parse(savedSettings));
+        
         const savedWidth = localStorage.getItem('zhihui_sidebar_width');
         if (savedWidth) setSidebarWidth(parseInt(savedWidth));
+        
         const savedState = localStorage.getItem('zhihui_sidebar_open');
         if (savedState) setIsSidebarOpen(savedState === 'true');
+
       } catch (e) { console.error("Initialization failed", e); }
     };
     init();
-  }, []);
+  }, [addNotification]);
 
   const handleWeeklyReport = async () => {
     if (isProcessingReport || isProcessingReview) return;
@@ -203,7 +223,7 @@ export const App: React.FC = () => {
     const exists = plans.some(p => p.id === plan.id);
     const newPlans = exists ? plans.map(p => p.id === plan.id ? plan : p) : [...plans, plan];
     setPlans(newPlans);
-    await storageService.savePlans(newPlans);
+    await storageService.savePlans(newPlans, settings);
     setIsPlanModalOpen(false);
     setEditingPlan(null);
     if (!plan.isFuzzy && !plan.isEnhancing && !plan.deletedAt) {
@@ -218,7 +238,7 @@ export const App: React.FC = () => {
     if (!plan) return;
     const newPlans = plans.map(p => p.id === id ? { ...p, deletedAt: new Date().toISOString() } : p);
     setPlans(newPlans);
-    await storageService.savePlans(newPlans);
+    await storageService.savePlans(newPlans, settings);
     setIsPlanModalOpen(false);
     setEditingPlan(null);
   };
@@ -226,13 +246,13 @@ export const App: React.FC = () => {
   const handleRestorePlan = useCallback(async (plan: WorkPlan) => {
     const newPlans = plans.map(p => p.id === plan.id ? { ...p, deletedAt: undefined } : p);
     setPlans(newPlans);
-    await storageService.savePlans(newPlans);
-  }, [plans]);
+    await storageService.savePlans(newPlans, settings);
+  }, [plans, settings]);
 
   const handlePermanentDelete = async (id: string) => {
     const newPlans = plans.filter(p => p.id !== id);
     setPlans(newPlans);
-    await storageService.savePlans(newPlans);
+    await storageService.savePlans(newPlans, settings);
   };
 
   const handleSmartInput = async (input: string): Promise<boolean> => {
@@ -289,13 +309,13 @@ export const App: React.FC = () => {
       };
       const newPlans = [...plans, rawPlan];
       setPlans(newPlans);
-      await storageService.savePlans(newPlans);
+      await storageService.savePlans(newPlans, settings);
       try {
           const enhancedData = await enhanceFuzzyTask(text, settings);
           if (enhancedData) {
               setPlans(prev => {
                   const updated = prev.map(p => p.id === newId ? { ...p, ...enhancedData, isEnhancing: false } : p);
-                  storageService.savePlans(updated);
+                  storageService.savePlans(updated, settings);
                   return updated;
               });
           } else {
@@ -352,7 +372,7 @@ export const App: React.FC = () => {
                 const startDateStr = start.toISOString();
                 const endDateStr = end.toISOString();
                 const np = { ...s, id: crypto.randomUUID(), startDate: startDateStr, endDate: endDateStr, status: getInitialStatus(startDateStr, endDateStr) };
-                const nps = [...plans, np]; setPlans(nps); await storageService.savePlans(nps);
+                const nps = [...plans, np]; setPlans(nps); await storageService.savePlans(nps, settings);
                 if(td) { setTargetPlanId(np.id); setTimeout(() => setTargetPlanId(null), 2500); } else { setEditingPlan(np); setIsPlanModalOpen(true); }
               }}
               onCreateNew={() => {
@@ -370,7 +390,7 @@ export const App: React.FC = () => {
                 const startDateStr = start.toISOString();
                 const endDateStr = end.toISOString();
                 const np: WorkPlan = { id: crypto.randomUUID(), title: t, startDate: startDateStr, endDate: endDateStr, status: getInitialStatus(startDateStr, endDateStr), tags: tags || ['快速'], color: c, links: [] };
-                const nps = [...plans, np]; setPlans(nps); await storageService.savePlans(nps);
+                const nps = [...plans, np]; setPlans(nps); await storageService.savePlans(nps, settings);
                 setCurrentDate(start);
                 setTargetPlanId(np.id); 
                 setTimeout(() => setTargetPlanId(null), 2500);
@@ -432,7 +452,7 @@ export const App: React.FC = () => {
                   const startDateStr = start.toISOString();
                   const endDateStr = end.toISOString();
                   const np = { ...s, id: crypto.randomUUID(), startDate: startDateStr, endDate: endDateStr, status: getInitialStatus(startDateStr, endDateStr) }; 
-                  const nps = [...plans, np]; setPlans(nps); await storageService.savePlans(nps); 
+                  const nps = [...plans, np]; setPlans(nps); await storageService.savePlans(nps, settings); 
                   if(td) { setTargetPlanId(np.id); setTimeout(() => setTargetPlanId(null), 2500); } else { setEditingPlan(np); setIsPlanModalOpen(true); } 
                 }} onDateSelect={setCurrentDate} onDeletePlan={handleSoftDelete} onDragCreate={async (startDate, duration, title, color, tags) => { 
                 const startDateStr = startDate.toISOString();
@@ -440,7 +460,7 @@ export const App: React.FC = () => {
                 const newPlan: WorkPlan = { id: crypto.randomUUID(), title: title || '新建日程', startDate: startDateStr, endDate: endDateStr, status: getInitialStatus(startDateStr, endDateStr), tags: tags || [], color: color || 'blue', links: [] }; 
                 const nps = [...plans, newPlan];
                 setPlans(nps);
-                await storageService.savePlans(nps);
+                await storageService.savePlans(nps, settings);
                 setTargetPlanId(newPlan.id); 
                 setTimeout(() => setTargetPlanId(null), 2500);
               }} />
@@ -450,7 +470,7 @@ export const App: React.FC = () => {
        <SmartShelf plans={activePlans} isOpen={isShelfOpen} onToggle={setIsShelfOpen} onPlanClick={(p) => { setEditingPlan(p); setIsPlanModalOpen(true); }} onPlanUpdate={handleSavePlan} onDeletePlan={handleSoftDelete} onCapture={handleShelfCapture} />
        <RecycleBinModal isOpen={isTrashOpen} onClose={() => setIsTrashOpen(false)} plans={trashPlans} onRestore={handleRestorePlan} onPermanentDelete={handlePermanentDelete} />
        <PlanModal plan={editingPlan} isOpen={isPlanModalOpen} onClose={() => setIsPlanModalOpen(false)} onSave={handleSavePlan} onDelete={handleSoftDelete} />
-       <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} settings={settings} onSave={(s) => { setSettings(s); localStorage.setItem('zhihui_settings', JSON.stringify(s)); setIsSettingsOpen(false); }} onExport={() => storageService.exportData(activePlans, settings)} onImport={async (d) => { if (d.plans) { setPlans(d.plans); await storageService.savePlans(d.plans); } if (d.settings) { setSettings(d.settings); localStorage.setItem('zhihui_settings', JSON.stringify(d.settings)); } setIsSettingsOpen(false); }} />
+       <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} settings={settings} onSave={(s) => { setSettings(s); localStorage.setItem('zhihui_settings', JSON.stringify(s)); setIsSettingsOpen(false); }} onExport={() => storageService.exportData(activePlans, settings)} onImport={async (d) => { if (d.plans) { setPlans(d.plans); await storageService.savePlans(d.plans, d.settings || settings); } if (d.settings) { setSettings(d.settings); localStorage.setItem('zhihui_settings', JSON.stringify(d.settings)); } setIsSettingsOpen(false); }} />
        <WeeklyReportModal isOpen={isReportModalOpen} onClose={() => setIsReportModalOpen(false)} data={reportData} />
        <MonthlyReviewModal isOpen={isMonthlyModalOpen} onClose={() => setIsMonthlyModalOpen(false)} data={monthlyData} />
        <FlashCommand plans={activePlans} settings={settings} onPlanCreated={handleSavePlan} onAnalysisCreated={async (data) => { 

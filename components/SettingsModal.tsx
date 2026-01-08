@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { X, Cpu, RotateCcw, Save, Key, Globe, Check, HardDrive, Download, UploadCloud, Settings, AlertTriangle, FileText, CalendarDays, Sparkles, ExternalLink, ArrowRight, Circle, Loader2 } from 'lucide-react';
+import { X, Cpu, RotateCcw, Save, Key, Globe, Check, HardDrive, Download, UploadCloud, Settings, AlertTriangle, FileText, CalendarDays, Sparkles, ExternalLink, ArrowRight, Circle, Loader2, FolderSync, ShieldCheck, Plus } from 'lucide-react';
 import { AISettings, AIProvider } from '../types';
 import { DEFAULT_MODEL } from '../services/aiService';
 import { storageService, BackupData } from '../services/storageService';
@@ -50,11 +50,16 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, s
   const [activeTab, setActiveTab] = useState<TabType>('ai');
   const [pendingData, setPendingData] = useState<BackupData | null>(null);
   const [isExporting, setIsExporting] = useState(false);
+  const [hasMirror, setHasMirror] = useState(false);
+  const [isSettingMirror, setIsSettingMirror] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     setLocalSettings({ ...settings });
     setPendingData(null);
+    if (isOpen) {
+        storageService.getFileMirrorHandle().then(h => setHasMirror(!!h));
+    }
   }, [settings, isOpen]);
 
   if (!isOpen) return null;
@@ -71,10 +76,23 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, s
 
   const handleExport = async () => {
       setIsExporting(true);
-      // 增加一个视觉上的延迟，确保用户能看到反馈
       await new Promise(resolve => setTimeout(resolve, 800));
       onExport();
       setIsExporting(false);
+  };
+
+  const handleSetMirror = async () => {
+      setIsSettingMirror(true);
+      try {
+        const success = await storageService.requestFileMirror();
+        if (success) {
+            setHasMirror(true);
+        }
+      } catch (err) {
+        console.error('Mirror activation failed', err);
+      } finally {
+        setIsSettingMirror(false);
+      }
   };
 
   return (
@@ -106,7 +124,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, s
                      onClick={() => setActiveTab('data')}
                     className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-sm font-medium transition-all ${activeTab === 'data' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
                 >
-                    <HardDrive size={16} /> 数据管理
+                    <HardDrive size={16} /> 数据与同步
                 </button>
             </div>
         </div>
@@ -210,50 +228,87 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, s
 
           {activeTab === 'data' && (
               <div className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-300">
-                 <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4 flex items-start gap-3">
-                     <HardDrive size={20} className="text-indigo-500 mt-1" />
+                 <div className="bg-emerald-50 border border-emerald-100 rounded-2xl p-4 flex items-start gap-3">
+                     <ShieldCheck size={20} className="text-emerald-500 mt-1" />
                      <div className="flex-1">
-                         <h4 className="text-sm font-bold text-slate-800">本地离线存储</h4>
-                         <p className="text-xs text-slate-500 mt-1 leading-relaxed">您的日程数据安全地保存在当前浏览器的本地数据库中。建议定期导出备份文件。</p>
+                         <h4 className="text-sm font-bold text-emerald-800">存储护卫已开启 (OPFS)</h4>
+                         <p className="text-[11px] text-emerald-600 mt-1 leading-relaxed font-medium">应用已在浏览器分配的永久存储空间内自动建立实时镜像。即使 IDB 数据库被清除，数据也能瞬间找回。</p>
                      </div>
                  </div>
 
-                 <div className="grid grid-cols-1 gap-3">
-                     <button 
-                        onClick={handleExport} 
-                        disabled={isExporting}
-                        className="flex items-center justify-between p-4 bg-white border border-slate-200 rounded-2xl hover:bg-slate-50 group transition-all disabled:opacity-70"
-                     >
-                         <span className="flex items-center gap-3">
-                            <span className="p-2 bg-blue-50 text-blue-600 rounded-lg group-hover:scale-110 transition-transform">
-                                {isExporting ? <Loader2 size={18} className="animate-spin" /> : <Download size={18} />}
+                 <div className="space-y-3">
+                    <label className="text-xs font-bold text-slate-400 uppercase tracking-widest px-1">数据备份</label>
+                    <div className="grid grid-cols-1 gap-2.5">
+                        <button 
+                            onClick={handleExport} 
+                            disabled={isExporting}
+                            className="flex items-center justify-between p-4 bg-white border border-slate-200 rounded-2xl hover:bg-slate-50 group transition-all disabled:opacity-70"
+                        >
+                            <span className="flex items-center gap-3">
+                                <span className="p-2 bg-blue-50 text-blue-600 rounded-lg group-hover:scale-110 transition-transform">
+                                    {isExporting ? <Loader2 size={18} className="animate-spin" /> : <Download size={18} />}
+                                </span>
+                                <span className="text-sm font-bold text-slate-800">
+                                    {isExporting ? '正在生成备份文件...' : '导出 JSON 备份'}
+                                </span>
                             </span>
-                            <span className="text-sm font-bold text-slate-800">
-                                {isExporting ? '正在生成备份文件...' : '导出数据备份'}
+                            {!isExporting && <ArrowRight size={16} className="text-slate-300" />}
+                        </button>
+                        
+                        <button 
+                            onClick={() => fileInputRef.current?.click()} 
+                            className="flex items-center justify-between p-4 bg-white border border-slate-200 rounded-2xl hover:bg-slate-50 group transition-all"
+                        >
+                            <span className="flex items-center gap-3">
+                                <span className="p-2 bg-indigo-50 text-indigo-600 rounded-lg group-hover:scale-110 transition-transform"><UploadCloud size={18} /></span>
+                                <span className="text-sm font-bold text-slate-800">导入历史恢复</span>
                             </span>
-                         </span>
-                         {!isExporting && <ArrowRight size={16} className="text-slate-300" />}
-                     </button>
-                     
-                     <button 
-                        onClick={() => fileInputRef.current?.click()} 
-                        className="flex items-center justify-between p-4 bg-white border border-slate-200 rounded-2xl hover:bg-slate-50 group transition-all"
-                     >
-                         <span className="flex items-center gap-3">
-                            <span className="p-2 bg-indigo-50 text-indigo-600 rounded-lg group-hover:scale-110 transition-transform"><UploadCloud size={18} /></span>
-                            <span className="text-sm font-bold text-slate-800">导入数据恢复</span>
-                         </span>
-                         <ArrowRight size={16} className="text-slate-300" />
-                     </button>
-                     <input type="file" ref={fileInputRef} onChange={async (e) => {
-                         const file = e.target.files?.[0];
-                         if (file) {
-                             const data = await storageService.importData(file);
-                             if (data) setPendingData(data);
-                         }
-                         e.target.value = '';
-                     }} accept=".json" className="hidden" />
+                            <ArrowRight size={16} className="text-slate-300" />
+                        </button>
+                    </div>
                  </div>
+
+                 <div className="space-y-3 pt-2">
+                    <label className="text-xs font-bold text-slate-400 uppercase tracking-widest px-1">磁盘同步镜像</label>
+                    <button 
+                        onClick={handleSetMirror}
+                        disabled={isSettingMirror}
+                        className={`w-full flex items-center justify-between p-4 rounded-2xl border transition-all group ${hasMirror ? 'bg-indigo-600 text-white border-indigo-600 shadow-lg' : 'bg-white border-slate-200 hover:border-indigo-300 hover:bg-indigo-50/20'}`}
+                    >
+                        <div className="flex items-center gap-4">
+                            <div className={`p-2 rounded-xl flex items-center justify-center ${hasMirror ? 'bg-white/20' : 'bg-indigo-50 text-indigo-600'}`}>
+                                {isSettingMirror ? <Loader2 size={20} className="animate-spin" /> : <FolderSync size={20} />}
+                            </div>
+                            <div className="text-left">
+                                <div className="text-sm font-black">
+                                    {hasMirror ? '本地磁盘镜像已激活' : '关联本地同步文件夹'}
+                                </div>
+                                <div className={`text-[10px] font-bold mt-0.5 ${hasMirror ? 'text-indigo-100/70' : 'text-slate-400'}`}>
+                                    {hasMirror ? '实时镜像写入中 · 配合 iCloud/OneDrive 实现同步' : '零服务器实现跨设备数据双向同步'}
+                                </div>
+                            </div>
+                        </div>
+                        {!hasMirror && <Plus size={18} className="text-slate-300 group-hover:text-indigo-500" />}
+                        {hasMirror && <Check size={18} className="text-white" strokeWidth={3} />}
+                    </button>
+                    {isSettingMirror && (
+                      <div className="px-2 pt-1">
+                        <div className="text-[10px] text-indigo-500 font-bold flex items-center gap-1.5 animate-pulse">
+                          <Loader2 size={10} className="animate-spin" />
+                          正在等待系统文件选择器响应...
+                        </div>
+                      </div>
+                    )}
+                 </div>
+
+                 <input type="file" ref={fileInputRef} onChange={async (e) => {
+                     const file = e.target.files?.[0];
+                     if (file) {
+                         const data = await storageService.importData(file);
+                         if (data) setPendingData(data);
+                     }
+                     e.target.value = '';
+                 }} accept=".json" className="hidden" />
               </div>
           )}
         </div>
