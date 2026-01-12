@@ -1,4 +1,3 @@
-
 import { WorkPlan, AISettings, MonthlyAnalysisData, WeeklyReportData } from '../types';
 
 const DB_NAME = 'FlashCalendarDB';
@@ -12,7 +11,7 @@ const OPFS_FILENAME = 'backup_v1.bin';
 const MIRROR_HANDLE_KEY = 'file_mirror_handle';
 const SUPABASE_SYNC_ENABLED_KEY = 'supabase_sync_enabled';
 
-// 动态载入 Supabase (假设环境已提供)
+// 动态载入 Supabase
 declare global {
   interface Window {
     supabase: any;
@@ -59,12 +58,12 @@ export const storageService = {
 
   // --- Supabase 同步辅助函数 ---
   getSupabase() {
-    // 仅从环境变量读取，不再支持手动输入，符合生产环境逻辑
+    // 兼容 Netlify 的构建环境
     const env = (process.env as any) || {};
+    const metaEnv = (import.meta as any).env || {};
     
-    // 兼容 Netlify/Vercel 的 VITE_ 前缀
-    const supabaseUrl = env.VITE_SUPABASE_URL || env.SUPABASE_URL;
-    const supabaseKey = env.VITE_SUPABASE_ANON_KEY || env.SUPABASE_ANON_KEY;
+    const supabaseUrl = metaEnv.VITE_SUPABASE_URL || env.VITE_SUPABASE_URL || env.SUPABASE_URL;
+    const supabaseKey = metaEnv.VITE_SUPABASE_ANON_KEY || env.VITE_SUPABASE_ANON_KEY || env.SUPABASE_ANON_KEY;
     
     if (!supabaseUrl || !supabaseKey || !window.supabase) {
         return null;
@@ -73,7 +72,6 @@ export const storageService = {
   },
 
   async isSyncEnabled(): Promise<boolean> {
-    // 如果开发者没配置环境，或者用户没手动开启，都返回 false
     if (!this.getSupabase()) return false;
     return localStorage.getItem(SUPABASE_SYNC_ENABLED_KEY) === 'true';
   },
@@ -84,7 +82,7 @@ export const storageService = {
 
   async syncWithCloud(): Promise<{ success: boolean; message?: string }> {
     const supabase = this.getSupabase();
-    if (!supabase) return { success: false, message: '云端同步服务未配置，目前仅运行在本地模式。' };
+    if (!supabase) return { success: false, message: '云端同步服务未配置。' };
 
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return { success: false, message: '用户未登录' };
@@ -106,7 +104,7 @@ export const storageService = {
       const toUpdateInCloud: any[] = [];
 
       localPlans.forEach(lp => {
-        const cp = cloudMap.get(lp.id) as any;
+        const cp = cloudMap.get(lp.id);
         if (!cp || new Date(lp.updatedAt) > new Date(cp.updated_at)) {
           mergedPlans.push(lp);
           toUpdateInCloud.push({
@@ -189,63 +187,23 @@ export const storageService = {
     });
   },
 
-  // --- OPFS 持久化逻辑 ---
   async saveToOPFS(data: BackupData): Promise<void> {
     try {
       const root = await navigator.storage.getDirectory();
       const fileHandle = await root.getFileHandle(OPFS_FILENAME, { create: true });
-      const writable = await fileHandle.createWritable();
-      const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
-      await writable.write(blob);
+      const writable = await (fileHandle as any).createWritable();
+      await writable.write(JSON.stringify(data));
       await writable.close();
-    } catch (e) {
-      console.warn('OPFS save failed:', e);
-    }
+    } catch (e) {}
   },
 
   async loadFromOPFS(): Promise<BackupData | null> {
     try {
       const root = await navigator.storage.getDirectory();
       const fileHandle = await root.getFileHandle(OPFS_FILENAME);
-      const file = await fileHandle.getFile();
-      const text = await file.text();
-      return JSON.parse(text);
-    } catch (e) {
-      return null;
-    }
-  },
-
-  // --- 本地文件系统镜像 ---
-  async requestFileMirror(): Promise<boolean> {
-    if (!('showSaveFilePicker' in window)) {
-      alert('您的浏览器不支持文件系统访问 API，请使用 Chrome 或 Edge 浏览器。');
-      return false;
-    }
-
-    try {
-      const handle = await (window as any).showSaveFilePicker({
-        suggestedName: 'flash-plans-mirror.json',
-        types: [{
-          description: 'JSON Data File',
-          accept: { 'application/json': ['.json'] },
-        }],
-      });
-
-      const request = indexedDB.open(DB_NAME, DB_VERSION);
-      return new Promise((resolve) => {
-        request.onsuccess = () => {
-          const db = request.result;
-          const tx = db.transaction(SYSTEM_STORE, 'readwrite');
-          tx.objectStore(SYSTEM_STORE).put(handle, MIRROR_HANDLE_KEY);
-          tx.oncomplete = () => resolve(true);
-        };
-      });
-    } catch (e: any) {
-      if (e.name === 'SecurityError') {
-        alert('安全限制：请在独立浏览器标签页中打开应用。');
-      }
-      return false;
-    }
+      const file = await (fileHandle as any).getFile();
+      return JSON.parse(await file.text());
+    } catch (e) { return null; }
   },
 
   async getFileMirrorHandle(): Promise<any | null> {
@@ -253,10 +211,7 @@ export const storageService = {
       const request = indexedDB.open(DB_NAME, DB_VERSION);
       request.onsuccess = () => {
         const db = request.result;
-        if (!db.objectStoreNames.contains(SYSTEM_STORE)) {
-            resolve(null);
-            return;
-        }
+        if (!db.objectStoreNames.contains(SYSTEM_STORE)) { resolve(null); return; }
         const tx = db.transaction(SYSTEM_STORE, 'readonly');
         const getReq = tx.objectStore(SYSTEM_STORE).get(MIRROR_HANDLE_KEY);
         getReq.onsuccess = () => resolve(getReq.result || null);
@@ -266,190 +221,128 @@ export const storageService = {
     });
   },
 
-  async verifyMirrorPermission(handle: any): Promise<boolean> {
-    if (!handle) return false;
-    const opts = { mode: 'readwrite' };
-    if ((await handle.queryPermission(opts)) === 'granted') {
-      return true;
-    }
-    return false;
-  },
-
-  async writeToMirror(handle: any, data: BackupData): Promise<boolean> {
+  async requestFileMirror(): Promise<boolean> {
+    if (!('showSaveFilePicker' in window)) return false;
     try {
-      if ((await handle.queryPermission({ mode: 'readwrite' })) !== 'granted') {
-        return false;
-      }
-      const writable = await handle.createWritable();
-      const content = JSON.stringify(data, null, 2);
-      await writable.write(content);
-      await writable.close();
-      return true;
-    } catch (e) {
-      console.warn('Mirror write failed:', e);
-      return false;
-    }
+      const handle = await (window as any).showSaveFilePicker({
+        suggestedName: 'flash-mirror.json',
+        types: [{ description: 'JSON', accept: { 'application/json': ['.json'] } }]
+      });
+      const request = indexedDB.open(DB_NAME, DB_VERSION);
+      return new Promise((resolve) => {
+        request.onsuccess = () => {
+          const db = request.result;
+          const tx = db.transaction(SYSTEM_STORE, 'readwrite');
+          tx.objectStore(SYSTEM_STORE).put(handle, MIRROR_HANDLE_KEY);
+          tx.oncomplete = () => resolve(true);
+        };
+      });
+    } catch (e) { return false; }
   },
 
-  // --- 核心保存逻辑 ---
+  async writeToMirror(handle: any, data: BackupData): Promise<void> {
+    try {
+      if ((await handle.queryPermission({ mode: 'readwrite' })) !== 'granted') return;
+      const writable = await handle.createWritable();
+      await writable.write(JSON.stringify(data, null, 2));
+      await writable.close();
+    } catch (e) {}
+  },
+
   async savePlans(plans: WorkPlan[], settings?: AISettings): Promise<void> {
     const nowIso = new Date().toISOString();
-    const plansWithTimestamp = plans.map(p => ({
-        ...p,
-        updatedAt: p.updatedAt || nowIso
-    }));
-
+    const plansWithTimestamp = plans.map(p => ({ ...p, updatedAt: p.updatedAt || nowIso }));
     await this.savePlansToLocalOnly(plansWithTimestamp);
 
-    const backup: BackupData = {
-      version: 1,
-      date: nowIso,
-      plans: plansWithTimestamp,
-      settings
-    };
-
+    const backup: BackupData = { version: 1, date: nowIso, plans: plansWithTimestamp, settings };
     this.saveToOPFS(backup);
 
     const handle = await this.getFileMirrorHandle();
-    if (handle) {
-      await this.writeToMirror(handle, backup);
-    }
-
-    if (await this.isSyncEnabled()) {
-        this.syncWithCloud();
-    }
-  },
-
-  async saveMonthlyReport(report: MonthlyAnalysisData): Promise<void> {
-    return new Promise((resolve, reject) => {
-      const request = indexedDB.open(DB_NAME, DB_VERSION);
-      request.onsuccess = () => {
-        const db = request.result;
-        const transaction = db.transaction(REPORT_STORE, 'readwrite');
-        const store = transaction.objectStore(REPORT_STORE);
-        if (!report.id) report.id = crypto.randomUUID();
-        store.put(report);
-        transaction.oncomplete = () => resolve();
-      };
-      request.onerror = () => reject(request.error);
-    });
-  },
-
-  async getAllMonthlyReports(): Promise<MonthlyAnalysisData[]> {
-    return new Promise((resolve, reject) => {
-      const request = indexedDB.open(DB_NAME, DB_VERSION);
-      request.onsuccess = () => {
-        const db = request.result;
-        if (!db.objectStoreNames.contains(REPORT_STORE)) {
-            resolve([]);
-            return;
-        }
-        const transaction = db.transaction(REPORT_STORE, 'readonly');
-        const store = transaction.objectStore(REPORT_STORE);
-        const getAllRequest = store.getAll();
-        getAllRequest.onsuccess = () => {
-          const results = getAllRequest.result || [];
-          resolve(results.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()));
-        };
-      };
-      request.onerror = () => reject(request.error);
-    });
-  },
-
-  async saveWeeklyReport(report: WeeklyReportData): Promise<void> {
-    return new Promise((resolve, reject) => {
-      const request = indexedDB.open(DB_NAME, DB_VERSION);
-      request.onsuccess = () => {
-        const db = request.result;
-        const transaction = db.transaction(WEEKLY_REPORT_STORE, 'readwrite');
-        const store = transaction.objectStore(WEEKLY_REPORT_STORE);
-        if (!report.id) report.id = crypto.randomUUID();
-        if (!report.timestamp) report.timestamp = new Date().toISOString();
-        store.put(report);
-        transaction.oncomplete = () => resolve();
-      };
-      request.onerror = () => reject(request.error);
-    });
-  },
-
-  async getAllWeeklyReports(): Promise<WeeklyReportData[]> {
-    return new Promise((resolve, reject) => {
-      const request = indexedDB.open(DB_NAME, DB_VERSION);
-      request.onsuccess = () => {
-        const db = request.result;
-        if (!db.objectStoreNames.contains(WEEKLY_REPORT_STORE)) {
-            resolve([]);
-            return;
-        }
-        const transaction = db.transaction(WEEKLY_REPORT_STORE, 'readonly');
-        const store = transaction.objectStore(WEEKLY_REPORT_STORE);
-        const getAllRequest = store.getAll();
-        getAllRequest.onsuccess = () => {
-          const results = getAllRequest.result || [];
-          resolve(results.sort((a, b) => new Date(b.timestamp!).getTime() - new Date(a.timestamp!).getTime()));
-        };
-      };
-      request.onerror = () => reject(request.error);
-    });
-  },
-  
-  exportData(plans: WorkPlan[], settings: AISettings) {
-      const data: BackupData = {
-          version: 1,
-          date: new Date().toISOString(),
-          plans,
-          settings
-      };
-      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `flash-calendar-backup-${new Date().toISOString().split('T')[0]}.json`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-  },
-  
-  async importData(file: File): Promise<BackupData | null> {
-      return new Promise((resolve) => {
-          const reader = new FileReader();
-          reader.onload = async (e) => {
-              try {
-                  const text = e.target?.result as string;
-                  const data = JSON.parse(text);
-                  if (data && Array.isArray(data.plans)) {
-                      resolve(data as BackupData);
-                  } else {
-                      resolve(null);
-                  }
-              } catch (err) {
-                  resolve(null);
-              }
-          };
-          reader.readAsText(file);
-      });
+    if (handle) await this.writeToMirror(handle, backup);
+    if (await this.isSyncEnabled()) this.syncWithCloud();
   },
 
   async getAllPlans(): Promise<WorkPlan[]> {
     return new Promise((resolve, reject) => {
       const request = indexedDB.open(DB_NAME, DB_VERSION);
-      
       request.onsuccess = () => {
         const db = request.result;
-        if (!db.objectStoreNames.contains(STORE_NAME)) {
-            resolve([]);
-            return;
-        }
+        if (!db.objectStoreNames.contains(STORE_NAME)) { resolve([]); return; }
         const transaction = db.transaction(STORE_NAME, 'readonly');
         const store = transaction.objectStore(STORE_NAME);
         const getAllRequest = store.getAll();
-        
         getAllRequest.onsuccess = () => resolve(getAllRequest.result || []);
-        getAllRequest.onerror = () => reject(getAllRequest.error);
       };
-      
       request.onerror = () => reject(request.error);
     });
+  },
+
+  async saveMonthlyReport(report: MonthlyAnalysisData): Promise<void> {
+    return new Promise((resolve) => {
+      const request = indexedDB.open(DB_NAME, DB_VERSION);
+      request.onsuccess = () => {
+        const db = request.result;
+        const transaction = db.transaction(REPORT_STORE, 'readwrite');
+        const store = transaction.objectStore(REPORT_STORE);
+        store.put({ ...report, id: report.id || crypto.randomUUID() });
+        resolve();
+      };
+    });
+  },
+
+  async getAllMonthlyReports(): Promise<MonthlyAnalysisData[]> {
+    return new Promise((resolve) => {
+      const request = indexedDB.open(DB_NAME, DB_VERSION);
+      request.onsuccess = () => {
+        const db = request.result;
+        if (!db.objectStoreNames.contains(REPORT_STORE)) { resolve([]); return; }
+        const transaction = db.transaction(REPORT_STORE, 'readonly');
+        const store = transaction.objectStore(REPORT_STORE);
+        const req = store.getAll();
+        req.onsuccess = () => resolve((req.result || []).sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()));
+      };
+    });
+  },
+
+  async saveWeeklyReport(report: WeeklyReportData): Promise<void> {
+    return new Promise((resolve) => {
+      const request = indexedDB.open(DB_NAME, DB_VERSION);
+      request.onsuccess = () => {
+        const db = request.result;
+        const transaction = db.transaction(WEEKLY_REPORT_STORE, 'readwrite');
+        const store = transaction.objectStore(WEEKLY_REPORT_STORE);
+        store.put({ ...report, id: report.id || crypto.randomUUID(), timestamp: report.timestamp || new Date().toISOString() });
+        resolve();
+      };
+    });
+  },
+
+  async getAllWeeklyReports(): Promise<WeeklyReportData[]> {
+    return new Promise((resolve) => {
+      const request = indexedDB.open(DB_NAME, DB_VERSION);
+      request.onsuccess = () => {
+        const db = request.result;
+        if (!db.objectStoreNames.contains(WEEKLY_REPORT_STORE)) { resolve([]); return; }
+        const transaction = db.transaction(WEEKLY_REPORT_STORE, 'readonly');
+        const store = transaction.objectStore(WEEKLY_REPORT_STORE);
+        const req = store.getAll();
+        req.onsuccess = () => resolve((req.result || []).sort((a, b) => new Date(b.timestamp!).getTime() - new Date(a.timestamp!).getTime()));
+      };
+    });
+  },
+  
+  exportData(plans: WorkPlan[], settings: AISettings) {
+      const data: BackupData = { version: 1, date: new Date().toISOString(), plans, settings };
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `flash-backup-${new Date().toISOString().split('T')[0]}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+  },
+  
+  async importData(file: File): Promise<BackupData | null> {
+      try { return JSON.parse(await file.text()); } catch (err) { return null; }
   }
 };
