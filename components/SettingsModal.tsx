@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { X, Cpu, RotateCcw, Save, Key, Globe, Check, HardDrive, Download, UploadCloud, Settings, AlertTriangle, FileText, CalendarDays, Sparkles, ExternalLink, ArrowRight, Circle, Loader2, FolderSync, ShieldCheck, Plus, ShieldAlert, Cloud, LogIn, LogOut, User } from 'lucide-react';
+import { X, Cpu, RotateCcw, Save, Key, Globe, Check, HardDrive, Download, UploadCloud, Settings, AlertTriangle, FileText, CalendarDays, Sparkles, ExternalLink, ArrowRight, Circle, Loader2, FolderSync, ShieldCheck, Plus, ShieldAlert, Cloud, LogIn, LogOut, User, Database, Info } from 'lucide-react';
 import { AISettings, AIProvider } from '../types';
 import { DEFAULT_MODEL } from '../services/aiService';
 import { storageService, BackupData } from '../services/storageService';
@@ -59,6 +59,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, s
   const [isSyncing, setIsSyncing] = useState(false);
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [showAuthForm, setShowAuthForm] = useState(false);
+  const [isSupabaseAvailable, setIsSupabaseAvailable] = useState(false);
   const [authEmail, setAuthEmail] = useState('');
   const [authPassword, setAuthPassword] = useState('');
   const [authMode, setAuthMode] = useState<'login' | 'signup'>('login');
@@ -89,26 +90,45 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, s
   };
 
   const checkSupabaseStatus = async () => {
-    const enabled = await storageService.isSyncEnabled();
-    setIsSyncEnabled(enabled);
-    
     const supabase = storageService.getSupabase();
-    if (supabase) {
-        const { data: { user } } = await supabase.auth.getUser();
-        setCurrentUser(user);
+    const available = !!supabase;
+    setIsSupabaseAvailable(available);
+
+    if (available) {
+        const enabled = await storageService.isSyncEnabled();
+        setIsSyncEnabled(enabled);
+        try {
+            const { data: { user } } = await supabase.auth.getUser();
+            setCurrentUser(user);
+        } catch(e) {
+            console.warn('Supabase auth check failed', e);
+        }
+    } else {
+        setIsSyncEnabled(false);
     }
   };
 
   const handleToggleSync = async () => {
-      if (!isSyncEnabled && !currentUser) {
-          setShowAuthForm(true);
+      // 如果开发者没配置 Supabase 环境，开关无法开启
+      if (!isSupabaseAvailable) {
+          alert("检测到部署环境未配置 Supabase 环境变量 (VITE_SUPABASE_URL)。\n\n如果您是开发者：请在 Netlify/Vercel 设置对应的环境变量并重新部署。\n如果您是用户：目前无法使用云同步，数据将仅保存在本地。");
           return;
       }
-      const newState = !isSyncEnabled;
-      setIsSyncEnabled(newState);
-      await storageService.setSyncEnabled(newState);
-      if (newState) {
+
+      // 逻辑：开启开关 -> 如果没登录 -> 弹出登录框
+      if (!isSyncEnabled) {
+          if (!currentUser) {
+              setShowAuthForm(true);
+              return;
+          }
+          // 已登录则直接开启
+          setIsSyncEnabled(true);
+          await storageService.setSyncEnabled(true);
           handleForceSync();
+      } else {
+          // 关闭开关
+          setIsSyncEnabled(false);
+          await storageService.setSyncEnabled(false);
       }
   };
 
@@ -122,43 +142,44 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, s
   };
 
   const handleAuth = async (e: React.FormEvent) => {
-      e.preventDefault();
-      setAuthError(null);
-      setIsAuthLoading(true);
-      
-      const supabase = storageService.getSupabase();
-      if (!supabase) {
-          setAuthError('Supabase 配置丢失');
-          setIsAuthLoading(false);
-          return;
-      }
+    e.preventDefault();
+    setAuthError(null);
+    setIsAuthLoading(true);
+    
+    const supabase = storageService.getSupabase();
+    if (!supabase) {
+        setAuthError('云端服务未就绪');
+        setIsAuthLoading(false);
+        return;
+    }
 
-      try {
-          if (authMode === 'login') {
-              const { data, error } = await supabase.auth.signInWithPassword({
-                  email: authEmail,
-                  password: authPassword
-              });
-              if (error) throw error;
-              setCurrentUser(data.user);
-          } else {
-              const { data, error } = await supabase.auth.signUp({
-                  email: authEmail,
-                  password: authPassword
-              });
-              if (error) throw error;
-              alert('注册成功，请检查邮箱进行验证（如果 Supabase 开启了验证）。');
-              setCurrentUser(data.user);
-          }
-          setShowAuthForm(false);
-          setIsSyncEnabled(true);
-          await storageService.setSyncEnabled(true);
-          handleForceSync();
-      } catch (err: any) {
-          setAuthError(err.message);
-      } finally {
-          setIsAuthLoading(false);
-      }
+    try {
+        if (authMode === 'login') {
+            const { data, error } = await supabase.auth.signInWithPassword({
+                email: authEmail,
+                password: authPassword
+            });
+            if (error) throw error;
+            setCurrentUser(data.user);
+        } else {
+            const { data, error } = await supabase.auth.signUp({
+                email: authEmail,
+                password: authPassword
+            });
+            if (error) throw error;
+            alert('注册成功，请检查邮箱进行验证（如果后台开启了验证）。');
+            setCurrentUser(data.user);
+        }
+        setShowAuthForm(false);
+        // 登录成功后正式开启同步
+        setIsSyncEnabled(true);
+        await storageService.setSyncEnabled(true);
+        handleForceSync();
+    } catch (err: any) {
+        setAuthError(err.message);
+    } finally {
+        setIsAuthLoading(false);
+    }
   };
 
   const handleLogout = async () => {
@@ -244,7 +265,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, s
                      onClick={() => setActiveTab('data')}
                     className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-sm font-medium transition-all ${activeTab === 'data' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
                 >
-                    <HardDrive size={16} /> 数据与同步
+                    <HardDrive size={16} /> 数据管理
                 </button>
             </div>
         </div>
@@ -324,23 +345,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, s
                             onChange={(e) => setLocalSettings({ ...localSettings, model: e.target.value })}
                             className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-mono"
                         />
-                        {PRESETS[localSettings.provider as keyof typeof PRESETS] && (
-                            <div className="flex flex-wrap gap-2 mt-2">
-                                {PRESETS[localSettings.provider as keyof typeof PRESETS].map(preset => (
-                                    <button 
-                                        key={preset.name}
-                                        onClick={() => setLocalSettings({ ...localSettings, model: preset.name })}
-                                        className={`px-3 py-1 text-[10px] rounded-lg transition-all border ${
-                                            localSettings.model === preset.name 
-                                                ? 'bg-slate-900 border-slate-900 text-white shadow-sm' 
-                                                : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
-                                        }`}
-                                    >
-                                        {preset.label}
-                                    </button>
-                                ))}
-                            </div>
-                        )}
                     </div>
                  </div>
               </div>
@@ -352,23 +356,25 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, s
                  {/* Cloud Sync Section */}
                  <div className="space-y-3">
                     <label className="text-xs font-bold text-slate-400 uppercase tracking-widest px-1">云端数据同步</label>
+                    
                     <div className="flex flex-col gap-3">
-                        <div className={`p-4 rounded-2xl border transition-all ${isSyncEnabled ? 'bg-blue-600 text-white border-blue-600 shadow-lg' : 'bg-white border-slate-200'}`}>
+                        {/* 即使环境变量没配，我们也显示开关，但在点击时给予开发者提示 */}
+                        <div className={`p-4 rounded-2xl border transition-all ${isSyncEnabled ? 'bg-indigo-600 text-white border-indigo-600 shadow-lg' : 'bg-white border-slate-200'}`}>
                             <div className="flex items-center justify-between">
                                 <div className="flex items-center gap-3">
-                                    <div className={`p-2 rounded-xl flex items-center justify-center ${isSyncEnabled ? 'bg-white/20' : 'bg-blue-50 text-blue-600'}`}>
+                                    <div className={`p-2 rounded-xl flex items-center justify-center ${isSyncEnabled ? 'bg-white/20' : 'bg-indigo-50 text-indigo-600'}`}>
                                         {isSyncing ? <Loader2 size={18} className="animate-spin" /> : <Cloud size={18} />}
                                     </div>
                                     <div className="text-left">
-                                        <div className="text-sm font-black">Supabase 云同步</div>
+                                        <div className="text-sm font-black">闪历·云同步</div>
                                         <div className={`text-[10px] font-bold mt-0.5 ${isSyncEnabled ? 'text-white/70' : 'text-slate-400'}`}>
-                                            {currentUser ? `已关联: ${currentUser.email}` : '未关联账户 · 点击开启同步'}
+                                            {currentUser ? `已关联: ${currentUser.email}` : (isSupabaseAvailable ? '云端服务已就绪 · 用户未登录' : '未检测到云同步环境变量')}
                                         </div>
                                     </div>
                                 </div>
                                 <button 
                                     onClick={handleToggleSync}
-                                    className={`w-10 h-5 rounded-full relative transition-colors ${isSyncEnabled ? 'bg-blue-400' : 'bg-slate-200'}`}
+                                    className={`w-10 h-5 rounded-full relative transition-colors ${isSyncEnabled ? 'bg-indigo-400' : 'bg-slate-200'}`}
                                 >
                                     <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${isSyncEnabled ? 'left-6' : 'left-1'}`} />
                                 </button>
@@ -394,6 +400,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, s
                                 </div>
                             )}
                         </div>
+
+                        {!isSupabaseAvailable && (
+                            <div className="px-3 py-2 bg-amber-50 border border-amber-100 rounded-xl flex items-start gap-2">
+                                <Info size={14} className="text-amber-500 mt-0.5" />
+                                <p className="text-[10px] text-amber-700 font-medium leading-tight">
+                                    开发者提示：请在 Netlify 中配置 VITE_SUPABASE_URL 环境变量以启用云端账户功能。
+                                </p>
+                            </div>
+                        )}
                     </div>
                  </div>
 
@@ -401,12 +416,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, s
                      <ShieldCheck size={20} className="text-emerald-500 mt-1" />
                      <div className="flex-1">
                          <h4 className="text-sm font-bold text-emerald-800">本地存储护卫已开启</h4>
-                         <p className="text-[11px] text-emerald-600 mt-1 leading-relaxed font-medium">应用已在浏览器永久存储空间 (OPFS) 内自动建立实时镜像，确保数据安全。</p>
+                         <p className="text-[11px] text-emerald-600 mt-1 leading-relaxed font-medium">应用已在浏览器永久存储空间 (OPFS) 内自动建立实时镜像，无需联网即可使用。</p>
                      </div>
                  </div>
 
                  <div className="space-y-3">
-                    <label className="text-xs font-bold text-slate-400 uppercase tracking-widest px-1">手动备份</label>
+                    <label className="text-xs font-bold text-slate-400 uppercase tracking-widest px-1">数据备份</label>
                     <div className="grid grid-cols-2 gap-2.5">
                         <button 
                             onClick={handleExport} 
@@ -416,7 +431,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, s
                             <span className="p-2 bg-blue-50 text-blue-600 rounded-lg group-hover:scale-110 transition-transform">
                                 {isExporting ? <Loader2 size={18} className="animate-spin" /> : <Download size={18} />}
                             </span>
-                            <span className="text-xs font-bold text-slate-800">导出 JSON</span>
+                            <span className="text-xs font-bold text-slate-800">导出备份</span>
                         </button>
                         
                         <button 
@@ -424,7 +439,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, s
                             className="flex flex-col items-center gap-2 p-4 bg-white border border-slate-200 rounded-2xl hover:bg-slate-50 group transition-all"
                         >
                             <span className="p-2 bg-indigo-50 text-indigo-600 rounded-lg group-hover:scale-110 transition-transform"><UploadCloud size={18} /></span>
-                            <span className="text-xs font-bold text-slate-800">从备份恢复</span>
+                            <span className="text-xs font-bold text-slate-800">导入恢复</span>
                         </button>
                     </div>
                  </div>
@@ -449,7 +464,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, s
                             <div className="text-left">
                                 <div className="text-sm font-black">关联本地文件夹</div>
                                 <div className={`text-[10px] font-bold mt-0.5 ${hasMirror ? 'text-white/70' : 'text-slate-400'}`}>
-                                    {hasMirror && mirrorHasPermission ? '磁盘镜像实时写入中' : '点击开启本地磁盘同步'}
+                                    {hasMirror && mirrorHasPermission ? '磁盘镜像实时写入中' : '点击开启磁盘镜像同步'}
                                 </div>
                             </div>
                         </div>
@@ -477,7 +492,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, s
                     className="flex items-center gap-2 px-8 py-2.5 bg-slate-900 hover:bg-black text-white rounded-2xl shadow-lg transition-all text-sm font-bold active:scale-95"
                 >
                     <Save size={16} />
-                    保存配置
+                    保存 AI 配置
                 </button>
             </div>
         )}
@@ -487,19 +502,19 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, s
             <div className="absolute inset-0 z-[120] bg-white/80 backdrop-blur-2xl flex flex-col p-8 animate-in fade-in slide-in-from-bottom-8 duration-500">
                 <div className="flex justify-between items-center mb-10">
                     <div className="flex items-center gap-3">
-                         <div className="w-10 h-10 bg-blue-600 rounded-xl flex items-center justify-center text-white shadow-lg shadow-blue-200">
+                         <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center text-white shadow-lg shadow-indigo-200">
                              <LogIn size={20} />
                          </div>
-                         <h3 className="text-xl font-black text-slate-800 tracking-tight">闪历·通行证</h3>
+                         <h3 className="text-xl font-black text-slate-800 tracking-tight">闪历·云同步</h3>
                     </div>
-                    <button onClick={() => setShowAuthForm(false)} className="p-2 text-slate-400 hover:text-slate-600 rounded-full hover:bg-slate-100 transition-colors">
+                    <button onClick={() => { setShowAuthForm(false); setIsSyncEnabled(false); }} className="p-2 text-slate-400 hover:text-slate-600 rounded-full hover:bg-slate-100 transition-colors">
                         <X size={20} />
                     </button>
                 </div>
 
                 <form onSubmit={handleAuth} className="space-y-5 flex-1">
                     <p className="text-sm text-slate-500 font-medium leading-relaxed">
-                        开启云端同步，让您的日程在手机、平板与电脑间无缝流转。
+                        开启云端同步，让您的日程在多设备间实时流转。
                     </p>
                     
                     <div className="space-y-4 pt-4">
@@ -511,7 +526,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, s
                                 value={authEmail}
                                 onChange={(e) => setAuthEmail(e.target.value)}
                                 placeholder="name@company.com"
-                                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 outline-none transition-all"
+                                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 outline-none transition-all"
                             />
                         </div>
                         <div className="space-y-1.5">
@@ -522,7 +537,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, s
                                 value={authPassword}
                                 onChange={(e) => setAuthPassword(e.target.value)}
                                 placeholder="••••••••"
-                                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 outline-none transition-all"
+                                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 outline-none transition-all"
                             />
                         </div>
                     </div>
@@ -545,21 +560,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, s
                         <button 
                             type="button"
                             onClick={() => setAuthMode(authMode === 'login' ? 'signup' : 'login')}
-                            className="w-full py-2 text-[11px] font-black text-slate-400 hover:text-blue-600 uppercase tracking-widest transition-colors"
+                            className="w-full py-2 text-[11px] font-black text-slate-400 hover:text-indigo-600 uppercase tracking-widest transition-colors"
                         >
                             {authMode === 'login' ? '还没有账户？立即注册' : '已有账户？点此登录'}
                         </button>
                     </div>
                 </form>
-
-                <div className="pt-6 border-t border-slate-100 flex items-center gap-3">
-                    <div className="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-500 flex items-center justify-center flex-shrink-0">
-                        <ShieldCheck size={16} />
-                    </div>
-                    <p className="text-[10px] text-slate-400 font-medium leading-tight">
-                        您的数据将加密传输并存储在 Supabase 企业级云端数据库中。
-                    </p>
-                </div>
             </div>
         )}
 

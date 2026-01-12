@@ -13,7 +13,6 @@ const MIRROR_HANDLE_KEY = 'file_mirror_handle';
 const SUPABASE_SYNC_ENABLED_KEY = 'supabase_sync_enabled';
 
 // 动态载入 Supabase (假设环境已提供)
-// 注意：在实际生产中，由于我们无法使用 npm install，这里假设通过 CDN 或外部引入
 declare global {
   interface Window {
     supabase: any;
@@ -60,15 +59,22 @@ export const storageService = {
 
   // --- Supabase 同步辅助函数 ---
   getSupabase() {
-    // 这里使用 process.env 提供的环境变量
-    const supabaseUrl = (process.env as any).SUPABASE_URL;
-    const supabaseKey = (process.env as any).SUPABASE_ANON_KEY;
+    // 仅从环境变量读取，不再支持手动输入，符合生产环境逻辑
+    const env = (process.env as any) || {};
     
-    if (!supabaseUrl || !supabaseKey || !window.supabase) return null;
+    // 兼容 Netlify/Vercel 的 VITE_ 前缀
+    const supabaseUrl = env.VITE_SUPABASE_URL || env.SUPABASE_URL;
+    const supabaseKey = env.VITE_SUPABASE_ANON_KEY || env.SUPABASE_ANON_KEY;
+    
+    if (!supabaseUrl || !supabaseKey || !window.supabase) {
+        return null;
+    }
     return window.supabase.createClient(supabaseUrl, supabaseKey);
   },
 
   async isSyncEnabled(): Promise<boolean> {
+    // 如果开发者没配置环境，或者用户没手动开启，都返回 false
+    if (!this.getSupabase()) return false;
     return localStorage.getItem(SUPABASE_SYNC_ENABLED_KEY) === 'true';
   },
 
@@ -78,37 +84,30 @@ export const storageService = {
 
   async syncWithCloud(): Promise<{ success: boolean; message?: string }> {
     const supabase = this.getSupabase();
-    if (!supabase) return { success: false, message: 'Supabase 未配置' };
+    if (!supabase) return { success: false, message: '云端同步服务未配置，目前仅运行在本地模式。' };
 
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return { success: false, message: '用户未登录' };
 
     try {
-      // 1. 获取本地数据
       const localPlans = await this.getAllPlans();
-      
-      // 2. 获取云端数据
       const { data: cloudPlans, error } = await supabase
         .from('plans')
         .select('*')
         .eq('user_id', user.id);
 
       if (error) throw error;
-      // Explicitly cast cloudPlans to any[] to avoid 'unknown' type issues when iterating
       const plansArray = (cloudPlans || []) as any[];
 
-      // 3. 合并策略：双向同步，最后修改者胜
       const cloudMap = new Map<string, any>(plansArray.map((p: any) => [p.id, p]));
       const localMap = new Map(localPlans.map((p: any) => [p.id, p]));
       
       const mergedPlans: WorkPlan[] = [];
       const toUpdateInCloud: any[] = [];
 
-      // 处理本地
       localPlans.forEach(lp => {
         const cp = cloudMap.get(lp.id) as any;
         if (!cp || new Date(lp.updatedAt) > new Date(cp.updated_at)) {
-          // 本地较新或云端没有
           mergedPlans.push(lp);
           toUpdateInCloud.push({
             id: lp.id,
@@ -126,7 +125,6 @@ export const storageService = {
             updated_at: lp.updatedAt
           });
         } else {
-          // 云端较新
           mergedPlans.push({
             ...lp,
             title: cp.title,
@@ -144,7 +142,6 @@ export const storageService = {
         }
       });
 
-      // 处理仅在云端有的数据
       plansArray.forEach((cp: any) => {
         if (!localMap.has(cp.id)) {
           mergedPlans.push({
@@ -164,10 +161,7 @@ export const storageService = {
         }
       });
 
-      // 4. 保存合并后的结果到本地
       await this.savePlansToLocalOnly(mergedPlans);
-
-      // 5. 增量更新到云端
       if (toUpdateInCloud.length > 0) {
         await supabase.from('plans').upsert(toUpdateInCloud);
       }
@@ -299,7 +293,6 @@ export const storageService = {
 
   // --- 核心保存逻辑 ---
   async savePlans(plans: WorkPlan[], settings?: AISettings): Promise<void> {
-    // 每次保存前自动打上更新时间戳
     const nowIso = new Date().toISOString();
     const plansWithTimestamp = plans.map(p => ({
         ...p,
@@ -322,7 +315,6 @@ export const storageService = {
       await this.writeToMirror(handle, backup);
     }
 
-    // 如果启用了 Supabase 同步，则执行异步静默同步
     if (await this.isSyncEnabled()) {
         this.syncWithCloud();
     }
