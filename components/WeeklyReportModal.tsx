@@ -64,12 +64,11 @@ export const WeeklyReportModal: React.FC<WeeklyReportModalProps> = ({ isOpen, on
     <div className="fixed inset-0 z-[120] flex items-center justify-center p-4">
       <div 
         className="absolute inset-0 bg-slate-900/40 backdrop-blur-md transition-opacity duration-300" 
-        // 移除 onClick={onClose} 以防误触
+        onClick={onClose}
       />
       
       <div className="relative w-full max-w-2xl bg-[#F8F9FA] rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[85vh] animate-in fade-in zoom-in-95 duration-200 border border-slate-200">
         
-        {/* Header */}
         <div className="px-6 py-4 flex items-center justify-between bg-white border-b border-slate-200 sticky top-0 z-10 shadow-sm">
            <div className="flex flex-col">
                <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
@@ -100,7 +99,6 @@ export const WeeklyReportModal: React.FC<WeeklyReportModalProps> = ({ isOpen, on
            </div>
         </div>
 
-        {/* History Sidebar Overlay */}
         {showHistory && (
           <div className="absolute inset-0 z-40 bg-white/95 backdrop-blur-md animate-in slide-in-from-right duration-300 flex flex-col">
               <div className="p-6 pb-4 flex justify-between items-center border-b border-slate-100">
@@ -122,8 +120,8 @@ export const WeeklyReportModal: React.FC<WeeklyReportModalProps> = ({ isOpen, on
                           >
                               <div className="flex flex-col">
                                   <span className="text-sm font-bold">{h.timestamp ? format(new Date(h.timestamp), 'yyyy-MM-dd HH:mm') : '未知日期'}</span>
-                                  <span className={`text-[10px] truncate max-w-[200px] mt-1 ${currentData.id === h.id ? 'text-white/70' : 'text-slate-400'}`}>
-                                      {h.summary.slice(0, 40)}...
+                                  <span className={`text-[10px] truncate max-w-[240px] mt-1 ${currentData.id === h.id ? 'text-white/70' : 'text-slate-400'}`}>
+                                      {h.summary ? (h.summary.length > 40 ? h.summary.slice(0, 40) + '...' : h.summary) : '暂无摘要'}
                                   </span>
                               </div>
                               <ChevronRight size={16} className={currentData.id === h.id ? 'text-white' : 'text-slate-300 group-hover:text-blue-400'} />
@@ -139,10 +137,7 @@ export const WeeklyReportModal: React.FC<WeeklyReportModalProps> = ({ isOpen, on
           </div>
         )}
 
-        {/* Content */}
         <div className="flex-1 overflow-y-auto custom-scrollbar p-6 space-y-6">
-            
-            {/* Section 1: Achievements */}
             <section className="space-y-3">
                 <div className="flex items-center justify-between px-1">
                     <div className="flex items-center gap-2">
@@ -170,7 +165,6 @@ export const WeeklyReportModal: React.FC<WeeklyReportModalProps> = ({ isOpen, on
                 </div>
             </section>
 
-            {/* Section 2: Summary */}
             <section className="space-y-3">
                 <div className="flex items-center justify-between px-1">
                     <div className="flex items-center gap-2">
@@ -184,7 +178,6 @@ export const WeeklyReportModal: React.FC<WeeklyReportModalProps> = ({ isOpen, on
                 </div>
             </section>
 
-             {/* Section 3: Next Week */}
              <section className="space-y-3">
                 <div className="flex items-center justify-between px-1">
                     <div className="flex items-center gap-2">
@@ -212,7 +205,6 @@ export const WeeklyReportModal: React.FC<WeeklyReportModalProps> = ({ isOpen, on
                 </div>
             </section>
 
-            {/* Section 4: Risks/Help */}
             <section className="space-y-3">
                 <div className="flex items-center justify-between px-1">
                     <div className="flex items-center gap-2">
@@ -231,7 +223,6 @@ export const WeeklyReportModal: React.FC<WeeklyReportModalProps> = ({ isOpen, on
             </section>
         </div>
 
-        {/* Footer */}
         <div className="p-4 bg-white border-t border-slate-200 flex items-center justify-center sticky bottom-0 z-10">
             <div className="flex items-center gap-1.5 text-[11px] text-slate-400 px-2 font-medium italic">
                 <Sparkles size={12} className="text-blue-400" />

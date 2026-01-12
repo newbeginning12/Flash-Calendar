@@ -109,24 +109,20 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, s
   };
 
   const handleToggleSync = async () => {
-      // 如果开发者没配置 Supabase 环境，开关无法开启
       if (!isSupabaseAvailable) {
           alert("检测到部署环境未配置 Supabase 环境变量 (VITE_SUPABASE_URL)。\n\n如果您是开发者：请在 Netlify/Vercel 设置对应的环境变量并重新部署。\n如果您是用户：目前无法使用云同步，数据将仅保存在本地。");
           return;
       }
 
-      // 逻辑：开启开关 -> 如果没登录 -> 弹出登录框
       if (!isSyncEnabled) {
           if (!currentUser) {
               setShowAuthForm(true);
               return;
           }
-          // 已登录则直接开启
           setIsSyncEnabled(true);
           await storageService.setSyncEnabled(true);
           handleForceSync();
       } else {
-          // 关闭开关
           setIsSyncEnabled(false);
           await storageService.setSyncEnabled(false);
       }
@@ -167,11 +163,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, s
                 password: authPassword
             });
             if (error) throw error;
-            alert('注册成功，请检查邮箱进行验证（如果后台开启了验证）。');
+            alert('注册成功，请检查邮箱进行验证。');
             setCurrentUser(data.user);
         }
+        
+        // 关键改进：在登录或注册成功后，立即同步用户信息到 profiles 表
+        await storageService.syncUserProfile();
+
         setShowAuthForm(false);
-        // 登录成功后正式开启同步
         setIsSyncEnabled(true);
         await storageService.setSyncEnabled(true);
         handleForceSync();
@@ -358,7 +357,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, s
                     <label className="text-xs font-bold text-slate-400 uppercase tracking-widest px-1">云端数据同步</label>
                     
                     <div className="flex flex-col gap-3">
-                        {/* 即使环境变量没配，我们也显示开关，但在点击时给予开发者提示 */}
                         <div className={`p-4 rounded-2xl border transition-all ${isSyncEnabled ? 'bg-indigo-600 text-white border-indigo-600 shadow-lg' : 'bg-white border-slate-200'}`}>
                             <div className="flex items-center justify-between">
                                 <div className="flex items-center gap-3">

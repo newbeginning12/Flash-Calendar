@@ -52,6 +52,8 @@ export const MonthlyReviewModal: React.FC<MonthlyReviewModalProps> = ({ isOpen, 
 
   const normalizeData = (data: MonthlyAnalysisData) => {
     const chaosNum = typeof data.chaosLevel === 'number' ? data.chaosLevel : 50; 
+    
+    // 确保 patterns 始终是数组且结构完整
     let normalizedPatterns: MonthlyPattern[] = [];
     if (Array.isArray(data.patterns)) {
       normalizedPatterns = data.patterns.map((p: any, idx) => {
@@ -67,6 +69,7 @@ export const MonthlyReviewModal: React.FC<MonthlyReviewModalProps> = ({ isOpen, 
       });
     }
 
+    // 确保 candidAdvice 始终是数组且结构完整
     let normalizedAdvice: { truth: string, action: string }[] = [];
     if (typeof data.candidAdvice === 'string') {
         normalizedAdvice = [{ truth: '整体洞察', action: data.candidAdvice }];
@@ -80,7 +83,20 @@ export const MonthlyReviewModal: React.FC<MonthlyReviewModalProps> = ({ isOpen, 
         });
     }
 
-    return { ...data, chaosLevel: chaosNum, patterns: normalizedPatterns, candidAdvice: normalizedAdvice };
+    // 关键修复：确保 metrics 及其子属性始终存在，防止 Uncaught TypeError: Cannot read properties of undefined (reading 'deepWorkRatio')
+    const normalizedMetrics = {
+        taggedRatio: data.metrics?.taggedRatio ?? 0,
+        descriptionRate: data.metrics?.descriptionRate ?? 0,
+        deepWorkRatio: data.metrics?.deepWorkRatio ?? 0,
+    };
+
+    return { 
+        ...data, 
+        chaosLevel: chaosNum, 
+        patterns: normalizedPatterns, 
+        candidAdvice: normalizedAdvice,
+        metrics: normalizedMetrics
+    };
   };
 
   const safeData = normalizeData(currentData);
@@ -92,7 +108,6 @@ export const MonthlyReviewModal: React.FC<MonthlyReviewModalProps> = ({ isOpen, 
       
       <div className="relative w-full max-w-[1400px] w-[96vw] h-[96vh] bg-white rounded-[40px] shadow-[0_32px_128px_-16px_rgba(0,0,0,0.3)] overflow-hidden flex flex-col border border-white/20 animate-in fade-in zoom-in-95 duration-500">
         
-        {/* Header - 更简洁现代 */}
         <div className="px-8 py-6 flex items-center justify-between sticky top-0 bg-white/80 backdrop-blur-md z-[60] border-b border-slate-100">
           <div className="flex items-center gap-4">
             <div className="w-10 h-10 rounded-xl bg-slate-900 flex items-center justify-center text-white">
@@ -118,7 +133,6 @@ export const MonthlyReviewModal: React.FC<MonthlyReviewModalProps> = ({ isOpen, 
           </div>
         </div>
 
-        {/* History Sidebar */}
         {showHistory && (
           <div className="absolute inset-0 z-[70] bg-white/98 backdrop-blur-3xl animate-in slide-in-from-right duration-500 flex flex-col">
               <div className="p-10 pb-6 flex justify-between items-center border-b border-slate-100">
@@ -151,9 +165,7 @@ export const MonthlyReviewModal: React.FC<MonthlyReviewModalProps> = ({ isOpen, 
           </div>
         )}
 
-        {/* Main Viewport */}
         <div className="flex-1 flex overflow-hidden bg-slate-50/20">
-            {/* Left: Score & Hero Section (Sticky) - 紧凑化布局调整 */}
             <div className="w-[380px] h-full hidden xl:flex flex-col border-r border-slate-100 bg-white relative overflow-hidden flex-shrink-0">
                 <div className="absolute inset-0 opacity-40 pointer-events-none">
                     <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] bg-indigo-100/30 rounded-full blur-[100px]" />
@@ -217,15 +229,12 @@ export const MonthlyReviewModal: React.FC<MonthlyReviewModalProps> = ({ isOpen, 
                 </div>
             </div>
 
-            {/* Right: Detailed Content (Scrollable) */}
             <div 
                 ref={scrollContainerRef}
                 onScroll={handleScroll}
                 className="flex-1 overflow-y-auto custom-scrollbar relative"
             >
                 <div className="max-w-[800px] mx-auto px-10 pt-4 pb-16 md:px-16 md:pt-10 md:pb-24 space-y-16">
-                    
-                    {/* 移动端/窄屏显示的 Hero Header */}
                     <div className="xl:hidden flex flex-col items-center text-center pb-12 border-b border-slate-100 mb-12">
                          <span className={`text-[120px] font-black ${getGradeColor(safeData.grade)} leading-none`}>{safeData.grade}</span>
                          <h3 className="text-3xl font-black text-slate-800 mt-6">{safeData.gradeTitle}</h3>
@@ -234,7 +243,6 @@ export const MonthlyReviewModal: React.FC<MonthlyReviewModalProps> = ({ isOpen, 
                          </div>
                     </div>
 
-                    {/* Section 1: Patterns */}
                     <section className="space-y-8">
                         <div className="flex items-center gap-4">
                             <div className="w-8 h-px bg-slate-200" />
@@ -248,7 +256,6 @@ export const MonthlyReviewModal: React.FC<MonthlyReviewModalProps> = ({ isOpen, 
                                     key={p.id} 
                                     className="p-8 rounded-[32px] bg-white border border-slate-100 hover:border-indigo-500/30 transition-all duration-500 hover:shadow-[0_32px_64px_-16px_rgba(99,102,241,0.08)] hover:-translate-y-1 group relative overflow-hidden"
                                 >
-                                    {/* Tech Glow Overlay on Hover */}
                                     <div className="absolute inset-0 bg-gradient-to-br from-indigo-500/[0.01] via-transparent to-indigo-500/[0.03] opacity-0 group-hover:opacity-100 transition-opacity duration-700 pointer-events-none" />
                                     <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-500/5 blur-[40px] rounded-full translate-x-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity duration-700" />
                                     
@@ -272,7 +279,6 @@ export const MonthlyReviewModal: React.FC<MonthlyReviewModalProps> = ({ isOpen, 
                         </div>
                     </section>
 
-                    {/* Section 2: Truth & Advice */}
                     <section className="space-y-8">
                         <div className="flex items-center gap-4">
                             <div className="w-8 h-px bg-slate-200" />
@@ -307,7 +313,6 @@ export const MonthlyReviewModal: React.FC<MonthlyReviewModalProps> = ({ isOpen, 
                         </div>
                     </section>
 
-                    {/* Scroll Hint Fade */}
                     {showScrollHint && (
                         <div className="sticky bottom-6 flex justify-center animate-bounce pointer-events-none opacity-40">
                             <ChevronDown size={24} className="text-indigo-500" />
@@ -324,7 +329,6 @@ export const MonthlyReviewModal: React.FC<MonthlyReviewModalProps> = ({ isOpen, 
             </div>
         </div>
 
-        {/* Footer - 更加精简 */}
         <div className="px-10 py-6 border-t border-slate-100 bg-white/80 backdrop-blur-md flex items-center justify-between z-50">
            <div className="hidden sm:flex items-center gap-3 text-slate-400 text-xs font-bold uppercase tracking-widest">
               <div className="w-2 h-2 rounded-full bg-emerald-500"></div>

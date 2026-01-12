@@ -58,7 +58,6 @@ export const storageService = {
 
   // --- Supabase 同步辅助函数 ---
   getSupabase() {
-    // 兼容 Netlify 的构建环境
     const env = (process.env as any) || {};
     const metaEnv = (import.meta as any).env || {};
     
@@ -80,6 +79,26 @@ export const storageService = {
     localStorage.setItem(SUPABASE_SYNC_ENABLED_KEY, enabled.toString());
   },
 
+  // 新增：同步用户基本信息到云端 profiles 表
+  async syncUserProfile(): Promise<void> {
+    const supabase = this.getSupabase();
+    if (!supabase) return;
+
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+
+    try {
+        await supabase.from('profiles').upsert({
+            id: user.id,
+            email: user.email,
+            last_login: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+        });
+    } catch (err) {
+        console.error('Profile sync failed:', err);
+    }
+  },
+
   async syncWithCloud(): Promise<{ success: boolean; message?: string }> {
     const supabase = this.getSupabase();
     if (!supabase) return { success: false, message: '云端同步服务未配置。' };
@@ -88,81 +107,79 @@ export const storageService = {
     if (!user) return { success: false, message: '用户未登录' };
 
     try {
-      const localPlans = await this.getAllPlans();
-      const { data: cloudPlans, error } = await supabase
-        .from('plans')
-        .select('*')
-        .eq('user_id', user.id);
+      // 1. 同步计划 (Plans)
+      await this._syncTable(supabase, user.id, STORE_NAME, 'plans', (lp) => ({
+          id: lp.id,
+          user_id: user.id,
+          title: lp.title,
+          description: lp.description,
+          start_date: lp.startDate,
+          end_date: lp.endDate,
+          status: lp.status,
+          tags: lp.tags,
+          color: lp.color,
+          links: lp.links,
+          is_fuzzy: lp.isFuzzy,
+          deleted_at: lp.deletedAt,
+          updated_at: lp.updatedAt
+      }), (cp) => ({
+          id: cp.id,
+          title: cp.title,
+          description: cp.description,
+          startDate: cp.start_date,
+          endDate: cp.end_date,
+          status: cp.status,
+          tags: cp.tags,
+          color: cp.color,
+          links: cp.links,
+          isFuzzy: cp.is_fuzzy,
+          deletedAt: cp.deleted_at,
+          updatedAt: cp.updated_at
+      }));
 
-      if (error) throw error;
-      const plansArray = (cloudPlans || []) as any[];
+      // 2. 同步周报 (Weekly Reports)
+      await this._syncTable(supabase, user.id, WEEKLY_REPORT_STORE, 'weekly_reports', (lr) => ({
+          id: lr.id,
+          user_id: user.id,
+          timestamp: lr.timestamp,
+          achievements: lr.achievements,
+          summary: lr.summary,
+          next_week_plans: lr.nextWeekPlans,
+          risks: lr.risks,
+          updated_at: lr.timestamp // 使用 timestamp 作为更新参考
+      }), (cr) => ({
+          id: cr.id,
+          timestamp: cr.timestamp,
+          achievements: cr.achievements,
+          summary: cr.summary,
+          nextWeekPlans: cr.next_week_plans,
+          risks: cr.risks
+      }));
 
-      const cloudMap = new Map<string, any>(plansArray.map((p: any) => [p.id, p]));
-      const localMap = new Map(localPlans.map((p: any) => [p.id, p]));
-      
-      const mergedPlans: WorkPlan[] = [];
-      const toUpdateInCloud: any[] = [];
-
-      localPlans.forEach(lp => {
-        const cp = cloudMap.get(lp.id);
-        if (!cp || new Date(lp.updatedAt) > new Date(cp.updated_at)) {
-          mergedPlans.push(lp);
-          toUpdateInCloud.push({
-            id: lp.id,
-            user_id: user.id,
-            title: lp.title,
-            description: lp.description,
-            start_date: lp.startDate,
-            end_date: lp.endDate,
-            status: lp.status,
-            tags: lp.tags,
-            color: lp.color,
-            links: lp.links,
-            is_fuzzy: lp.isFuzzy,
-            deleted_at: lp.deletedAt,
-            updated_at: lp.updatedAt
-          });
-        } else {
-          mergedPlans.push({
-            ...lp,
-            title: cp.title,
-            description: cp.description,
-            startDate: cp.start_date,
-            endDate: cp.end_date,
-            status: cp.status,
-            tags: cp.tags,
-            color: cp.color,
-            links: cp.links,
-            isFuzzy: cp.is_fuzzy,
-            deletedAt: cp.deleted_at,
-            updatedAt: cp.updated_at
-          });
-        }
-      });
-
-      plansArray.forEach((cp: any) => {
-        if (!localMap.has(cp.id)) {
-          mergedPlans.push({
-            id: cp.id,
-            title: cp.title,
-            description: cp.description,
-            startDate: cp.start_date,
-            endDate: cp.end_date,
-            status: cp.status,
-            tags: cp.tags,
-            color: cp.color,
-            links: cp.links,
-            isFuzzy: cp.is_fuzzy,
-            deletedAt: cp.deleted_at,
-            updatedAt: cp.updated_at
-          });
-        }
-      });
-
-      await this.savePlansToLocalOnly(mergedPlans);
-      if (toUpdateInCloud.length > 0) {
-        await supabase.from('plans').upsert(toUpdateInCloud);
-      }
+      // 3. 同步月度诊断 (Monthly Reports)
+      await this._syncTable(supabase, user.id, REPORT_STORE, 'monthly_reports', (lm) => ({
+          id: lm.id,
+          user_id: user.id,
+          timestamp: lm.timestamp,
+          grade: lm.grade,
+          grade_title: lm.gradeTitle,
+          health_score: lm.healthScore,
+          chaos_level: lm.chaosLevel,
+          patterns: lm.patterns,
+          candid_advice: lm.candidAdvice,
+          metrics: lm.metrics,
+          updated_at: lm.timestamp
+      }), (cm) => ({
+          id: cm.id,
+          timestamp: cm.timestamp,
+          grade: cm.grade,
+          gradeTitle: cm.grade_title,
+          healthScore: cm.health_score,
+          chaosLevel: cm.chaos_level,
+          patterns: cm.patterns,
+          candidAdvice: cm.candid_advice,
+          metrics: cm.metrics
+      }));
 
       return { success: true };
     } catch (err: any) {
@@ -171,20 +188,96 @@ export const storageService = {
     }
   },
 
-  async savePlansToLocalOnly(plans: WorkPlan[]): Promise<void> {
-    return new Promise<void>((resolve, reject) => {
-       const request = indexedDB.open(DB_NAME, DB_VERSION);
-       request.onsuccess = () => {
-          const db = request.result;
-          const transaction = db.transaction(STORE_NAME, 'readwrite');
-          const store = transaction.objectStore(STORE_NAME);
-          store.clear().onsuccess = () => {
-              plans.forEach(plan => { if (plan?.id) store.put(plan); });
-          };
-          transaction.oncomplete = () => resolve();
-       };
-       request.onerror = () => reject(request.error);
+  // 通用的表同步私有方法
+  async _syncTable(
+    supabase: any, 
+    userId: string, 
+    localStoreName: string, 
+    cloudTableName: string,
+    toCloudMapper: (localItem: any) => any,
+    toLocalMapper: (cloudItem: any) => any
+  ) {
+    // 获取本地数据
+    const localData = await this._getLocalAll(localStoreName);
+    // 获取云端数据
+    const { data: cloudData, error } = await supabase
+        .from(cloudTableName)
+        .select('*')
+        .eq('user_id', userId);
+
+    if (error) throw error;
+    
+    // fix: explicitly type cloudMap as Map<string, any> to avoid 'unknown' type errors when accessing properties on cloudItem
+    const cloudMap = new Map<string, any>((cloudData || []).map((p: any) => [p.id, p]));
+    const localMap = new Map(localData.map((p: any) => [p.id, p]));
+    
+    const mergedList: any[] = [];
+    const toUpdateInCloud: any[] = [];
+
+    // 处理本地数据：决定哪些需要上传，哪些需要被云端覆盖
+    localData.forEach(localItem => {
+        const cloudItem = cloudMap.get(localItem.id);
+        
+        // 确定更新时间：优先取 updatedAt，没有则取 timestamp
+        const localUpdateAt = localItem.updatedAt || localItem.timestamp || new Date(0).toISOString();
+        const cloudUpdateAt = cloudItem?.updated_at || cloudItem?.timestamp || new Date(0).toISOString();
+
+        if (!cloudItem || new Date(localUpdateAt) > new Date(cloudUpdateAt)) {
+            // 本地较新，或者云端没有
+            mergedList.push(localItem);
+            toUpdateInCloud.push(toCloudMapper(localItem));
+        } else {
+            // 云端较新
+            mergedList.push(toLocalMapper(cloudItem));
+        }
     });
+
+    // 处理云端有但本地没有的数据（新增的数据）
+    (cloudData || []).forEach((cloudItem: any) => {
+        if (!localMap.has(cloudItem.id)) {
+            mergedList.push(toLocalMapper(cloudItem));
+        }
+    });
+
+    // 批量更新本地 IndexedDB
+    await this._saveLocalList(localStoreName, mergedList);
+    
+    // 批量更新云端 Supabase
+    if (toUpdateInCloud.length > 0) {
+        await supabase.from(cloudTableName).upsert(toUpdateInCloud);
+    }
+  },
+
+  async _getLocalAll(storeName: string): Promise<any[]> {
+    return new Promise((resolve) => {
+        const request = indexedDB.open(DB_NAME, DB_VERSION);
+        request.onsuccess = () => {
+            const db = request.result;
+            if (!db.objectStoreNames.contains(storeName)) return resolve([]);
+            const tx = db.transaction(storeName, 'readonly');
+            const req = tx.objectStore(storeName).getAll();
+            req.onsuccess = () => resolve(req.result || []);
+        };
+    });
+  },
+
+  async _saveLocalList(storeName: string, list: any[]): Promise<void> {
+    return new Promise((resolve) => {
+        const request = indexedDB.open(DB_NAME, DB_VERSION);
+        request.onsuccess = () => {
+            const db = request.result;
+            const tx = db.transaction(storeName, 'readwrite');
+            const store = tx.objectStore(storeName);
+            store.clear().onsuccess = () => {
+                list.forEach(item => { if (item.id) store.put(item); });
+            };
+            tx.oncomplete = () => resolve();
+        };
+    });
+  },
+
+  async savePlansToLocalOnly(plans: WorkPlan[]): Promise<void> {
+      await this._saveLocalList(STORE_NAME, plans);
   },
 
   async saveToOPFS(data: BackupData): Promise<void> {
@@ -263,72 +356,51 @@ export const storageService = {
   },
 
   async getAllPlans(): Promise<WorkPlan[]> {
-    return new Promise((resolve, reject) => {
-      const request = indexedDB.open(DB_NAME, DB_VERSION);
-      request.onsuccess = () => {
-        const db = request.result;
-        if (!db.objectStoreNames.contains(STORE_NAME)) { resolve([]); return; }
-        const transaction = db.transaction(STORE_NAME, 'readonly');
-        const store = transaction.objectStore(STORE_NAME);
-        const getAllRequest = store.getAll();
-        getAllRequest.onsuccess = () => resolve(getAllRequest.result || []);
-      };
-      request.onerror = () => reject(request.error);
-    });
+    return this._getLocalAll(STORE_NAME);
   },
 
   async saveMonthlyReport(report: MonthlyAnalysisData): Promise<void> {
+    const reportWithId = { ...report, id: report.id || crypto.randomUUID() };
     return new Promise((resolve) => {
       const request = indexedDB.open(DB_NAME, DB_VERSION);
       request.onsuccess = () => {
         const db = request.result;
         const transaction = db.transaction(REPORT_STORE, 'readwrite');
         const store = transaction.objectStore(REPORT_STORE);
-        store.put({ ...report, id: report.id || crypto.randomUUID() });
-        resolve();
+        store.put(reportWithId);
+        transaction.oncomplete = async () => {
+            if (await this.isSyncEnabled()) this.syncWithCloud();
+            resolve();
+        };
       };
     });
   },
 
   async getAllMonthlyReports(): Promise<MonthlyAnalysisData[]> {
-    return new Promise((resolve) => {
-      const request = indexedDB.open(DB_NAME, DB_VERSION);
-      request.onsuccess = () => {
-        const db = request.result;
-        if (!db.objectStoreNames.contains(REPORT_STORE)) { resolve([]); return; }
-        const transaction = db.transaction(REPORT_STORE, 'readonly');
-        const store = transaction.objectStore(REPORT_STORE);
-        const req = store.getAll();
-        req.onsuccess = () => resolve((req.result || []).sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()));
-      };
-    });
+    const reports = await this._getLocalAll(REPORT_STORE);
+    return reports.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
   },
 
   async saveWeeklyReport(report: WeeklyReportData): Promise<void> {
+    const reportWithId = { ...report, id: report.id || crypto.randomUUID(), timestamp: report.timestamp || new Date().toISOString() };
     return new Promise((resolve) => {
       const request = indexedDB.open(DB_NAME, DB_VERSION);
       request.onsuccess = () => {
         const db = request.result;
         const transaction = db.transaction(WEEKLY_REPORT_STORE, 'readwrite');
         const store = transaction.objectStore(WEEKLY_REPORT_STORE);
-        store.put({ ...report, id: report.id || crypto.randomUUID(), timestamp: report.timestamp || new Date().toISOString() });
-        resolve();
+        store.put(reportWithId);
+        transaction.oncomplete = async () => {
+            if (await this.isSyncEnabled()) this.syncWithCloud();
+            resolve();
+        };
       };
     });
   },
 
   async getAllWeeklyReports(): Promise<WeeklyReportData[]> {
-    return new Promise((resolve) => {
-      const request = indexedDB.open(DB_NAME, DB_VERSION);
-      request.onsuccess = () => {
-        const db = request.result;
-        if (!db.objectStoreNames.contains(WEEKLY_REPORT_STORE)) { resolve([]); return; }
-        const transaction = db.transaction(WEEKLY_REPORT_STORE, 'readonly');
-        const store = transaction.objectStore(WEEKLY_REPORT_STORE);
-        const req = store.getAll();
-        req.onsuccess = () => resolve((req.result || []).sort((a, b) => new Date(b.timestamp!).getTime() - new Date(a.timestamp!).getTime()));
-      };
-    });
+    const reports = await this._getLocalAll(WEEKLY_REPORT_STORE);
+    return reports.sort((a, b) => new Date(b.timestamp!).getTime() - new Date(a.timestamp!).getTime());
   },
   
   exportData(plans: WorkPlan[], settings: AISettings) {
