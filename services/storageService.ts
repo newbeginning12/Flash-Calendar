@@ -2,7 +2,7 @@
 import { WorkPlan, AISettings, MonthlyAnalysisData, WeeklyReportData } from '../types';
 
 const DB_NAME = 'FlashCalendarDB';
-const DB_VERSION = 4;
+const DB_VERSION = 5;
 const STORE_NAME = 'plans';
 const REPORT_STORE = 'monthly_reports';
 const WEEKLY_REPORT_STORE = 'weekly_reports';
@@ -33,6 +33,7 @@ export const storageService = {
       
       request.onupgradeneeded = (event) => {
         const db = (event.target as IDBOpenDBRequest).result;
+        // 确保所有必要的 Object Store 都存在
         if (!db.objectStoreNames.contains(STORE_NAME)) {
           db.createObjectStore(STORE_NAME, { keyPath: 'id' });
         }
@@ -113,6 +114,11 @@ export const storageService = {
       const request = indexedDB.open(DB_NAME, DB_VERSION);
       request.onsuccess = () => {
         const db = request.result;
+        // 添加检查以防在没有 store 的情况下调用
+        if (!db.objectStoreNames.contains(SYSTEM_STORE)) {
+            resolve(null);
+            return;
+        }
         const tx = db.transaction(SYSTEM_STORE, 'readonly');
         const getReq = tx.objectStore(SYSTEM_STORE).get(MIRROR_HANDLE_KEY);
         getReq.onsuccess = () => resolve(getReq.result || null);
@@ -128,20 +134,17 @@ export const storageService = {
     if ((await handle.queryPermission(opts)) === 'granted') {
       return true;
     }
-    // 注意：requestPermission 只能由用户手势触发
     return false;
   },
 
   async writeToMirror(handle: any, data: BackupData): Promise<boolean> {
     try {
-      // 核心：必须处于 granted 状态。如果是 prompt，写入会失败
       if ((await handle.queryPermission({ mode: 'readwrite' })) !== 'granted') {
         return false;
       }
       const writable = await handle.createWritable();
       const content = JSON.stringify(data, null, 2);
       await writable.write(content);
-      // 核心：必须等待 close() 完结，否则文件就是 0 字节
       await writable.close();
       console.log('Mirror sync successful');
       return true;
@@ -153,11 +156,14 @@ export const storageService = {
 
   // --- 核心保存逻辑 ---
   async savePlans(plans: WorkPlan[], settings?: AISettings): Promise<void> {
-    // 1. 保存到 IndexedDB
     await new Promise<void>((resolve, reject) => {
        const request = indexedDB.open(DB_NAME, DB_VERSION);
        request.onsuccess = () => {
           const db = request.result;
+          if (!db.objectStoreNames.contains(STORE_NAME)) {
+            reject(new Error(`Store ${STORE_NAME} not found`));
+            return;
+          }
           const transaction = db.transaction(STORE_NAME, 'readwrite');
           const store = transaction.objectStore(STORE_NAME);
           store.clear().onsuccess = () => {
@@ -175,10 +181,8 @@ export const storageService = {
       settings
     };
 
-    // 2. OPFS 后台静默备份
     this.saveToOPFS(backup);
 
-    // 3. 磁盘镜像同步（关键点：必须 await 以防 0 字节）
     const handle = await this.getFileMirrorHandle();
     if (handle) {
       await this.writeToMirror(handle, backup);
@@ -205,6 +209,10 @@ export const storageService = {
       const request = indexedDB.open(DB_NAME, DB_VERSION);
       request.onsuccess = () => {
         const db = request.result;
+        if (!db.objectStoreNames.contains(REPORT_STORE)) {
+            resolve([]);
+            return;
+        }
         const transaction = db.transaction(REPORT_STORE, 'readonly');
         const store = transaction.objectStore(REPORT_STORE);
         const getAllRequest = store.getAll();
@@ -238,6 +246,10 @@ export const storageService = {
       const request = indexedDB.open(DB_NAME, DB_VERSION);
       request.onsuccess = () => {
         const db = request.result;
+        if (!db.objectStoreNames.contains(WEEKLY_REPORT_STORE)) {
+            resolve([]);
+            return;
+        }
         const transaction = db.transaction(WEEKLY_REPORT_STORE, 'readonly');
         const store = transaction.objectStore(WEEKLY_REPORT_STORE);
         const getAllRequest = store.getAll();
@@ -294,6 +306,10 @@ export const storageService = {
       
       request.onsuccess = () => {
         const db = request.result;
+        if (!db.objectStoreNames.contains(STORE_NAME)) {
+            resolve([]);
+            return;
+        }
         const transaction = db.transaction(STORE_NAME, 'readonly');
         const store = transaction.objectStore(STORE_NAME);
         const getAllRequest = store.getAll();

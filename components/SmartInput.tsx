@@ -1,12 +1,12 @@
 
-import React, { useState, useEffect, useRef, memo } from 'react';
+import React, { useState, useEffect, useRef, memo, useCallback } from 'react';
 import { Sparkles, ArrowUp, Loader2, Mic, Square, StopCircle, X, Search, Clock, Calendar, AlertCircle, Info } from 'lucide-react';
 import { SmartSuggestion } from '../services/aiService';
 import { WorkPlan } from '../types';
 import { format } from 'date-fns';
 
 interface SmartInputProps {
-  onSubmit: (input: string) => Promise<boolean>; // 修改返回类型，用于判断是否清空
+  onSubmit: (input: string) => Promise<boolean>; 
   onStop: () => void;
   onSuggestionClick: (suggestion: SmartSuggestion) => Promise<void>;
   isProcessing: boolean;
@@ -23,44 +23,62 @@ interface SmartInputProps {
 const VoiceVisualizer = ({ analyser, isHeader }: { analyser: AnalyserNode | null, isHeader?: boolean }) => {
   const barsRef = useRef<(HTMLDivElement | null)[]>([]);
   const animationRef = useRef<number | null>(null);
-  const barCount = isHeader ? 20 : 12;
+  const barCount = isHeader ? 12 : 16;
   const smoothedValues = useRef<number[]>(new Array(barCount).fill(0));
 
   useEffect(() => {
-    if (!analyser) return;
+    // 如果没有分析器，彻底停止动画
+    if (!analyser) {
+        if (animationRef.current) cancelAnimationFrame(animationRef.current);
+        return;
+    }
+
     const bufferLength = analyser.frequencyBinCount;
     const dataArray = new Uint8Array(bufferLength);
+    
+    let isCancelled = false;
     const update = () => {
+      if (isCancelled) return;
+      
       analyser.getByteFrequencyData(dataArray);
       const step = Math.floor((bufferLength * 0.4) / barCount);
+      const time = Date.now() / 1000;
+
       for (let i = 0; i < barCount; i++) {
         const bar = barsRef.current[i];
         if (!bar) continue;
         const rawValue = dataArray[i * step] || 0;
         const distFromCenter = Math.abs(i - (barCount - 1) / 2);
-        const weight = Math.exp(-Math.pow(distFromCenter / (isHeader ? 6 : 4), 2));
-        const targetValue = (rawValue / 255) * (isHeader ? 30 : 25) * weight; 
-        smoothedValues.current[i] += (targetValue - smoothedValues.current[i]) * 0.25;
+        const weight = Math.exp(-Math.pow(distFromCenter / (isHeader ? 4 : 5), 2));
+        
+        const idleWave = Math.sin(time * 2 + i * 0.5) * 0.15 + 0.15;
+        const targetValue = ((rawValue / 255) * (isHeader ? 25 : 30) + idleWave) * weight; 
+        
+        smoothedValues.current[i] += (targetValue - smoothedValues.current[i]) * 0.2;
         const val = smoothedValues.current[i];
-        bar.style.transform = `scaleY(${1 + val * 0.5})`;
+        bar.style.transform = `scaleY(${1 + val * 0.6})`;
         bar.style.opacity = (0.3 + (val / 10) * 0.7).toString();
       }
       animationRef.current = requestAnimationFrame(update);
     };
+    
     update();
-    return () => { if (animationRef.current) cancelAnimationFrame(animationRef.current); };
+    return () => { 
+        isCancelled = true;
+        if (animationRef.current) cancelAnimationFrame(animationRef.current); 
+    };
   }, [analyser, barCount, isHeader]);
 
   return (
-    <div className="flex items-center gap-[2.5px] h-6 px-1.5 overflow-visible">
+    <div className="flex items-center gap-[2px] h-4 px-1 overflow-visible">
       {[...Array(barCount)].map((_, i) => (
-        <div key={i} ref={el => { barsRef.current[i] = el; }} className="w-0.5 h-1.5 rounded-full bg-indigo-500 origin-center will-change-transform" />
+        <div key={i} ref={el => { barsRef.current[i] = el; }} className="w-[1.5px] h-1.5 rounded-full bg-indigo-500 origin-center will-change-transform" />
       ))}
     </div>
   );
 };
 
-const AIAssistantIcon = memo(({ isListening, isProcessing, analyser, size = 18 }: { isListening: boolean, isProcessing: boolean, analyser: AnalyserNode | null, size?: number }) => {
+const AIAssistantIcon = memo(({ isListening, isProcessing, size = 18 }: { isListening: boolean, isProcessing: boolean, size?: number }) => {
   const isActive = isListening || isProcessing;
   return (
     <div className="relative flex items-center justify-center" style={{ width: size + 10, height: size + 10 }}>
@@ -77,24 +95,61 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onSubmit, onStop, onSugg
   const [hintIndex, setHintIndex] = useState(0);
   const [isFocused, setIsFocused] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  
+  // 核心识别状态
   const [isListening, setIsListening] = useState(false);
   const recognitionRef = useRef<any>(null);
+  const isUserStoppingRef = useRef(false);
+  const mountedRef = useRef(true); // 组件挂载标志位
+  
   const [analyser, setAnalyser] = useState<AnalyserNode | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const voicePrefixRef = useRef<string>('');
 
   useEffect(() => {
-    const interval = setInterval(() => setHintIndex((prev) => (prev + 1) % 3), 5000);
+    mountedRef.current = true;
+    const interval = setInterval(() => {
+        if (mountedRef.current) setHintIndex((prev) => (prev + 1) % 3);
+    }, 5000);
+
     return () => {
+        mountedRef.current = false;
         clearInterval(interval);
-        if (recognitionRef.current) try { recognitionRef.current.stop(); } catch (e) {}
+        isUserStoppingRef.current = true;
+        // 彻底清理硬件
+        if (recognitionRef.current) {
+            try { recognitionRef.current.abort(); } catch (e) {}
+            recognitionRef.current = null;
+        }
         stopAudioAnalysis();
     };
   }, []);
 
+  const stopAudioAnalysis = useCallback(() => {
+    if (streamRef.current) {
+        streamRef.current.getTracks().forEach(t => t.stop());
+        streamRef.current = null;
+    }
+    if (audioContextRef.current) {
+        if (audioContextRef.current.state !== 'closed') {
+            audioContextRef.current.close().catch(console.warn);
+        }
+        audioContextRef.current = null;
+    }
+    setAnalyser(null);
+  }, []);
+
   const startAudioAnalysis = async () => {
+    // 先尝试清理旧上下文
+    stopAudioAnalysis();
+    
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      if (!mountedRef.current) {
+          stream.getTracks().forEach(t => t.stop());
+          return;
+      }
       streamRef.current = stream;
       const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
       audioContextRef.current = audioContext;
@@ -102,14 +157,97 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onSubmit, onStop, onSugg
       const source = audioContext.createMediaStreamSource(stream);
       source.connect(analyserNode);
       setAnalyser(analyserNode);
-    } catch (err) { console.warn(err); }
+    } catch (err) { 
+        console.warn("Audio analysis failed", err); 
+        setIsListening(false);
+    }
   };
 
-  const stopAudioAnalysis = () => {
-    if (streamRef.current) streamRef.current.getTracks().forEach(t => t.stop());
-    if (audioContextRef.current) audioContextRef.current.close();
-    setAnalyser(null);
-  };
+  const stopListening = useCallback(() => {
+    isUserStoppingRef.current = true;
+    if (recognitionRef.current) {
+        try { recognitionRef.current.abort(); } catch(e) {}
+        recognitionRef.current = null;
+    }
+    setIsListening(false);
+    stopAudioAnalysis();
+  }, [stopAudioAnalysis]);
+
+  const startListening = useCallback(() => {
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+        alert("您的浏览器不支持语音识别");
+        return;
+    }
+    
+    // 如果正在运行，先停止并释放
+    if (recognitionRef.current || isListening) {
+        stopListening();
+        // 延迟重启以防硬件冲突
+        setTimeout(() => { if (mountedRef.current) startListening(); }, 200);
+        return;
+    }
+
+    isUserStoppingRef.current = false;
+    voicePrefixRef.current = searchValue || '';
+    
+    try {
+        const recognition = new SpeechRecognition();
+        recognition.lang = 'zh-CN';
+        recognition.continuous = true;
+        recognition.interimResults = true;
+        
+        recognition.onstart = () => { 
+            if (mountedRef.current) {
+                setIsListening(true); 
+                startAudioAnalysis(); 
+            }
+        };
+        
+        recognition.onresult = (e: any) => {
+            if (!mountedRef.current) return;
+            let sessionText = '';
+            for (let i = 0; i < e.results.length; ++i) {
+                sessionText += e.results[i][0].transcript;
+            }
+            const prefix = voicePrefixRef.current;
+            const spacer = (prefix && sessionText && !prefix.endsWith(' ')) ? ' ' : '';
+            onSearchChange?.(prefix + spacer + sessionText);
+        };
+        
+        recognition.onerror = (event: any) => {
+            console.warn("Speech recognition error", event.error);
+            if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
+                isUserStoppingRef.current = true;
+                stopListening();
+            }
+        };
+
+        recognition.onend = () => {
+            // 如果不是用户手动停止，且组件仍在挂载中，则尝试自动重启
+            if (!isUserStoppingRef.current && mountedRef.current) {
+                setTimeout(() => {
+                    if (!isUserStoppingRef.current && mountedRef.current) {
+                        try { recognition.start(); } catch(e) {
+                            setIsListening(false);
+                            stopAudioAnalysis();
+                        }
+                    }
+                }, 400);
+            } else if (mountedRef.current) {
+                setIsListening(false); 
+                stopAudioAnalysis();
+            }
+        };
+        
+        recognitionRef.current = recognition;
+        recognition.start();
+    } catch (e) {
+        console.error("Speech recognition startup failed", e);
+        setIsListening(false);
+        stopAudioAnalysis();
+    }
+  }, [searchValue, onSearchChange, stopListening, isListening, stopAudioAnalysis]);
 
   const handleSubmit = async () => {
     if (isProcessing) { onStop(); return; }
@@ -117,8 +255,7 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onSubmit, onStop, onSugg
     if (!searchValue?.trim()) return;
     const toSubmit = searchValue;
     onClearUnsupported?.();
-    const success = await onSubmit(toSubmit);
-    // AI 成功处理后，由 App 侧清空，此处不再重复处理以防状态冲突
+    await onSubmit(toSubmit);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -129,38 +266,11 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onSubmit, onStop, onSugg
       if (!searchValue?.trim()) { startListening(); return; }
       handleSubmit();
     } else if (e.key === 'Escape') {
-      // ESC 全局重置逻辑
       onSearchChange?.('');
       onClearUnsupported?.();
       setIsFocused(false);
       inputRef.current?.blur();
     }
-  };
-
-  const startListening = () => {
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SpeechRecognition || isListening) return;
-    try {
-        const recognition = new SpeechRecognition();
-        recognition.lang = 'zh-CN';
-        recognition.continuous = true;
-        recognition.interimResults = true;
-        recognition.onstart = () => { setIsListening(true); startAudioAnalysis(); };
-        recognition.onresult = (e: any) => {
-            let text = '';
-            for (let i = e.resultIndex; i < e.results.length; ++i) text += e.results[i][0].transcript;
-            onSearchChange?.(text);
-        };
-        recognition.onerror = () => stopListening();
-        recognition.onend = () => { setIsListening(false); stopAudioAnalysis(); };
-        recognitionRef.current = recognition;
-        recognition.start();
-    } catch (e) { setIsListening(false); }
-  };
-
-  const stopListening = () => {
-    if (recognitionRef.current) try { recognitionRef.current.stop(); } catch(e) {}
-    setIsListening(false);
   };
 
   const isHeader = layout === 'header';
@@ -172,7 +282,6 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onSubmit, onStop, onSugg
       {showDropdown && (
         <div className="absolute top-full left-0 right-0 mt-3 bg-white/95 backdrop-blur-2xl border border-slate-200/60 shadow-[0_30px_60px_-12px_rgba(0,0,0,0.12)] rounded-3xl overflow-hidden animate-in fade-in slide-in-from-top-3 duration-500 z-[100]">
           
-          {/* AI Unsupported Feedback - Minimalist Glass UI */}
           {unsupportedMessage && (
             <div className="p-4 bg-indigo-50/40 backdrop-blur-xl border-b border-slate-100 animate-in slide-in-from-top-2 duration-300">
               <div className="flex items-start gap-3">
@@ -255,25 +364,26 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onSubmit, onStop, onSugg
         }
         ${unsupportedMessage ? 'ring-2 ring-indigo-500/20 border-indigo-400 bg-white shadow-[0_0_20px_-5px_rgba(99,102,241,0.15)]' : ''}
       `}>
-        <div className="pl-3 flex items-center gap-3">
-          <AIAssistantIcon isListening={isListening} isProcessing={isProcessing} analyser={analyser} size={14} />
-          <div className={`w-px h-3.5 bg-slate-200 transition-opacity duration-300 ${(isFocused || searchValue) ? 'opacity-100' : 'opacity-0'}`} />
+        {/* 左侧状态区：AI 图标 + 录音波纹并列 */}
+        <div className="pl-3 flex items-center gap-2 flex-shrink-0">
+          <AIAssistantIcon isListening={isListening} isProcessing={isProcessing} size={14} />
+          
+          {isListening && (
+             <div className="flex items-center animate-in fade-in slide-in-from-left-2 duration-300">
+                <VoiceVisualizer analyser={analyser} isHeader={isHeader} />
+             </div>
+          )}
+
+          <div className={`w-px h-3.5 bg-slate-200 transition-opacity duration-300 ${(isFocused || searchValue || isListening) ? 'opacity-100' : 'opacity-0'}`} />
         </div>
 
-        <div className="flex-1 relative h-full flex items-center ml-2.5">
-           {!searchValue && !isListening && (
+        <div className="flex-1 relative h-full flex items-center ml-2.5 min-w-0">
+           {!searchValue && (
               <span className={`absolute inset-0 flex items-center text-slate-400 text-sm font-bold pointer-events-none truncate transition-all duration-500 ${isFocused ? 'opacity-40' : 'opacity-70'}`}>
                 {isFocused ? ["搜索日程...", "安排明天下午开会", "创建本周五报告"][hintIndex] : "搜索日程或 AI 安排"}
               </span>
            )}
            
-           {isListening && !searchValue && (
-              <div className="flex items-center gap-2">
-                <span className="text-indigo-600 font-black text-[11px] uppercase tracking-wider">Listening</span>
-                <VoiceVisualizer analyser={analyser} isHeader={isHeader} />
-              </div>
-           )}
-
            <input
               ref={inputRef}
               type="text"
@@ -282,11 +392,11 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onSubmit, onStop, onSugg
               onFocus={() => setIsFocused(true)}
               onBlur={() => setTimeout(() => setIsFocused(false), 200)}
               onKeyDown={handleKeyDown}
-              className={`w-full h-full bg-transparent border-none outline-none text-sm font-bold text-slate-800 tracking-tight transition-all duration-300 ${isListening && !searchValue ? 'opacity-0' : 'opacity-100'}`}
+              className={`w-full h-full bg-transparent border-none outline-none text-sm font-bold text-slate-800 tracking-tight transition-all duration-300 opacity-100`}
            />
         </div>
 
-        <div className="flex items-center pr-1 gap-1">
+        <div className="flex items-center pr-1 gap-1 flex-shrink-0">
             {!searchValue && !isProcessing && (
               <button onClick={isListening ? stopListening : startListening} className={`p-1.5 rounded-lg transition-all ${isListening ? 'text-indigo-600 bg-indigo-50' : 'text-slate-400 hover:text-slate-800 hover:bg-slate-200/50'}`}>
                 <Mic size={16} />
@@ -310,7 +420,7 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onSubmit, onStop, onSugg
                     }
                 `}
                 >
-                {isProcessing ? <StopCircle size={14} /> : isListening ? <Square size={10} fill="currentColor" /> : <ArrowUp size={16} strokeWidth={3} />}
+                {isProcessing ? <Loader2 size={14} className="animate-spin" /> : isListening ? <Square size={10} fill="currentColor" /> : <ArrowUp size={16} strokeWidth={3} />}
                 </button>
             )}
         </div>

@@ -42,7 +42,6 @@ const handleAIError = (error: any): { message: string; needConfig: boolean } => 
 };
 
 const getAIInstance = (settings: AISettings) => {
-    // 优先使用设置中的 Key，兼容旧有环境 Key
     const apiKey = settings.apiKey || process.env.API_KEY;
     if (!apiKey) {
         throw new Error("Missing API Key");
@@ -101,7 +100,10 @@ export const processUserIntent = async (
   const now = new Date();
   const localTimeContext = format(now, 'yyyy-MM-dd HH:mm:ss');
   
-  const systemInstructionText = `你是一个极简主义日程专家。只有在提到具体时间时才 CREATE_PLAN，否则返回 UNSUPPORTED。当前时间: ${localTimeContext}`;
+  const systemInstructionText = `你是一个极简主义日程专家。你的任务是分析用户输入。
+1. 如果提到具体时间或明确的日程意图，返回 CREATE_PLAN 类型并提取字段。
+2. 如果只是模糊的想法或搜索，返回 UNSUPPORTED 类型并引导至挂载仓。
+当前参考时间: ${localTimeContext}`;
 
   try {
     let rawResponseText: string | null = null;
@@ -109,9 +111,29 @@ export const processUserIntent = async (
       const ai = getAIInstance(settings);
       const response = await ai.models.generateContent({
         model: settings.model,
-        contents: userInput,
+        contents: [{ parts: [{ text: userInput }] }],
         config: {
           responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              type: { type: Type.STRING, description: "CREATE_PLAN, UNSUPPORTED, or ERROR" },
+              data: {
+                type: Type.OBJECT,
+                properties: {
+                  title: { type: Type.STRING },
+                  description: { type: Type.STRING },
+                  startDate: { type: Type.STRING, description: "ISO String" },
+                  endDate: { type: Type.STRING, description: "ISO String" },
+                  tags: { type: Type.ARRAY, items: { type: Type.STRING } },
+                  color: { type: Type.STRING }
+                },
+                description: "仅在 CREATE_PLAN 时包含"
+              },
+              message: { type: Type.STRING, description: "说明信息，特别是在 UNSUPPORTED 时" }
+            },
+            required: ["type"]
+          },
           systemInstruction: systemInstructionText,
           temperature: 0.1
         }
@@ -124,7 +146,7 @@ export const processUserIntent = async (
     if (!rawResponseText) return null;
     return extractJSON(rawResponseText) as AIProcessingResult;
   } catch (error: any) {
-    if (error.name === 'AbortError') return null;
+    if (error.name === 'AbortError' || signal?.aborted) return null;
     const { message, needConfig } = handleAIError(error);
     return { type: 'ERROR', message, needConfig };
   }
@@ -134,15 +156,28 @@ export const enhanceFuzzyTask = async (
   rawText: string,
   settings: AISettings
 ): Promise<Partial<WorkPlan> | null> => {
-  const systemPrompt = `优化用户碎碎念为 JSON 格式（title, tags, color, description）。`;
+  const systemPrompt = `将用户随手记录的想法优化为结构化日程建议。返回 JSON。`;
   try {
     let raw: string | null = null;
     if (settings.provider === AIProvider.GOOGLE) {
       const ai = getAIInstance(settings);
       const response = await ai.models.generateContent({
         model: settings.model,
-        contents: `原始想法: ${rawText}`,
-        config: { responseMimeType: "application/json", systemInstruction: systemPrompt }
+        contents: [{ parts: [{ text: `原始想法: ${rawText}` }] }],
+        config: { 
+          responseMimeType: "application/json", 
+          systemInstruction: systemPrompt,
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              title: { type: Type.STRING },
+              description: { type: Type.STRING },
+              tags: { type: Type.ARRAY, items: { type: Type.STRING } },
+              color: { type: Type.STRING }
+            },
+            required: ["title"]
+          }
+        }
       });
       raw = response.text;
     } else {
@@ -161,7 +196,7 @@ export const processWeeklyReport = async (plans: WorkPlan[], settings: AISetting
         return d >= startOfWeek(now, { weekStartsOn: 1 }) && d <= endOfWeek(now, { weekStartsOn: 1 }); 
     });
     const context = formatPlansForContext(currentWeekPlans);
-    const systemPrompt = `生成 JSON 周报（achievements, summary, nextWeekPlans, risks）。`;
+    const systemPrompt = `你是一个职场专家。请基于日程数据生成一份 JSON 格式的工作周报。内容包含：本周成就、工作总结、下周计划和潜在风险。`;
 
     try {
       let raw: string | null = null;
@@ -169,15 +204,29 @@ export const processWeeklyReport = async (plans: WorkPlan[], settings: AISetting
           const ai = getAIInstance(settings);
           const response = await ai.models.generateContent({ 
               model: settings.model, 
-              contents: `数据：\n${context}`, 
-              config: { responseMimeType: "application/json", systemInstruction: systemPrompt } 
+              contents: [{ parts: [{ text: `数据：\n${context}` }] }], 
+              config: { 
+                responseMimeType: "application/json", 
+                systemInstruction: systemPrompt,
+                responseSchema: {
+                  type: Type.OBJECT,
+                  properties: {
+                    achievements: { type: Type.ARRAY, items: { type: Type.STRING } },
+                    summary: { type: Type.STRING },
+                    nextWeekPlans: { type: Type.ARRAY, items: { type: Type.STRING } },
+                    risks: { type: Type.STRING }
+                  },
+                  required: ["achievements", "summary", "nextWeekPlans", "risks"]
+                }
+              } 
           });
           raw = response.text;
       } else { 
           raw = await callOpenAICompatible(settings, [{ role: 'system', content: systemPrompt }, { role: 'user', content: context }], true, signal); 
       }
       return raw ? { type: 'ANALYSIS', data: extractJSON(raw) } : null;
-    } catch (error) {
+    } catch (error: any) {
+      if (error.name === 'AbortError' || signal?.aborted) return null;
       const { message, needConfig } = handleAIError(error);
       return { type: 'ERROR', message, needConfig };
     }
@@ -187,7 +236,7 @@ export const processMonthlyReview = async (allPlans: WorkPlan[], settings: AISet
   const now = new Date();
   const monthPlans = allPlans.filter(p => new Date(p.startDate).getMonth() === now.getMonth());
   const plansContext = formatPlansForContext(monthPlans);
-  const systemPrompt = `提供深度月度行为诊断（JSON 格式：grade, gradeTitle, healthScore, chaosLevel, patterns, candidAdvice, metrics）。`;
+  const systemPrompt = `你是一个行为心理学家和效率专家。请基于用户整月的日程数据进行行为诊断，返回 JSON 格式结果。`;
 
   try {
     let rawResponseText: string | null = null;
@@ -195,15 +244,58 @@ export const processMonthlyReview = async (allPlans: WorkPlan[], settings: AISet
       const ai = getAIInstance(settings);
       const response = await ai.models.generateContent({ 
         model: settings.model, 
-        contents: `数据：\n${plansContext}`, 
-        config: { responseMimeType: "application/json", systemInstruction: systemPrompt } 
+        contents: [{ parts: [{ text: `数据：\n${plansContext}` }] }], 
+        config: { 
+          responseMimeType: "application/json", 
+          systemInstruction: systemPrompt,
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              grade: { type: Type.STRING, description: "S/A/B/C/D/E/F" },
+              gradeTitle: { type: Type.STRING },
+              healthScore: { type: Type.NUMBER },
+              chaosLevel: { type: Type.NUMBER },
+              patterns: { 
+                type: Type.ARRAY, 
+                items: { 
+                  type: Type.OBJECT,
+                  properties: {
+                    label: { type: Type.STRING },
+                    description: { type: Type.STRING },
+                    type: { type: Type.STRING }
+                  }
+                } 
+              },
+              candidAdvice: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    truth: { type: Type.STRING },
+                    action: { type: Type.STRING }
+                  }
+                }
+              },
+              metrics: {
+                type: Type.OBJECT,
+                properties: {
+                  taggedRatio: { type: Type.NUMBER },
+                  descriptionRate: { type: Type.NUMBER },
+                  deepWorkRatio: { type: Type.NUMBER }
+                }
+              }
+            },
+            required: ["grade", "gradeTitle", "healthScore", "chaosLevel", "patterns", "candidAdvice", "metrics"]
+          }
+        } 
       });
       rawResponseText = response.text;
     } else { 
       rawResponseText = await callOpenAICompatible(settings, [{ role: 'system', content: systemPrompt }, { role: 'user', content: plansContext }], true, signal); 
     }
     return rawResponseText ? { type: 'MONTH_REVIEW', data: extractJSON(rawResponseText) } : null;
-  } catch (error) {
+  } catch (error: any) {
+    if (error.name === 'AbortError' || signal?.aborted) return null;
     const { message, needConfig } = handleAIError(error);
     return { type: 'ERROR', message, needConfig };
   }
