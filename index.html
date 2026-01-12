@@ -7,6 +7,11 @@
     <meta name="theme-color" content="#F5F5F7" />
     <title>闪历 - AI 智能日程</title>
     
+    <!-- 环境兼容脚本：防止 process is not defined 错误 -->
+    <script>
+      window.process = window.process || { env: {} };
+    </script>
+
     <!-- Fonts: Inter for clean UI -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
