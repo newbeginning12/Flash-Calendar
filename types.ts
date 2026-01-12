@@ -24,6 +24,7 @@ export interface WorkPlan {
   isFuzzy?: boolean; // 新增：是否为模糊/未排程计划
   isEnhancing?: boolean; // 新增：是否正在被 AI 后台增强处理
   deletedAt?: string; // 新增：软删除时间戳，用于回收站逻辑
+  updatedAt: string; // 新增：用于云端同步冲突检测的 ISO 时间戳
 }
 
 export interface CalendarEventPosition {

@@ -116,10 +116,9 @@ export const App: React.FC = () => {
       try {
         await storageService.init();
         
-        // 层级恢复策略
+        // 1. 恢复本地数据
         let storedPlans = await storageService.getAllPlans();
         
-        // 如果 IndexedDB 为空，尝试从 OPFS 恢复
         if (storedPlans.length === 0) {
             console.log('IndexedDB is empty, attempting OPFS recovery...');
             const opfsBackup = await storageService.loadFromOPFS();
@@ -127,6 +126,17 @@ export const App: React.FC = () => {
                 storedPlans = opfsBackup.plans;
                 await storageService.savePlans(storedPlans, opfsBackup.settings);
                 addNotification({ type: 'SYSTEM', title: '数据已自动恢复', message: '由于浏览器缓存清理，系统已自动从永久备份 (OPFS) 中恢复了您的日程。' });
+            }
+        }
+
+        // 2. 检查云端同步
+        if (await storageService.isSyncEnabled()) {
+            console.log('Supabase sync is enabled, performing initial sync...');
+            const syncResult = await storageService.syncWithCloud();
+            if (syncResult.success) {
+                storedPlans = await storageService.getAllPlans();
+            } else {
+                addNotification({ type: 'SYSTEM', title: '云同步未就绪', message: syncResult.message || '未能成功同步云端数据，请在设置中检查登录状态。' });
             }
         }
 
@@ -220,15 +230,19 @@ export const App: React.FC = () => {
   };
 
   const handleSavePlan = async (plan: WorkPlan) => {
-    const exists = plans.some(p => p.id === plan.id);
-    const newPlans = exists ? plans.map(p => p.id === plan.id ? plan : p) : [...plans, plan];
+    const nowIso = new Date().toISOString();
+    const updatedPlan = { ...plan, updatedAt: nowIso };
+    
+    const exists = plans.some(p => p.id === updatedPlan.id);
+    const newPlans = exists ? plans.map(p => p.id === updatedPlan.id ? updatedPlan : p) : [...plans, updatedPlan];
+    
     setPlans(newPlans);
     await storageService.savePlans(newPlans, settings);
     setIsPlanModalOpen(false);
     setEditingPlan(null);
-    if (!plan.isFuzzy && !plan.isEnhancing && !plan.deletedAt) {
-        setCurrentDate(new Date(plan.startDate));
-        setTargetPlanId(plan.id);
+    if (!updatedPlan.isFuzzy && !updatedPlan.isEnhancing && !updatedPlan.deletedAt) {
+        setCurrentDate(new Date(updatedPlan.startDate));
+        setTargetPlanId(updatedPlan.id);
         setTimeout(() => setTargetPlanId(null), 2500);
     }
   };
@@ -236,7 +250,8 @@ export const App: React.FC = () => {
   const handleSoftDelete = async (id: string) => {
     const plan = plans.find(p => p.id === id);
     if (!plan) return;
-    const newPlans = plans.map(p => p.id === id ? { ...p, deletedAt: new Date().toISOString() } : p);
+    const nowIso = new Date().toISOString();
+    const newPlans = plans.map(p => p.id === id ? { ...p, deletedAt: nowIso, updatedAt: nowIso } : p);
     setPlans(newPlans);
     await storageService.savePlans(newPlans, settings);
     setIsPlanModalOpen(false);
@@ -244,7 +259,8 @@ export const App: React.FC = () => {
   };
 
   const handleRestorePlan = useCallback(async (plan: WorkPlan) => {
-    const newPlans = plans.map(p => p.id === plan.id ? { ...p, deletedAt: undefined } : p);
+    const nowIso = new Date().toISOString();
+    const newPlans = plans.map(p => p.id === plan.id ? { ...p, deletedAt: undefined, updatedAt: nowIso } : p);
     setPlans(newPlans);
     await storageService.savePlans(newPlans, settings);
   }, [plans, settings]);
@@ -253,6 +269,14 @@ export const App: React.FC = () => {
     const newPlans = plans.filter(p => p.id !== id);
     setPlans(newPlans);
     await storageService.savePlans(newPlans, settings);
+    
+    // 如果启用了云同步，需要特殊处理物理删除（Supabase 需要一条删除指令）
+    if (await storageService.isSyncEnabled()) {
+        const supabase = storageService.getSupabase();
+        if (supabase) {
+            await supabase.from('plans').delete().eq('id', id);
+        }
+    }
   };
 
   const handleSmartInput = async (input: string): Promise<boolean> => {
@@ -276,6 +300,7 @@ export const App: React.FC = () => {
                     tags: [], 
                     color: 'blue', 
                     links: [], 
+                    updatedAt: new Date().toISOString(),
                     ...result.data 
                   };
                   setEditingPlan(basePlan as WorkPlan); setIsPlanModalOpen(true);
@@ -293,7 +318,8 @@ export const App: React.FC = () => {
 
   const handleShelfCapture = async (text: string) => {
       const newId = crypto.randomUUID();
-      const startDate = new Date().toISOString();
+      const nowIso = new Date().toISOString();
+      const startDate = nowIso;
       const endDate = addMinutes(new Date(), 60).toISOString();
       const rawPlan: WorkPlan = {
           id: newId,
@@ -305,7 +331,8 @@ export const App: React.FC = () => {
           color: 'slate', 
           links: [],
           isFuzzy: true,
-          isEnhancing: true 
+          isEnhancing: true,
+          updatedAt: nowIso
       };
       const newPlans = [...plans, rawPlan];
       setPlans(newPlans);
@@ -314,7 +341,7 @@ export const App: React.FC = () => {
           const enhancedData = await enhanceFuzzyTask(text, settings);
           if (enhancedData) {
               setPlans(prev => {
-                  const updated = prev.map(p => p.id === newId ? { ...p, ...enhancedData, isEnhancing: false } : p);
+                  const updated = prev.map(p => p.id === newId ? { ...p, ...enhancedData, isEnhancing: false, updatedAt: new Date().toISOString() } : p);
                   storageService.savePlans(updated, settings);
                   return updated;
               });
@@ -337,7 +364,8 @@ export const App: React.FC = () => {
         status: getInitialStatus(startDate, endDate), 
         tags: suggestion.planData.tags || [], 
         color: 'blue', 
-        links: [] 
+        links: [],
+        updatedAt: new Date().toISOString()
       });
       setIsPlanModalOpen(true);
       setSearchTerm('');
@@ -371,7 +399,7 @@ export const App: React.FC = () => {
                 const start = td || new Date(); const end = addMinutes(start, d);
                 const startDateStr = start.toISOString();
                 const endDateStr = end.toISOString();
-                const np = { ...s, id: crypto.randomUUID(), startDate: startDateStr, endDate: endDateStr, status: getInitialStatus(startDateStr, endDateStr) };
+                const np = { ...s, id: crypto.randomUUID(), startDate: startDateStr, endDate: endDateStr, status: getInitialStatus(startDateStr, endDateStr), updatedAt: new Date().toISOString() };
                 const nps = [...plans, np]; setPlans(nps); await storageService.savePlans(nps, settings);
                 if(td) { setTargetPlanId(np.id); setTimeout(() => setTargetPlanId(null), 2500); } else { setEditingPlan(np); setIsPlanModalOpen(true); }
               }}
@@ -380,7 +408,7 @@ export const App: React.FC = () => {
                 const end = addMinutes(start, 60);
                 const startDateStr = start.toISOString();
                 const endDateStr = end.toISOString();
-                const np: WorkPlan = { id: crypto.randomUUID(), title: '新建日程', startDate: startDateStr, endDate: endDateStr, status: getInitialStatus(startDateStr, endDateStr), tags: [], color: 'blue', links: [] };
+                const np: WorkPlan = { id: crypto.randomUUID(), title: '新建日程', startDate: startDateStr, endDate: endDateStr, status: getInitialStatus(startDateStr, endDateStr), tags: [], color: 'blue', links: [], updatedAt: new Date().toISOString() };
                 setEditingPlan(np); setIsPlanModalOpen(true);
               }} 
               onQuickAdd={async (t, dur, c, tags) => {
@@ -389,7 +417,7 @@ export const App: React.FC = () => {
                 const end = addMinutes(start, dur);
                 const startDateStr = start.toISOString();
                 const endDateStr = end.toISOString();
-                const np: WorkPlan = { id: crypto.randomUUID(), title: t, startDate: startDateStr, endDate: endDateStr, status: getInitialStatus(startDateStr, endDateStr), tags: tags || ['快速'], color: c, links: [] };
+                const np: WorkPlan = { id: crypto.randomUUID(), title: t, startDate: startDateStr, endDate: endDateStr, status: getInitialStatus(startDateStr, endDateStr), tags: tags || ['快速'], color: c, links: [], updatedAt: new Date().toISOString() };
                 const nps = [...plans, np]; setPlans(nps); await storageService.savePlans(nps, settings);
                 setCurrentDate(start);
                 setTargetPlanId(np.id); 
@@ -424,7 +452,7 @@ export const App: React.FC = () => {
                       const start = new Date(); 
                       const startDateStr = start.toISOString();
                       const endDateStr = addMinutes(start, 60).toISOString();
-                      const np: WorkPlan = { id: crypto.randomUUID(), title: '新建日程', startDate: startDateStr, endDate: endDateStr, status: getInitialStatus(startDateStr, endDateStr), tags: [], color: 'blue', links: [] }; setEditingPlan(np); setIsPlanModalOpen(true); 
+                      const np: WorkPlan = { id: crypto.randomUUID(), title: '新建日程', startDate: startDateStr, endDate: endDateStr, status: getInitialStatus(startDateStr, endDateStr), tags: [], color: 'blue', links: [], updatedAt: new Date().toISOString() }; setEditingPlan(np); setIsPlanModalOpen(true); 
                     }} className="h-9 flex items-center justify-center gap-2 px-4 bg-slate-900 hover:bg-black text-white rounded-xl shadow-md active:scale-95 transition-all group whitespace-nowrap flex-shrink-0"><PlusCircle size={15} /><span className="text-sm font-bold tracking-tight">新建日程</span></button>
                     <div className="h-6 w-px bg-slate-200/60 mx-1"></div>
                     <div className="flex items-center gap-1"><div className="relative"><button onClick={() => setIsNotificationOpen(!isNotificationOpen)} className="p-2 text-slate-400 hover:text-slate-800 hover:bg-slate-100 rounded-full transition-colors relative"><Bell size={20} />{notifications.some(n => !n.read) && <span className="absolute top-2 right-2 w-2 h-2 bg-rose-500 rounded-full border border-white animate-pulse"></span>}</button><NotificationCenter isOpen={isNotificationOpen} onClose={() => setIsNotificationOpen(false)} notifications={notifications} onMarkRead={(id) => setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true } : n))} onClearAll={() => setNotifications([])} onDelete={(id) => setNotifications(prev => prev.filter(n => n.id !== id))} onItemClick={(n) => { if(n.planId) { const p = activePlans.find(x => x.id === n.planId); if(p) handleResultClick(p); } setIsNotificationOpen(false); }} /></div><button onClick={() => setIsSettingsOpen(true)} className="p-2 text-slate-400 hover:text-slate-800 hover:bg-slate-100 rounded-full transition-colors"><Settings size={20} /></button></div>
@@ -442,7 +470,7 @@ export const App: React.FC = () => {
                 onSlotClick={(d) => { 
                   const startDateStr = d.toISOString();
                   const endDateStr = addMinutes(d, 60).toISOString();
-                  const np: WorkPlan = { id: crypto.randomUUID(), title: '新建日程', startDate: startDateStr, endDate: endDateStr, status: getInitialStatus(startDateStr, endDateStr), tags: [], color: 'blue', links: [] }; setEditingPlan(np); setIsPlanModalOpen(true); 
+                  const np: WorkPlan = { id: crypto.randomUUID(), title: '新建日程', startDate: startDateStr, endDate: endDateStr, status: getInitialStatus(startDateStr, endDateStr), tags: [], color: 'blue', links: [], updatedAt: new Date().toISOString() }; setEditingPlan(np); setIsPlanModalOpen(true); 
                 }} 
                 onPlanUpdate={handleSavePlan} 
                 onDuplicatePlan={async (id, td) => { 
@@ -451,13 +479,13 @@ export const App: React.FC = () => {
                   const start = td || new Date(); const end = addMinutes(start, d); 
                   const startDateStr = start.toISOString();
                   const endDateStr = end.toISOString();
-                  const np = { ...s, id: crypto.randomUUID(), startDate: startDateStr, endDate: endDateStr, status: getInitialStatus(startDateStr, endDateStr) }; 
+                  const np = { ...s, id: crypto.randomUUID(), startDate: startDateStr, endDate: endDateStr, status: getInitialStatus(startDateStr, endDateStr), updatedAt: new Date().toISOString() }; 
                   const nps = [...plans, np]; setPlans(nps); await storageService.savePlans(nps, settings); 
                   if(td) { setTargetPlanId(np.id); setTimeout(() => setTargetPlanId(null), 2500); } else { setEditingPlan(np); setIsPlanModalOpen(true); } 
                 }} onDateSelect={setCurrentDate} onDeletePlan={handleSoftDelete} onDragCreate={async (startDate, duration, title, color, tags) => { 
                 const startDateStr = startDate.toISOString();
                 const endDateStr = addMinutes(startDate, duration).toISOString();
-                const newPlan: WorkPlan = { id: crypto.randomUUID(), title: title || '新建日程', startDate: startDateStr, endDate: endDateStr, status: getInitialStatus(startDateStr, endDateStr), tags: tags || [], color: color || 'blue', links: [] }; 
+                const newPlan: WorkPlan = { id: crypto.randomUUID(), title: title || '新建日程', startDate: startDateStr, endDate: endDateStr, status: getInitialStatus(startDateStr, endDateStr), tags: tags || [], color: color || 'blue', links: [], updatedAt: new Date().toISOString() }; 
                 const nps = [...plans, newPlan];
                 setPlans(nps);
                 await storageService.savePlans(nps, settings);

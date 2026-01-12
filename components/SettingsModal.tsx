@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { X, Cpu, RotateCcw, Save, Key, Globe, Check, HardDrive, Download, UploadCloud, Settings, AlertTriangle, FileText, CalendarDays, Sparkles, ExternalLink, ArrowRight, Circle, Loader2, FolderSync, ShieldCheck, Plus, ShieldAlert } from 'lucide-react';
+import { X, Cpu, RotateCcw, Save, Key, Globe, Check, HardDrive, Download, UploadCloud, Settings, AlertTriangle, FileText, CalendarDays, Sparkles, ExternalLink, ArrowRight, Circle, Loader2, FolderSync, ShieldCheck, Plus, ShieldAlert, Cloud, LogIn, LogOut, User } from 'lucide-react';
 import { AISettings, AIProvider } from '../types';
 import { DEFAULT_MODEL } from '../services/aiService';
 import { storageService, BackupData } from '../services/storageService';
@@ -53,6 +53,18 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, s
   const [hasMirror, setHasMirror] = useState(false);
   const [mirrorHasPermission, setMirrorHasPermission] = useState(false);
   const [isSettingMirror, setIsSettingMirror] = useState(false);
+  
+  // Supabase 状态
+  const [isSyncEnabled, setIsSyncEnabled] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [currentUser, setCurrentUser] = useState<any>(null);
+  const [showAuthForm, setShowAuthForm] = useState(false);
+  const [authEmail, setAuthEmail] = useState('');
+  const [authPassword, setAuthPassword] = useState('');
+  const [authMode, setAuthMode] = useState<'login' | 'signup'>('login');
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [isAuthLoading, setIsAuthLoading] = useState(false);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -60,6 +72,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, s
     setPendingData(null);
     if (isOpen) {
         checkMirrorStatus();
+        checkSupabaseStatus();
     }
   }, [settings, isOpen]);
 
@@ -67,13 +80,95 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, s
     const handle = await storageService.getFileMirrorHandle();
     if (handle) {
         setHasMirror(true);
-        // 实时检测当前是否真的有写入权限
         const permission = await handle.queryPermission({ mode: 'readwrite' });
         setMirrorHasPermission(permission === 'granted');
     } else {
         setHasMirror(false);
         setMirrorHasPermission(false);
     }
+  };
+
+  const checkSupabaseStatus = async () => {
+    const enabled = await storageService.isSyncEnabled();
+    setIsSyncEnabled(enabled);
+    
+    const supabase = storageService.getSupabase();
+    if (supabase) {
+        const { data: { user } } = await supabase.auth.getUser();
+        setCurrentUser(user);
+    }
+  };
+
+  const handleToggleSync = async () => {
+      if (!isSyncEnabled && !currentUser) {
+          setShowAuthForm(true);
+          return;
+      }
+      const newState = !isSyncEnabled;
+      setIsSyncEnabled(newState);
+      await storageService.setSyncEnabled(newState);
+      if (newState) {
+          handleForceSync();
+      }
+  };
+
+  const handleForceSync = async () => {
+      setIsSyncing(true);
+      const result = await storageService.syncWithCloud();
+      setIsSyncing(false);
+      if (!result.success) {
+          alert(`同步失败: ${result.message}`);
+      }
+  };
+
+  const handleAuth = async (e: React.FormEvent) => {
+      e.preventDefault();
+      setAuthError(null);
+      setIsAuthLoading(true);
+      
+      const supabase = storageService.getSupabase();
+      if (!supabase) {
+          setAuthError('Supabase 配置丢失');
+          setIsAuthLoading(false);
+          return;
+      }
+
+      try {
+          if (authMode === 'login') {
+              const { data, error } = await supabase.auth.signInWithPassword({
+                  email: authEmail,
+                  password: authPassword
+              });
+              if (error) throw error;
+              setCurrentUser(data.user);
+          } else {
+              const { data, error } = await supabase.auth.signUp({
+                  email: authEmail,
+                  password: authPassword
+              });
+              if (error) throw error;
+              alert('注册成功，请检查邮箱进行验证（如果 Supabase 开启了验证）。');
+              setCurrentUser(data.user);
+          }
+          setShowAuthForm(false);
+          setIsSyncEnabled(true);
+          await storageService.setSyncEnabled(true);
+          handleForceSync();
+      } catch (err: any) {
+          setAuthError(err.message);
+      } finally {
+          setIsAuthLoading(false);
+      }
+  };
+
+  const handleLogout = async () => {
+      const supabase = storageService.getSupabase();
+      if (supabase) {
+          await supabase.auth.signOut();
+          setCurrentUser(null);
+          setIsSyncEnabled(false);
+          await storageService.setSyncEnabled(false);
+      }
   };
 
   if (!isOpen) return null;
@@ -98,18 +193,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, s
   const handleSetMirror = async () => {
       setIsSettingMirror(true);
       try {
-        // 如果已经有句柄但没权限，触发 requestPermission 引导
         const existingHandle = await storageService.getFileMirrorHandle();
         if (existingHandle && !mirrorHasPermission) {
             const result = await existingHandle.requestPermission({ mode: 'readwrite' });
             if (result === 'granted') {
                 setMirrorHasPermission(true);
-                // 恢复权限后立即同步一次
                 const plans = await storageService.getAllPlans();
                 await storageService.savePlans(plans, settings);
             }
         } else {
-            // 全新关联
             const success = await storageService.requestFileMirror();
             if (success) {
                 setHasMirror(true);
@@ -256,48 +348,89 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, s
 
           {activeTab === 'data' && (
               <div className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-300">
+                 
+                 {/* Cloud Sync Section */}
+                 <div className="space-y-3">
+                    <label className="text-xs font-bold text-slate-400 uppercase tracking-widest px-1">云端数据同步</label>
+                    <div className="flex flex-col gap-3">
+                        <div className={`p-4 rounded-2xl border transition-all ${isSyncEnabled ? 'bg-blue-600 text-white border-blue-600 shadow-lg' : 'bg-white border-slate-200'}`}>
+                            <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-3">
+                                    <div className={`p-2 rounded-xl flex items-center justify-center ${isSyncEnabled ? 'bg-white/20' : 'bg-blue-50 text-blue-600'}`}>
+                                        {isSyncing ? <Loader2 size={18} className="animate-spin" /> : <Cloud size={18} />}
+                                    </div>
+                                    <div className="text-left">
+                                        <div className="text-sm font-black">Supabase 云同步</div>
+                                        <div className={`text-[10px] font-bold mt-0.5 ${isSyncEnabled ? 'text-white/70' : 'text-slate-400'}`}>
+                                            {currentUser ? `已关联: ${currentUser.email}` : '未关联账户 · 点击开启同步'}
+                                        </div>
+                                    </div>
+                                </div>
+                                <button 
+                                    onClick={handleToggleSync}
+                                    className={`w-10 h-5 rounded-full relative transition-colors ${isSyncEnabled ? 'bg-blue-400' : 'bg-slate-200'}`}
+                                >
+                                    <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${isSyncEnabled ? 'left-6' : 'left-1'}`} />
+                                </button>
+                            </div>
+
+                            {isSyncEnabled && currentUser && (
+                                <div className="mt-4 pt-4 border-t border-white/20 flex items-center justify-between">
+                                    <button 
+                                        onClick={handleForceSync}
+                                        disabled={isSyncing}
+                                        className="flex items-center gap-1.5 text-[11px] font-black uppercase tracking-wider bg-white/10 hover:bg-white/20 px-3 py-1.5 rounded-lg transition-all"
+                                    >
+                                        <RotateCcw size={12} className={isSyncing ? 'animate-spin' : ''} />
+                                        立即同步
+                                    </button>
+                                    <button 
+                                        onClick={handleLogout}
+                                        className="flex items-center gap-1.5 text-[11px] font-black uppercase tracking-wider bg-white/10 hover:bg-rose-500 px-3 py-1.5 rounded-lg transition-all"
+                                    >
+                                        <LogOut size={12} />
+                                        退出账户
+                                    </button>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                 </div>
+
                  <div className="bg-emerald-50 border border-emerald-100 rounded-2xl p-4 flex items-start gap-3">
                      <ShieldCheck size={20} className="text-emerald-500 mt-1" />
                      <div className="flex-1">
-                         <h4 className="text-sm font-bold text-emerald-800">存储护卫已开启 (OPFS)</h4>
-                         <p className="text-[11px] text-emerald-600 mt-1 leading-relaxed font-medium">应用已在浏览器分配的永久存储空间内自动建立实时镜像。即使 IDB 数据库被清除，数据也能瞬间找回。</p>
+                         <h4 className="text-sm font-bold text-emerald-800">本地存储护卫已开启</h4>
+                         <p className="text-[11px] text-emerald-600 mt-1 leading-relaxed font-medium">应用已在浏览器永久存储空间 (OPFS) 内自动建立实时镜像，确保数据安全。</p>
                      </div>
                  </div>
 
                  <div className="space-y-3">
-                    <label className="text-xs font-bold text-slate-400 uppercase tracking-widest px-1">数据备份</label>
-                    <div className="grid grid-cols-1 gap-2.5">
+                    <label className="text-xs font-bold text-slate-400 uppercase tracking-widest px-1">手动备份</label>
+                    <div className="grid grid-cols-2 gap-2.5">
                         <button 
                             onClick={handleExport} 
                             disabled={isExporting}
-                            className="flex items-center justify-between p-4 bg-white border border-slate-200 rounded-2xl hover:bg-slate-50 group transition-all disabled:opacity-70"
+                            className="flex flex-col items-center gap-2 p-4 bg-white border border-slate-200 rounded-2xl hover:bg-slate-50 group transition-all"
                         >
-                            <span className="flex items-center gap-3">
-                                <span className="p-2 bg-blue-50 text-blue-600 rounded-lg group-hover:scale-110 transition-transform">
-                                    {isExporting ? <Loader2 size={18} className="animate-spin" /> : <Download size={18} />}
-                                </span>
-                                <span className="text-sm font-bold text-slate-800">
-                                    {isExporting ? '正在生成备份文件...' : '导出 JSON 备份'}
-                                </span>
+                            <span className="p-2 bg-blue-50 text-blue-600 rounded-lg group-hover:scale-110 transition-transform">
+                                {isExporting ? <Loader2 size={18} className="animate-spin" /> : <Download size={18} />}
                             </span>
-                            {!isExporting && <ArrowRight size={16} className="text-slate-300" />}
+                            <span className="text-xs font-bold text-slate-800">导出 JSON</span>
                         </button>
                         
                         <button 
                             onClick={() => fileInputRef.current?.click()} 
-                            className="flex items-center justify-between p-4 bg-white border border-slate-200 rounded-2xl hover:bg-slate-50 group transition-all"
+                            className="flex flex-col items-center gap-2 p-4 bg-white border border-slate-200 rounded-2xl hover:bg-slate-50 group transition-all"
                         >
-                            <span className="flex items-center gap-3">
-                                <span className="p-2 bg-indigo-50 text-indigo-600 rounded-lg group-hover:scale-110 transition-transform"><UploadCloud size={18} /></span>
-                                <span className="text-sm font-bold text-slate-800">导入历史恢复</span>
-                            </span>
-                            <ArrowRight size={16} className="text-slate-300" />
+                            <span className="p-2 bg-indigo-50 text-indigo-600 rounded-lg group-hover:scale-110 transition-transform"><UploadCloud size={18} /></span>
+                            <span className="text-xs font-bold text-slate-800">从备份恢复</span>
                         </button>
                     </div>
                  </div>
 
                  <div className="space-y-3 pt-2">
-                    <label className="text-xs font-bold text-slate-400 uppercase tracking-widest px-1">磁盘同步镜像</label>
+                    <label className="text-xs font-bold text-slate-400 uppercase tracking-widest px-1">磁盘镜像同步 (桌面版)</label>
                     <button 
                         onClick={handleSetMirror}
                         disabled={isSettingMirror}
@@ -314,26 +447,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, s
                                 {isSettingMirror ? <Loader2 size={20} className="animate-spin" /> : (hasMirror && !mirrorHasPermission ? <ShieldAlert size={20} /> : <FolderSync size={20} />)}
                             </div>
                             <div className="text-left">
-                                <div className="text-sm font-black">
-                                    {hasMirror && mirrorHasPermission ? '本地磁盘镜像已激活' : hasMirror ? '镜像权限已过期，点击恢复' : '关联本地同步文件夹'}
-                                </div>
+                                <div className="text-sm font-black">关联本地文件夹</div>
                                 <div className={`text-[10px] font-bold mt-0.5 ${hasMirror ? 'text-white/70' : 'text-slate-400'}`}>
-                                    {hasMirror && mirrorHasPermission ? '实时镜像写入中 · 配合 iCloud/OneDrive 实现同步' : hasMirror ? '由于安全策略，需重新授予写入权限' : '零服务器实现跨设备数据双向同步'}
+                                    {hasMirror && mirrorHasPermission ? '磁盘镜像实时写入中' : '点击开启本地磁盘同步'}
                                 </div>
                             </div>
                         </div>
                         {!hasMirror && <Plus size={18} className="text-slate-300 group-hover:text-indigo-500" />}
-                        {hasMirror && mirrorHasPermission && <Check size={18} className="text-white" strokeWidth={3} />}
-                        {hasMirror && !mirrorHasPermission && <ArrowRight size={18} className="text-white animate-pulse" />}
                     </button>
-                    {isSettingMirror && (
-                      <div className="px-2 pt-1">
-                        <div className="text-[10px] text-indigo-500 font-bold flex items-center gap-1.5 animate-pulse">
-                          <Loader2 size={10} className="animate-spin" />
-                          正在等待系统文件选择器响应...
-                        </div>
-                      </div>
-                    )}
                  </div>
 
                  <input type="file" ref={fileInputRef} onChange={async (e) => {
@@ -361,6 +482,87 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, s
             </div>
         )}
 
+        {/* Auth Form Modal Overlay */}
+        {showAuthForm && (
+            <div className="absolute inset-0 z-[120] bg-white/80 backdrop-blur-2xl flex flex-col p-8 animate-in fade-in slide-in-from-bottom-8 duration-500">
+                <div className="flex justify-between items-center mb-10">
+                    <div className="flex items-center gap-3">
+                         <div className="w-10 h-10 bg-blue-600 rounded-xl flex items-center justify-center text-white shadow-lg shadow-blue-200">
+                             <LogIn size={20} />
+                         </div>
+                         <h3 className="text-xl font-black text-slate-800 tracking-tight">闪历·通行证</h3>
+                    </div>
+                    <button onClick={() => setShowAuthForm(false)} className="p-2 text-slate-400 hover:text-slate-600 rounded-full hover:bg-slate-100 transition-colors">
+                        <X size={20} />
+                    </button>
+                </div>
+
+                <form onSubmit={handleAuth} className="space-y-5 flex-1">
+                    <p className="text-sm text-slate-500 font-medium leading-relaxed">
+                        开启云端同步，让您的日程在手机、平板与电脑间无缝流转。
+                    </p>
+                    
+                    <div className="space-y-4 pt-4">
+                        <div className="space-y-1.5">
+                            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">电子邮箱</label>
+                            <input 
+                                type="email"
+                                required
+                                value={authEmail}
+                                onChange={(e) => setAuthEmail(e.target.value)}
+                                placeholder="name@company.com"
+                                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 outline-none transition-all"
+                            />
+                        </div>
+                        <div className="space-y-1.5">
+                            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">密码</label>
+                            <input 
+                                type="password"
+                                required
+                                value={authPassword}
+                                onChange={(e) => setAuthPassword(e.target.value)}
+                                placeholder="••••••••"
+                                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 outline-none transition-all"
+                            />
+                        </div>
+                    </div>
+
+                    {authError && (
+                        <div className="p-3 bg-rose-50 border border-rose-100 rounded-xl flex items-start gap-2 text-[11px] text-rose-500 font-bold animate-shake">
+                            <AlertTriangle size={14} className="flex-shrink-0" />
+                            {authError}
+                        </div>
+                    )}
+
+                    <div className="pt-6 space-y-3">
+                        <button 
+                            type="submit"
+                            disabled={isAuthLoading}
+                            className="w-full py-4 bg-slate-900 hover:bg-black text-white rounded-2xl font-black text-sm shadow-xl shadow-slate-200 active:scale-95 transition-all flex items-center justify-center gap-2"
+                        >
+                            {isAuthLoading ? <Loader2 size={18} className="animate-spin" /> : (authMode === 'login' ? '立即登录' : '创建新账户')}
+                        </button>
+                        <button 
+                            type="button"
+                            onClick={() => setAuthMode(authMode === 'login' ? 'signup' : 'login')}
+                            className="w-full py-2 text-[11px] font-black text-slate-400 hover:text-blue-600 uppercase tracking-widest transition-colors"
+                        >
+                            {authMode === 'login' ? '还没有账户？立即注册' : '已有账户？点此登录'}
+                        </button>
+                    </div>
+                </form>
+
+                <div className="pt-6 border-t border-slate-100 flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-500 flex items-center justify-center flex-shrink-0">
+                        <ShieldCheck size={16} />
+                    </div>
+                    <p className="text-[10px] text-slate-400 font-medium leading-tight">
+                        您的数据将加密传输并存储在 Supabase 企业级云端数据库中。
+                    </p>
+                </div>
+            </div>
+        )}
+
         {/* Detailed Import Confirmation */}
         {pendingData && (
               <div className="absolute inset-0 z-[110] bg-white/80 backdrop-blur-xl flex flex-col items-center justify-center p-8 text-center animate-in fade-in zoom-in-95">
@@ -378,21 +580,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, s
                           </div>
                           <span className="text-xs font-bold text-slate-700">{new Date(pendingData.date).toLocaleDateString()}</span>
                       </div>
-                      <div className="flex items-center justify-between mb-3 pb-3 border-b border-slate-50">
+                      <div className="flex items-center justify-between">
                           <div className="flex items-center gap-2 text-slate-400">
                              <FileText size={14} />
                              <span className="text-[11px] font-bold">日程总数</span>
                           </div>
                           <span className="text-xs font-bold text-slate-700">{pendingData.plans?.length || 0} 条数据</span>
-                      </div>
-                      <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-2 text-slate-400">
-                             <Cpu size={14} />
-                             <span className="text-[11px] font-bold">AI 配置</span>
-                          </div>
-                          <span className="text-[10px] font-bold px-2 py-0.5 bg-slate-100 text-slate-500 rounded-full">
-                              {pendingData.settings ? '包含配置' : '仅数据'}
-                          </span>
                       </div>
                   </div>
 
@@ -410,6 +603,16 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, s
               </div>
         )}
       </div>
+      <style>{`
+        @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            25% { transform: translateX(-4px); }
+            75% { transform: translateX(4px); }
+        }
+        .animate-shake {
+            animation: shake 0.2s ease-in-out 0s 2;
+        }
+      `}</style>
     </div>
   );
 };

@@ -10,6 +10,15 @@ const SYSTEM_STORE = 'system';
 
 const OPFS_FILENAME = 'backup_v1.bin';
 const MIRROR_HANDLE_KEY = 'file_mirror_handle';
+const SUPABASE_SYNC_ENABLED_KEY = 'supabase_sync_enabled';
+
+// 动态载入 Supabase (假设环境已提供)
+// 注意：在实际生产中，由于我们无法使用 npm install，这里假设通过 CDN 或外部引入
+declare global {
+  interface Window {
+    supabase: any;
+  }
+}
 
 export interface BackupData {
   version: number;
@@ -33,7 +42,6 @@ export const storageService = {
       
       request.onupgradeneeded = (event) => {
         const db = (event.target as IDBOpenDBRequest).result;
-        // 确保所有必要的 Object Store 都存在
         if (!db.objectStoreNames.contains(STORE_NAME)) {
           db.createObjectStore(STORE_NAME, { keyPath: 'id' });
         }
@@ -47,6 +55,143 @@ export const storageService = {
           db.createObjectStore(SYSTEM_STORE);
         }
       };
+    });
+  },
+
+  // --- Supabase 同步辅助函数 ---
+  getSupabase() {
+    // 这里使用 process.env 提供的环境变量
+    const supabaseUrl = (process.env as any).SUPABASE_URL;
+    const supabaseKey = (process.env as any).SUPABASE_ANON_KEY;
+    
+    if (!supabaseUrl || !supabaseKey || !window.supabase) return null;
+    return window.supabase.createClient(supabaseUrl, supabaseKey);
+  },
+
+  async isSyncEnabled(): Promise<boolean> {
+    return localStorage.getItem(SUPABASE_SYNC_ENABLED_KEY) === 'true';
+  },
+
+  async setSyncEnabled(enabled: boolean) {
+    localStorage.setItem(SUPABASE_SYNC_ENABLED_KEY, enabled.toString());
+  },
+
+  async syncWithCloud(): Promise<{ success: boolean; message?: string }> {
+    const supabase = this.getSupabase();
+    if (!supabase) return { success: false, message: 'Supabase 未配置' };
+
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return { success: false, message: '用户未登录' };
+
+    try {
+      // 1. 获取本地数据
+      const localPlans = await this.getAllPlans();
+      
+      // 2. 获取云端数据
+      const { data: cloudPlans, error } = await supabase
+        .from('plans')
+        .select('*')
+        .eq('user_id', user.id);
+
+      if (error) throw error;
+      // Explicitly cast cloudPlans to any[] to avoid 'unknown' type issues when iterating
+      const plansArray = (cloudPlans || []) as any[];
+
+      // 3. 合并策略：双向同步，最后修改者胜
+      const cloudMap = new Map<string, any>(plansArray.map((p: any) => [p.id, p]));
+      const localMap = new Map(localPlans.map((p: any) => [p.id, p]));
+      
+      const mergedPlans: WorkPlan[] = [];
+      const toUpdateInCloud: any[] = [];
+
+      // 处理本地
+      localPlans.forEach(lp => {
+        const cp = cloudMap.get(lp.id) as any;
+        if (!cp || new Date(lp.updatedAt) > new Date(cp.updated_at)) {
+          // 本地较新或云端没有
+          mergedPlans.push(lp);
+          toUpdateInCloud.push({
+            id: lp.id,
+            user_id: user.id,
+            title: lp.title,
+            description: lp.description,
+            start_date: lp.startDate,
+            end_date: lp.endDate,
+            status: lp.status,
+            tags: lp.tags,
+            color: lp.color,
+            links: lp.links,
+            is_fuzzy: lp.isFuzzy,
+            deleted_at: lp.deletedAt,
+            updated_at: lp.updatedAt
+          });
+        } else {
+          // 云端较新
+          mergedPlans.push({
+            ...lp,
+            title: cp.title,
+            description: cp.description,
+            startDate: cp.start_date,
+            endDate: cp.end_date,
+            status: cp.status,
+            tags: cp.tags,
+            color: cp.color,
+            links: cp.links,
+            isFuzzy: cp.is_fuzzy,
+            deletedAt: cp.deleted_at,
+            updatedAt: cp.updated_at
+          });
+        }
+      });
+
+      // 处理仅在云端有的数据
+      plansArray.forEach((cp: any) => {
+        if (!localMap.has(cp.id)) {
+          mergedPlans.push({
+            id: cp.id,
+            title: cp.title,
+            description: cp.description,
+            startDate: cp.start_date,
+            endDate: cp.end_date,
+            status: cp.status,
+            tags: cp.tags,
+            color: cp.color,
+            links: cp.links,
+            isFuzzy: cp.is_fuzzy,
+            deletedAt: cp.deleted_at,
+            updatedAt: cp.updated_at
+          });
+        }
+      });
+
+      // 4. 保存合并后的结果到本地
+      await this.savePlansToLocalOnly(mergedPlans);
+
+      // 5. 增量更新到云端
+      if (toUpdateInCloud.length > 0) {
+        await supabase.from('plans').upsert(toUpdateInCloud);
+      }
+
+      return { success: true };
+    } catch (err: any) {
+      console.error('Sync failed:', err);
+      return { success: false, message: err.message };
+    }
+  },
+
+  async savePlansToLocalOnly(plans: WorkPlan[]): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+       const request = indexedDB.open(DB_NAME, DB_VERSION);
+       request.onsuccess = () => {
+          const db = request.result;
+          const transaction = db.transaction(STORE_NAME, 'readwrite');
+          const store = transaction.objectStore(STORE_NAME);
+          store.clear().onsuccess = () => {
+              plans.forEach(plan => { if (plan?.id) store.put(plan); });
+          };
+          transaction.oncomplete = () => resolve();
+       };
+       request.onerror = () => reject(request.error);
     });
   },
 
@@ -114,7 +259,6 @@ export const storageService = {
       const request = indexedDB.open(DB_NAME, DB_VERSION);
       request.onsuccess = () => {
         const db = request.result;
-        // 添加检查以防在没有 store 的情况下调用
         if (!db.objectStoreNames.contains(SYSTEM_STORE)) {
             resolve(null);
             return;
@@ -146,7 +290,6 @@ export const storageService = {
       const content = JSON.stringify(data, null, 2);
       await writable.write(content);
       await writable.close();
-      console.log('Mirror sync successful');
       return true;
     } catch (e) {
       console.warn('Mirror write failed:', e);
@@ -156,28 +299,19 @@ export const storageService = {
 
   // --- 核心保存逻辑 ---
   async savePlans(plans: WorkPlan[], settings?: AISettings): Promise<void> {
-    await new Promise<void>((resolve, reject) => {
-       const request = indexedDB.open(DB_NAME, DB_VERSION);
-       request.onsuccess = () => {
-          const db = request.result;
-          if (!db.objectStoreNames.contains(STORE_NAME)) {
-            reject(new Error(`Store ${STORE_NAME} not found`));
-            return;
-          }
-          const transaction = db.transaction(STORE_NAME, 'readwrite');
-          const store = transaction.objectStore(STORE_NAME);
-          store.clear().onsuccess = () => {
-              plans.forEach(plan => { if (plan?.id) store.put(plan); });
-          };
-          transaction.oncomplete = () => resolve();
-       };
-       request.onerror = () => reject(request.error);
-    });
+    // 每次保存前自动打上更新时间戳
+    const nowIso = new Date().toISOString();
+    const plansWithTimestamp = plans.map(p => ({
+        ...p,
+        updatedAt: p.updatedAt || nowIso
+    }));
+
+    await this.savePlansToLocalOnly(plansWithTimestamp);
 
     const backup: BackupData = {
       version: 1,
-      date: new Date().toISOString(),
-      plans,
+      date: nowIso,
+      plans: plansWithTimestamp,
       settings
     };
 
@@ -186,6 +320,11 @@ export const storageService = {
     const handle = await this.getFileMirrorHandle();
     if (handle) {
       await this.writeToMirror(handle, backup);
+    }
+
+    // 如果启用了 Supabase 同步，则执行异步静默同步
+    if (await this.isSyncEnabled()) {
+        this.syncWithCloud();
     }
   },
 

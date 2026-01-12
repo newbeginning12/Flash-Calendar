@@ -74,6 +74,7 @@ export const FlashCommand: React.FC<FlashCommandProps> = ({ plans, settings, onP
                 const startDate = result.data.startDate || new Date().toISOString();
                 const endDate = result.data.endDate || new Date(Date.now() + 3600000).toISOString();
                 
+                // Explicitly add required properties like 'updatedAt' before spreading the Partial result data
                 const newPlan: WorkPlan = {
                     id: crypto.randomUUID(),
                     title: '新建日程',
@@ -83,6 +84,7 @@ export const FlashCommand: React.FC<FlashCommandProps> = ({ plans, settings, onP
                     tags: [],
                     color: 'blue',
                     links: [],
+                    updatedAt: new Date().toISOString(),
                     ...result.data
                 };
                 onPlanCreated(newPlan);
