@@ -79,7 +79,7 @@ export const storageService = {
     localStorage.setItem(SUPABASE_SYNC_ENABLED_KEY, enabled.toString());
   },
 
-  // 新增：同步用户基本信息到云端 profiles 表
+  // 同步用户基本信息到云端 profiles 表
   async syncUserProfile(): Promise<void> {
     const supabase = this.getSupabase();
     if (!supabase) return;
@@ -107,6 +107,9 @@ export const storageService = {
     if (!user) return { success: false, message: '用户未登录' };
 
     try {
+      // 同时触发用户档案同步
+      await this.syncUserProfile();
+
       // 1. 同步计划 (Plans)
       await this._syncTable(supabase, user.id, STORE_NAME, 'plans', (lp) => ({
           id: lp.id,
@@ -121,7 +124,7 @@ export const storageService = {
           links: lp.links,
           is_fuzzy: lp.isFuzzy,
           deleted_at: lp.deletedAt,
-          updated_at: lp.updatedAt
+          updated_at: lp.updatedAt || new Date().toISOString()
       }), (cp) => ({
           id: cp.id,
           title: cp.title,
@@ -146,7 +149,7 @@ export const storageService = {
           summary: lr.summary,
           next_week_plans: lr.nextWeekPlans,
           risks: lr.risks,
-          updated_at: lr.timestamp // 使用 timestamp 作为更新参考
+          updated_at: lr.timestamp || new Date().toISOString()
       }), (cr) => ({
           id: cr.id,
           timestamp: cr.timestamp,
@@ -168,7 +171,7 @@ export const storageService = {
           patterns: lm.patterns,
           candid_advice: lm.candidAdvice,
           metrics: lm.metrics,
-          updated_at: lm.timestamp
+          updated_at: lm.timestamp || new Date().toISOString()
       }), (cm) => ({
           id: cm.id,
           timestamp: cm.timestamp,
@@ -188,7 +191,7 @@ export const storageService = {
     }
   },
 
-  // 通用的表同步私有方法
+  // 通用的表同步逻辑
   async _syncTable(
     supabase: any, 
     userId: string, 
@@ -197,9 +200,7 @@ export const storageService = {
     toCloudMapper: (localItem: any) => any,
     toLocalMapper: (cloudItem: any) => any
   ) {
-    // 获取本地数据
     const localData = await this._getLocalAll(localStoreName);
-    // 获取云端数据
     const { data: cloudData, error } = await supabase
         .from(cloudTableName)
         .select('*')
@@ -207,42 +208,39 @@ export const storageService = {
 
     if (error) throw error;
     
-    // fix: explicitly type cloudMap as Map<string, any> to avoid 'unknown' type errors when accessing properties on cloudItem
+    // 强制转换为 Map 以提高查询效率
     const cloudMap = new Map<string, any>((cloudData || []).map((p: any) => [p.id, p]));
     const localMap = new Map(localData.map((p: any) => [p.id, p]));
     
     const mergedList: any[] = [];
     const toUpdateInCloud: any[] = [];
 
-    // 处理本地数据：决定哪些需要上传，哪些需要被云端覆盖
+    // 处理本地数据
     localData.forEach(localItem => {
         const cloudItem = cloudMap.get(localItem.id);
-        
-        // 确定更新时间：优先取 updatedAt，没有则取 timestamp
         const localUpdateAt = localItem.updatedAt || localItem.timestamp || new Date(0).toISOString();
         const cloudUpdateAt = cloudItem?.updated_at || cloudItem?.timestamp || new Date(0).toISOString();
 
         if (!cloudItem || new Date(localUpdateAt) > new Date(cloudUpdateAt)) {
-            // 本地较新，或者云端没有
+            // 本地更新
             mergedList.push(localItem);
             toUpdateInCloud.push(toCloudMapper(localItem));
         } else {
-            // 云端较新
+            // 云端更新
             mergedList.push(toLocalMapper(cloudItem));
         }
     });
 
-    // 处理云端有但本地没有的数据（新增的数据）
+    // 处理本地不存在但云端存在的数据
     (cloudData || []).forEach((cloudItem: any) => {
         if (!localMap.has(cloudItem.id)) {
             mergedList.push(toLocalMapper(cloudItem));
         }
     });
 
-    // 批量更新本地 IndexedDB
+    // 写入本地
     await this._saveLocalList(localStoreName, mergedList);
-    
-    // 批量更新云端 Supabase
+    // 写入云端
     if (toUpdateInCloud.length > 0) {
         await supabase.from(cloudTableName).upsert(toUpdateInCloud);
     }
